@@ -1,18 +1,36 @@
 name: "Necesse Dedicated Server"
-description: "A dedicated server for the game Necesse."
+description: "Dedicated multiplayer server for Necesse, using SteamCMD for auto-updates."
 version: "1.0.0"
 slug: "necesse_dedicated_server"
+build_from: ghcr.io/home-assistant/addon-base:3.0
 init: false
 arch:
-  - aarch64
   - amd64
-  - armhf
-  - armv7
   - i386
-startup: services
+startup: application
+boot: auto
+restart: unless-stopped
 ports:
   14159/udp: 14159
+map:
+  - "/home/necesse/.config/Necesse:rw"  # Maps add-on config dir to container data path for saves/logs
 options:
-  slots: 10
+  world_name: "MyWorld"
+  server_password: "changeme"
+  server_slots: 10
+  pause_when_empty: true
+  update_on_start: true
+  auto_update_interval_minutes: 60
 schema:
-  slots: int
+  world_name: "str"
+  server_password: "str?"
+  server_slots: "int(1,250)?"
+  pause_when_empty: "bool?"
+  update_on_start: "bool?"
+  auto_update_interval_minutes: "int(0,)"
+environment:
+  # Fixed defaults; user options override via schema
+  SERVER_LANGUAGE: "en"
+  ENABLE_LOGGING: "1"
+  ZIP_SAVES: "1"
+  JAVA_OPTS: "-Xmx2G"  # Adjust RAM as needed
