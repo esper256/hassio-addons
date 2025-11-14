@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Dedicated multiplayer server for Necesse, using SteamCMD for auto-updates."
-version: "1.0.0"
+version: "1.1.0"
 slug: "necesse_dedicated_server"
 build_from: ghcr.io/home-assistant/addon-base:3.0
 init: false
