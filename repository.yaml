@@ -1,0 +1,4 @@
+# https://developers.home-assistant.io/docs/add-ons/repository#repository-configuration
+name: esper256 Home Assistant add-on repository
+url: 'https://github.com/esper256/hassio-addons'
+maintainer: Eric Friesen <eric@friesen.org>
