@@ -3,9 +3,9 @@
 set -e  # Exit on error
 
 # Parse HA options.json to env vars using jq
-if [ -f /data/options.json ]; then
+if [ -f /home/necesse/options.json ]; then
   # Load and export: Uppercase keys, bools as "true"/"false", numbers/strings as-is
-  eval "$(jq -r 'to_entries[] | "export \(.key | ascii_upcase)=\"\(.value | if type == "boolean" then (if . then "true" else "false" end) elif type == "number" then (. | tostring) else tostring end)\"" ' /data/options.json)"
+  eval "$(jq -r 'to_entries[] | "export \(.key | ascii_upcase)=\"\(.value | if type == "boolean" then (if . then "true" else "false" end) elif type == "number" then (. | tostring) else tostring end)\"" ' /home/necesse/options.json)"
 fi
 
 # Defaults (override if not in options; match script's expectations)
