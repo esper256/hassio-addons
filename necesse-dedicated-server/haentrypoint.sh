@@ -3,10 +3,10 @@
 set -e  # Exit on error
 
 # Parse HA options.json to env vars using jq
-#if [ -f /data/options.json ]; then
-#  # Load and export: Uppercase keys, bools as "true"/"false", numbers/strings as-is
-#  eval "$(jq -r 'to_entries[] | "export \(.key | ascii_upcase)=\"\(.value | if type == "boolean" then (if . then "true" else "false" end) elif type == "number" then (. | tostring) else tostring end)\"" ' /data/options.json)"
-#fi
+if [ -f /data/options.json ]; then
+  # Load and export: Uppercase keys, bools as "true"/"false", numbers/strings as-is
+  eval "$(jq -r 'to_entries[] | "export \(.key | ascii_upcase)=\"\(.value | if type == "boolean" then (if . then "true" else "false" end) elif type == "number" then (. | tostring) else tostring end)\"" ' /data/options.json)"
+fi
 
 # Pure Bash JSON parser for simple flat options.json (no nesting, handles strings/bools/ints)
 # Assumes JSON like: {"key1":"value1","key2":true,"key3":42,"key4":null}
@@ -14,43 +14,51 @@ parse_options() {
   local json_file="$1"
   local json_content key value upper_key
 
-  # Read entire file as one line (remove newlines/formatting)
+  # Read and normalize: remove newlines/tabs, trim whitespace
   json_content=$(tr -d '\n\r\t' < "$json_file" 2>/dev/null || cat "$json_file")
+  # Pure Bash trim leading/trailing whitespace
+  json_content="${json_content#"${json_content%%[![:space:]]*}"}"
+  json_content="${json_content%"${json_content##*[![:space:]]}"}"
+  # Remove outer { and } if present
+  if [[ ${json_content:0:1} == '{' ]]; then
+    json_content="${json_content:1}"
+  fi
+  if [[ ${json_content: -1} == '}' ]]; then
+    json_content="${json_content::-1}"
+  fi
+  # Trim again in case of spaces around
+  json_content="${json_content#"${json_content%%[![:space:]]*}"}"
+  json_content="${json_content%"${json_content##*[![:space:]]}"}"
 
-  # Strip outer braces and whitespace
-  json_content="${json_content#\{*}"
-  json_content="${json_content%\}*}"
-
-  # Split by top-level commas (handle quoted strings by preserving them)
-  # Use a loop to extract key-value pairs; bash regex for , outside quotes
+  # Loop to extract key-value pairs
   while [[ -n "$json_content" ]]; do
     # Extract first key-value pair (up to next unquoted comma)
-    if [[ $json_content =~ ^[[:space:]]*"([^"]+)"[[:space:]]*\:[[:space:]]*(("[^"]*"|[true]|[false]|[0-9]+|null))[[:space:]]*,?(.*)$ ]]; then
+    if [[ $json_content =~ ^[[:space:]]*"([^"]+)"[[:space:]]*\:[[:space:]]*(\"[^\"]*\"|true|false|[0-9]+|null)[[:space:]]*,?(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"
       value="${BASH_REMATCH[2]}"
+      local rest="${BASH_REMATCH[3]}"
 
       # Clean value: Remove outer quotes if string
-      if [[ $value == \"* ]]; then
+      if [[ $value =~ ^\" && $value =~ \"$ ]]; then
         value="${value#\"}"
         value="${value%\"}"
         # Basic unescape (e.g., \" -> ")
         value="${value//\\\\\"/\"}"
       fi
 
-      # Handle special values
-      case "$value" in
-        "true") value="true" ;;
-        "false") value="false" ;;
-        "null") value="" ;;  # Treat as empty string
-        *) ;;  # Numbers/strings as-is
-      esac
+      # Handle null
+      if [[ $value == "null" ]]; then
+        value=""
+      fi
+      # true/false/numbers/strings are already good as strings
 
       # Uppercase key and export (e.g., world_name -> WORLD_NAME="$value")
       upper_key="${key^^}"
       export "${upper_key}=\"${value}\""
 
-      # Advance to next pair
-      json_content="${BASH_REMATCH[3]}"
+      # Advance to next pair (trim leading spaces from rest)
+      json_content="${rest#${rest%%[![:space:]]*}}"
+      json_content="${json_content%"${json_content##*[![:space:]]}"}"
     else
       # No more pairs or malformed—exit loop
       break
@@ -60,8 +68,8 @@ parse_options() {
 
 # Usage: Parse if file exists
 if [ -f /data/options.json ]; then
-  parse_options /data/options.json
-  echo "Parsed options.json with pure Bash (keys exported as env vars)"
+  #parse_options /data/options.json
+  #echo "Parsed options.json with pure Bash (keys exported as env vars)"
 else
   echo "No /data/options.json found—using defaults"
 fi
