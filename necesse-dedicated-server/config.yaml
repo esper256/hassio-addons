@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Dedicated multiplayer server for Necesse, using SteamCMD for auto-updates."
-version: "1.5.0"
+version: "1.6.0"
 slug: "necesse_dedicated_server"
 build_from:
   amd64: "andreasgl4ser/necesse-server:latest"
