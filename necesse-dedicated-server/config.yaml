@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Dedicated multiplayer server for Necesse, using SteamCMD for auto-updates."
-version: "1.3.0"
+version: "1.4.0"
 slug: "necesse_dedicated_server"
 build_from:
   amd64: "andreasgl4ser/necesse-server:latest"
@@ -13,7 +13,12 @@ restart: unless-stopped
 ports:
   14159/udp: null
 map:
-  - "/data:/home/necesse/.config/Necesse:rw"  # Key: Persists all Necesse data (worlds, saves, cfg, logs)
+  - type: share
+    read_only: False
+    path: /home/necesse/.config/Necesse/saves
+  - type: data
+    read_only: False
+    path: /home/necesse
 options:
   world_name: "MyWorld"
   server_password: "changeme"
