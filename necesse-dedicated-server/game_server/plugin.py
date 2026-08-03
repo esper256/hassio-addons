@@ -1,4 +1,4 @@
-"""Game plugin definitions loaded from YAML-like JSON/YAML files."""
+"""Game plugin definitions loaded from YAML/JSON files."""
 
 from __future__ import annotations
 
@@ -25,6 +25,23 @@ class LogPatterns:
 
 
 @dataclass
+class PathMigration:
+    """Copy an old layout into the current data paths once."""
+
+    source: str
+    destination: str
+    marker: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PathMigration":
+        return cls(
+            source=str(data["source"]),
+            destination=str(data["destination"]),
+            marker=str(data.get("marker") or ""),
+        )
+
+
+@dataclass
 class GamePlugin:
     """Describes how to install and run one Steam dedicated server."""
 
@@ -34,7 +51,7 @@ class GamePlugin:
     executable: list[str]
     data_dir: str
     logs_dir: str
-    install_marker: str = "Server.jar"
+    install_marker: str
     backup_paths: list[str] = field(default_factory=list)
     steam_branch: str = "public"
     steam_login: str = "anonymous"
@@ -49,10 +66,21 @@ class GamePlugin:
     stop_timeout_seconds: int = 60
     stop_stdin_commands: list[str] = field(default_factory=list)
     min_backup_bytes: int = 1024
+    path_migrations: list[PathMigration] = field(default_factory=list)
+    # Optional runtime packages hint for image authors (documentation only).
+    runtime_notes: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
         patterns = data.get("log_patterns") or {}
+        migrations = [
+            PathMigration.from_dict(item)
+            for item in (data.get("path_migrations") or [])
+            if isinstance(item, dict)
+        ]
+        install_marker = data.get("install_marker")
+        if not install_marker:
+            raise ValueError("Game plugin requires install_marker")
         return cls(
             name=data["name"],
             steam_app_id=int(data["steam_app_id"]),
@@ -60,8 +88,10 @@ class GamePlugin:
             executable=list(data["executable"]),
             data_dir=data.get("data_dir", "/data/world"),
             logs_dir=data.get("logs_dir", "/data/logs"),
-            install_marker=data.get("install_marker", "Server.jar"),
-            backup_paths=list(data.get("backup_paths") or [data.get("data_dir", "/data/world")]),
+            install_marker=str(install_marker),
+            backup_paths=list(
+                data.get("backup_paths") or [data.get("data_dir", "/data/world")]
+            ),
             steam_branch=data.get("steam_branch", "public"),
             steam_login=data.get("steam_login", "anonymous"),
             steam_password=data.get("steam_password", ""),
@@ -79,8 +109,12 @@ class GamePlugin:
             ready_timeout_seconds=int(data.get("ready_timeout_seconds", 180)),
             java_opts_env=data.get("java_opts_env", "JAVA_OPTS"),
             stop_timeout_seconds=int(data.get("stop_timeout_seconds", 60)),
-            stop_stdin_commands=[str(x) for x in (data.get("stop_stdin_commands") or [])],
+            stop_stdin_commands=[
+                str(x) for x in (data.get("stop_stdin_commands") or [])
+            ],
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
+            path_migrations=migrations,
+            runtime_notes=str(data.get("runtime_notes") or ""),
         )
 
 
@@ -94,7 +128,7 @@ def _parse_plugin_text(text: str, suffix: str) -> dict[str, Any]:
 
     try:
         import yaml  # type: ignore
-    except ImportError as exc:  # pragma: no cover - image always installs PyYAML
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "PyYAML is required for .yaml game plugins. Install python3-yaml."
         ) from exc
@@ -125,13 +159,13 @@ def resolve_plugin_path(explicit: str | None = None) -> Path:
     candidates.extend(
         [
             Path("/opt/games/game.yaml"),
-            Path("/opt/games/necesse.yaml"),
-            Path(__file__).resolve().parent.parent / "games" / "necesse.yaml",
+            Path("/opt/games/game.json"),
         ]
     )
     for candidate in candidates:
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(
-        "No game plugin found. Set GAME_PLUGIN or place a file in /opt/games/."
+        "No game plugin found. Set GAME_PLUGIN to a plugin YAML/JSON path "
+        "(for example /opt/games/game.yaml)."
     )

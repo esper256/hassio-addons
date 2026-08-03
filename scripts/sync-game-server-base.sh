@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Copy the canonical game-server-base package into the HA add-on build context.
+# Copy only the generic supervisor package into game-specific HA add-on contexts.
+# Game plugins (games/*.yaml) are owned by each add-on and are never overwritten.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/game-server-base"
-DST="$ROOT/necesse-dedicated-server"
+SRC="$ROOT/game-server-base/game_server"
 
-rm -rf "$DST/game_server" "$DST/games"
-mkdir -p "$DST/games"
-cp -a "$SRC/game_server" "$DST/game_server"
-cp -a "$SRC/games/." "$DST/games/"
-echo "Synced game-server-base -> necesse-dedicated-server/"
+sync_into() {
+  local dst_root="$1"
+  local dst="$dst_root/game_server"
+  rm -rf "$dst"
+  cp -a "$SRC" "$dst"
+  echo "Synced game_server -> $dst_root/"
+}
+
+sync_into "$ROOT/necesse-dedicated-server"

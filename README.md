@@ -10,26 +10,26 @@ Custom Home Assistant OS add-ons.
 
 ## Shared platform
 
-[`game-server-base`](game-server-base/) is a reusable SteamCMD dedicated-server supervisor used by the Necesse add-on (and intended for Terraria / Factorio / Stationeers later). It handles:
+[`game-server-base`](game-server-base/) is a **game-agnostic** SteamCMD supervisor. It must not contain game names, ports, or runtimes.
 
-1. HA `options.json` / env configuration
-2. SteamCMD install + retries
-3. Log/build monitoring for empty-server and version-mismatch updates
-4. Crash restarts
-5. Optional status HTTP dashboard
-6. World backups
+Each game add-on is a thin layer:
 
-### Portainer / Docker quickstart
+- vendored `game_server/` package (via sync script)
+- one plugin YAML (`games/game.yaml`)
+- runtime packages the game needs (e.g. OpenJDK for Necesse)
+- HA `config.yaml` / docs / ports
+
+### Portainer / Docker (Necesse)
 
 ```bash
-docker compose -f game-server-base/docker-compose.yml up -d --build
+docker compose -f necesse-dedicated-server/docker-compose.yml up -d --build
 ```
 
 ### Home Assistant
 
 Add this repository URL in **Settings → Add-ons → Add-on store → Repositories**, then install **Necesse Dedicated Server**.
 
-After changing files under `game-server-base/`, sync them into the add-on build context:
+After changing the generic supervisor:
 
 ```bash
 ./scripts/sync-game-server-base.sh

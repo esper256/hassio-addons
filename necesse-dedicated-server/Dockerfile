@@ -1,5 +1,6 @@
 # Home Assistant add-on: Necesse dedicated server
-# Uses the shared game-server-base supervisor (vendored into this directory).
+# Thin game layer over the shared game-server-base supervisor.
+# Game identity lives in games/game.yaml; Java is the only Necesse runtime add-on.
 
 FROM debian:bookworm-slim
 
@@ -8,7 +9,7 @@ ARG BUILD_ARCH=amd64
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
-    GAME_PLUGIN=/opt/games/necesse.yaml \
+    GAME_PLUGIN=/opt/games/game.yaml \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt \
     INSTALL_DIR=/data/game
@@ -36,8 +37,10 @@ RUN useradd -m -u 1000 -s /bin/bash gameserver \
  && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /opt/games \
  && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver
 
+# Shared supervisor (vendored from ../game-server-base via sync script)
 COPY game_server /opt/game_server
-COPY games /opt/games
+# Necesse-only plugin config
+COPY games/game.yaml /opt/games/game.yaml
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
@@ -51,4 +54,5 @@ LABEL \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/esper256/hassio-addons"
 
+EXPOSE 14159/udp 8080
 ENTRYPOINT ["/run.sh"]

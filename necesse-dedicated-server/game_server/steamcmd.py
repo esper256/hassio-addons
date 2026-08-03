@@ -93,18 +93,16 @@ def fetch_remote_build_id(
 
 def server_installed(install_dir: str | Path, marker_relative: str | None = None) -> bool:
     root = Path(install_dir)
-    if marker_relative:
-        return (root / marker_relative).is_file()
-    # Heuristic: any jar/bin/sh in install dir
     if not root.is_dir():
         return False
-    for pattern in ("Server.jar", "*.sh", "*.x86_64", "srcds_run", "Factorio"):
-        if pattern.startswith("*"):
-            if any(root.glob(pattern)):
-                return True
-        elif (root / pattern).exists():
-            return True
-    return any(root.iterdir()) if root.exists() else False
+    if marker_relative:
+        marker = root / marker_relative
+        return marker.exists()
+    # Without a plugin marker, only treat a non-empty install dir as present.
+    try:
+        return any(root.iterdir())
+    except OSError:
+        return False
 
 
 def install_or_update(

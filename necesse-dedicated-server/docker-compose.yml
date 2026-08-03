@@ -1,16 +1,18 @@
+# Portainer / plain Docker example for Necesse.
+# Builds the thin Necesse add-on image (generic supervisor + Java + game.yaml).
 services:
   necesse:
     build:
-      context: ..
-      dockerfile: game-server-base/Dockerfile
-    image: game-server-base:necesse
+      context: .
+      dockerfile: Dockerfile
+    image: necesse-dedicated-server:local
     container_name: necesse
     restart: unless-stopped
     ports:
       - "14159:14159/udp"
       - "8080:8080"
     environment:
-      GAME_PLUGIN: /opt/games/necesse.yaml
+      GAME_PLUGIN: /opt/games/game.yaml
       INSTALL_DIR: /data/game
       WORLD_NAME: FamilyWorld
       SERVER_PASSWORD: changeme

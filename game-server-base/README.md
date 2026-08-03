@@ -1,60 +1,59 @@
 # game-server-base
 
-Generic supervisor for SteamCMD dedicated game servers. Designed for Home Assistant OS add-ons and plain Docker/Portainer.
+Generic supervisor for SteamCMD dedicated game servers. **Contains no game-specific identity.**
 
-## Architecture
+Each game supplies only:
 
-| Component | Responsibility |
+1. a plugin YAML/JSON (`GAME_PLUGIN`)
+2. any runtime packages its binary needs (Java, etc.) in its own image/add-on
+3. HA/Portainer metadata (ports, options schema, docs)
+
+## What lives here
+
+| Piece | Role |
 | --- | --- |
-| `config.py` | Read HA `/data/options.json` and/or env vars (no `jq`) |
-| `steamcmd.py` | First install + updates with retries; compare Steam build IDs |
-| `process_manager.py` | Launch as non-root, graceful stop, crash restart |
-| `monitor.py` | Tail logs / stdout for players and version-mismatch signals |
-| `log_tools.py` | Ingress-friendly captures + regex suggestions (no SSH) |
-| `supervisor.py` | Orchestrate update timing, status, notifications |
-| `status_http.py` | Dashboard + `/api/status` + log endpoints |
-| `backup.py` | Generational retention + empty-save backoff |
-| `notify.py` | HA Core API persistent notifications (no MQTT) |
-| `games/*.yaml` | Per-game plugins |
+| `game_server/` | Shared Python supervisor |
+| `Dockerfile` | SteamCMD + Python base image (no game runtimes, ports, or plugins) |
+| `tests/` | Uses a synthetic `example.game.yaml` fixture |
 
-## Defaults that matter for lights-out use
+## What does **not** live here
 
-- Game install path: `/data/game` (persistent)
-- World path: `/data/world`
-- Status file: `/data/supervisor/status.json`
-- Log captures: `/data/supervisor/captures/`
-- Backups: recent + daily + weekly + monthly + yearly keepers
-- Notifications: HA persistent notifications when Supervisor token is available
+- Game names, Steam app IDs, log regexes, stop commands
+- Game UDP/TCP ports
+- Game runtimes (OpenJDK, etc.)
+- HA add-on `config.yaml` / translations
 
-## Build / run (Portainer or Docker)
+Those belong in each game’s thin add-on/image directory.
 
-From the repository root:
+## Plugin contract
+
+Point `GAME_PLUGIN` at a YAML/JSON file. Minimum fields:
+
+- `name`, `steam_app_id`, `executable`, `install_marker`
+- optional: `arg_map`, `log_patterns`, `stop_stdin_commands`, `path_migrations`, backup paths, etc.
+
+See `tests/fixtures/example.game.yaml` for the shape.
+
+## Run
 
 ```bash
-docker compose -f game-server-base/docker-compose.yml up -d --build
+# build generic base
+docker build -f game-server-base/Dockerfile -t game-server-base .
+
+# run with a game plugin mounted in
+# (the image must also contain that game's runtime, or use the game-specific Dockerfile)
+docker run --rm \
+  -e GAME_PLUGIN=/opt/games/game.yaml \
+  -v /path/to/game.yaml:/opt/games/game.yaml:ro \
+  -v $PWD/data:/data \
+  -p 8080:8080 \
+  game-server-base
 ```
 
-Status / log UI: `http://<host>:8080/`
-
-### Log toolkit endpoints
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST/GET /api/logs/capture` | Snapshot logs + analysis into downloadable tar.gz |
-| `GET /api/logs/suggest` | Propose regexes from unmatched interesting lines |
-| `GET /api/logs/raw?lines=400` | Tail current game log |
-| `GET /api/logs/captures` | List prior captures |
-| `GET /api/logs/captures/<id>/download` | Download one capture |
-
-## Adding another game
-
-1. Copy `games/necesse.yaml` → `games/<game>.yaml`
-2. Set `steam_app_id`, `executable`, `arg_map`, `stop_stdin_commands`, `log_patterns`
-3. Point `GAME_PLUGIN=/opt/games/<game>.yaml`
-4. Use Ingress **Capture logs** + **Suggest patterns** after a real play session to harden regexes quickly
-
-## Sync into the HA add-on
+## Sync into HA add-ons
 
 ```bash
 ./scripts/sync-game-server-base.sh
 ```
+
+Copies **only** `game_server/` into each add-on build context. Plugin YAML in each add-on is never overwritten.

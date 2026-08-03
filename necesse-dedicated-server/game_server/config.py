@@ -14,7 +14,6 @@ from .backup import RetentionPolicy
 
 OPTIONS_CANDIDATES = (
     Path("/data/options.json"),
-    Path("/home/necesse/options.json"),  # legacy broken mapping support
 )
 
 

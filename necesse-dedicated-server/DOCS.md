@@ -86,7 +86,7 @@ From Ingress:
 - **Raw log tail** → `/api/logs/raw`
 - Auto-captures also happen on version mismatch and crashes
 
-Use those captures to harden `games/necesse.yaml` log patterns for other games later without entering the container.
+Use those captures to harden `games/game.yaml` log patterns without entering the container.
 
 ## First patch weekend checklist
 
@@ -99,9 +99,9 @@ Use those captures to harden `games/necesse.yaml` log patterns for other games l
 ## Portainer / plain Docker
 
 ```bash
-docker compose -f game-server-base/docker-compose.yml up -d --build
+docker compose -f necesse-dedicated-server/docker-compose.yml up -d --build
 ```
 
 ## Migrating from 1.x
 
-On start, legacy saves under `/home/necesse/.config/Necesse` are copied into `/data/world` when detected. Keep a HA backup before upgrading.
+Legacy path moves are declared in `games/game.yaml` (`path_migrations`) and applied by the generic supervisor on startup. Keep a HA backup before upgrading.

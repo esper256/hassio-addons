@@ -9,12 +9,19 @@ logs_dir: /data/logs
 install_marker: Server.jar
 min_backup_bytes: 1024
 stop_timeout_seconds: 60
-# Necesse accepts console commands on stdin in dedicated mode.
 stop_stdin_commands:
   - save
   - exit
 backup_paths:
   - /data/world
+# One-time path moves for older layouts / image versions.
+path_migrations:
+  - source: /home/necesse/.config/Necesse
+    destination: /data/world
+    marker: saves
+  - source: /opt/game
+    destination: /data/game
+    marker: Server.jar
 executable:
   - java
   - -jar
@@ -40,7 +47,7 @@ arg_map:
   data_dir: -datadir
   logs_dir: -logs
 log_patterns:
-  # Tunable via Ingress log capture + /api/logs/suggest — no SSH required.
+  # Tune via Ingress /api/logs/capture and /api/logs/suggest.
   ready:
     - "Server started"
     - "Listening on"

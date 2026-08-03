@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1
+
+- Enforce clean separation: generic supervisor has no game identity; Necesse is plugin YAML + Java + HA metadata only
+- Move legacy path moves into `games/game.yaml` `path_migrations` (handled by generic code)
+- Base image no longer bundles OpenJDK, game ports, or a default plugin
+
 ## 2.1.0
 
 - Persist Steam game install under `/data/game` (survives container recreate)

@@ -2,13 +2,12 @@
 
 SteamCMD-powered Necesse dedicated server for Home Assistant OS.
 
-Built on the shared [`game-server-base`](../game-server-base) supervisor:
+Thin layer over [`game-server-base`](../game-server-base):
 
-- HA options → server settings
-- Persistent Steam install under `/data/game`
-- Update when empty / on version-mismatch signals
-- Crash restarts + HA notifications (no MQTT)
-- Generational world backups
-- Ingress status page + log capture/suggest toolkit (no SSH)
+- `games/game.yaml` — all Necesse-specific server identity (Steam app id, args, log patterns, migrations)
+- OpenJDK 17 — Necesse runtime dependency
+- HA `config.yaml` / translations / UDP 14159
+
+No Necesse logic belongs in the generic supervisor package.
 
 See [DOCS.md](DOCS.md) for configuration details.
