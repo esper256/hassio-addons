@@ -25,7 +25,13 @@ from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
-from game_server.steamcmd import _run_streaming  # noqa: E402
+from game_server.steamcmd import (  # noqa: E402
+    _build_app_update_cmd,
+    _install_strategies,
+    _run_streaming,
+    looks_missing_configuration,
+    prepare_steam_env,
+)
 from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
@@ -236,6 +242,21 @@ class SteamGateTests(unittest.TestCase):
             self.assertEqual(restored.consecutive_failures, 1)
             self.assertGreater(restored.cooldown_remaining(), 0)
 
+    def test_transient_failure_uses_short_spacing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self._gate(tmp)
+            gate.last_steam_call_at = self.now
+            gate.note_failure(
+                "ERROR! Failed to install app '1169370' (Missing configuration)",
+                kind="app_update",
+                transient=True,
+            )
+            self.assertEqual(gate.last_result, "transient_failure")
+            self.assertEqual(gate.consecutive_failures, 0)
+            remaining = gate.seconds_until_next_call()
+            self.assertLessEqual(remaining, gate.policy.transient_spacing_seconds + 1)
+            self.assertGreater(remaining, 0)
+
     def test_session_enforces_spacing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             gate = self._gate(tmp)
@@ -285,6 +306,64 @@ class LogBridgeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("steam-line-one", output)
         self.assertIn("steam-line-two", output)
+
+
+class SteamCMDHelperTests(unittest.TestCase):
+    def test_missing_configuration_detection(self) -> None:
+        self.assertTrue(
+            looks_missing_configuration(
+                "ERROR! Failed to install app '1169370' (Missing configuration)"
+            )
+        )
+        self.assertFalse(looks_missing_configuration("Success! App '1' fully installed"))
+
+    def test_build_cmd_orders_force_install_before_login(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.steam_platform = "linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            install_dir = Path(tmp) / "game"
+            cmd = _build_app_update_cmd(
+                steamcmd_dir,
+                install_dir,
+                plugin,
+                validate=True,
+                platform="linux",
+            )
+            joined = " ".join(cmd)
+            self.assertIn("+@sSteamCmdForcePlatformType linux", joined)
+            self.assertLess(cmd.index("+force_install_dir"), cmd.index("+login"))
+            self.assertLess(cmd.index("+login"), cmd.index("+app_update"))
+            self.assertIn("validate", cmd)
+            self.assertEqual(cmd[-1], "+quit")
+
+    def test_install_strategies_prioritize_cache_clear(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.steam_platform = "linux"
+        strategies = _install_strategies(plugin, validate=True)
+        self.assertEqual(strategies[0]["platform"], "linux")
+        self.assertFalse(strategies[0]["clear_cache"])
+        self.assertTrue(strategies[1]["clear_cache"])
+        self.assertEqual(strategies[2]["platform"], "windows")
+
+    def test_prepare_steam_env_creates_steamapps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            home = Path(tmp) / "steam-home"
+            old_home = os.environ.get("STEAM_HOME")
+            os.environ["STEAM_HOME"] = str(home)
+            try:
+                env = prepare_steam_env(install_dir)
+            finally:
+                if old_home is None:
+                    os.environ.pop("STEAM_HOME", None)
+                else:
+                    os.environ["STEAM_HOME"] = old_home
+            self.assertEqual(env["HOME"], str(home))
+            self.assertTrue((install_dir / "steamapps").is_dir())
+            self.assertTrue((home / "Steam").is_dir())
 
 
 class LogToolsTests(unittest.TestCase):

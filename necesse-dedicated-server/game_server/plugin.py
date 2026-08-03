@@ -39,6 +39,8 @@ class GamePlugin:
     steam_branch: str = "public"
     steam_login: str = "anonymous"
     steam_password: str = ""
+    # Optional SteamCMD platform override: "linux", "windows", or "".
+    steam_platform: str = ""
     validate_on_update: bool = True
     env: dict[str, str] = field(default_factory=dict)
     arg_map: dict[str, str] = field(default_factory=dict)
@@ -79,6 +81,7 @@ class GamePlugin:
             steam_branch=data.get("steam_branch", "public"),
             steam_login=data.get("steam_login", "anonymous"),
             steam_password=data.get("steam_password", ""),
+            steam_platform=str(data.get("steam_platform") or "").strip().lower(),
             validate_on_update=bool(data.get("validate_on_update", True)),
             env={str(k): str(v) for k, v in (data.get("env") or {}).items()},
             arg_map={str(k): str(v) for k, v in (data.get("arg_map") or {}).items()},

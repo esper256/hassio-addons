@@ -81,6 +81,7 @@ class GameServerSupervisor:
                     config.backup_dir,
                     config.state_dir,
                     config.steamcmd_dir,
+                    steamcmd.steam_home_dir(),
                 ],
             )
 
@@ -259,7 +260,11 @@ class GameServerSupervisor:
         if self.config.drop_privileges:
             prepare_drop(
                 self.config.run_as_user,
-                [self.config.steamcmd_dir, self.config.install_dir],
+                [
+                    self.config.steamcmd_dir,
+                    self.config.install_dir,
+                    steamcmd.steam_home_dir(),
+                ],
             )
         installed = steamcmd.server_installed(
             self.config.install_dir, self.plugin.install_marker
@@ -291,7 +296,11 @@ class GameServerSupervisor:
             if self.config.drop_privileges:
                 prepare_drop(
                     self.config.run_as_user,
-                    [self.config.install_dir, self.config.steamcmd_dir],
+                    [
+                        self.config.install_dir,
+                        self.config.steamcmd_dir,
+                        steamcmd.steam_home_dir(),
+                    ],
                 )
         else:
             self.local_build_id = steamcmd.read_local_build_id(
@@ -348,7 +357,11 @@ class GameServerSupervisor:
             if self.config.drop_privileges:
                 prepare_drop(
                     self.config.run_as_user,
-                    [self.config.install_dir, self.config.steamcmd_dir],
+                    [
+                        self.config.install_dir,
+                        self.config.steamcmd_dir,
+                        steamcmd.steam_home_dir(),
+                    ],
                 )
             self.last_update_applied_at = time.time()
             self.update_apply_count += 1
