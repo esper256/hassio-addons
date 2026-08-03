@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -520,10 +521,13 @@ class StatusServer:
                     return
 
                 if path == "/api/logs/capture":
-                    if capture_cb is None:
-                        self._json(501, {"error": "log capture unavailable"})
-                        return
-                    self._json(200, capture_cb("manual"))
+                    # GET must not mutate state (CSRF / link-prefetch hazard).
+                    self._json(
+                        405,
+                        {
+                            "error": "Use POST /api/logs/capture to create a capture",
+                        },
+                    )
                     return
 
                 if path == "/api/logs/captures":
@@ -543,12 +547,15 @@ class StatusServer:
                         self._json(404, {"error": "capture not found"})
                         return
                     data = archive.read_bytes()
+                    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", capture_id) or "capture"
                     self._send(
                         200,
                         data,
                         "application/gzip",
                         headers={
-                            "Content-Disposition": f'attachment; filename="{capture_id}.tar.gz"'
+                            "Content-Disposition": (
+                                f'attachment; filename="{safe_name}.tar.gz"'
+                            )
                         },
                     )
                     return

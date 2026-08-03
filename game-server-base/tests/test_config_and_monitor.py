@@ -32,6 +32,7 @@ from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
+from game_server.process_manager import ProcessManager, redact_command  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
@@ -659,6 +660,52 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(supervisor._update_bypass_window)
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
+
+    def test_redact_command_hides_server_password(self) -> None:
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                install_dir=str(root / "game"),
+                game_options={
+                    "world_name": "FamilyWorld",
+                    "server_password": "s3cret-pass",
+                    "server_slots": 10,
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            pm = ProcessManager(plugin, cfg)
+            cmd = pm.build_command()
+            self.assertIn("s3cret-pass", cmd)
+            safe = redact_command(cmd, plugin)
+            self.assertNotIn("s3cret-pass", safe)
+            self.assertIn("***", safe)
+            self.assertEqual(pm.to_dict()["command"], safe)
+
+    def test_capture_archive_path_rejects_traversal(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            state = root / "state"
+            logs.mkdir()
+            state.mkdir()
+            evil = state / "evil"
+            evil.mkdir()
+            (evil / "capture.tar.gz").write_bytes(b"pwn")
+            good = state / "captures" / "goodid"
+            # LogToolbox creates captures under state/captures
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            box.captures_dir.mkdir(parents=True, exist_ok=True)
+            capture_dir = box.captures_dir / "20260803T000000Z"
+            capture_dir.mkdir()
+            (capture_dir / "capture.tar.gz").write_bytes(b"ok")
+            self.assertIsNotNone(box.capture_archive_path("20260803T000000Z"))
+            self.assertIsNone(box.capture_archive_path("../evil"))
+            self.assertIsNone(box.capture_archive_path(".."))
+            self.assertIsNone(box.capture_archive_path("evil/../../etc"))
 
     def test_uptime_crashes_game_version_and_subtitle(self) -> None:
         uptime, hint = _format_uptime(

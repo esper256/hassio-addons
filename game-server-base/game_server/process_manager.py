@@ -18,6 +18,49 @@ from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.process")
 
+_SECRET_OPTION_MARKERS = ("password", "secret", "token", "api_key")
+_SECRET_FLAGS = frozenset({"-password", "--password", "-passwd", "--passwd"})
+
+
+def redact_command(cmd: list[str], plugin: GamePlugin | None = None) -> list[str]:
+    """Return argv with secret flag values replaced by ``***``.
+
+    Used for status JSON and logs so a passwordless Ingress page cannot leak
+    the game join password via ``process.command``.
+    """
+
+    secret_flags = set(_SECRET_FLAGS)
+    if plugin is not None:
+        for option_key, flag in plugin.arg_map.items():
+            key = str(option_key).lower()
+            if any(marker in key for marker in _SECRET_OPTION_MARKERS):
+                secret_flags.add(str(flag))
+                if str(flag).endswith("="):
+                    secret_flags.add(str(flag))
+
+    redacted: list[str] = []
+    hide_next = False
+    for part in cmd:
+        text = str(part)
+        if hide_next:
+            redacted.append("***")
+            hide_next = False
+            continue
+        matched_eq = False
+        for flag in secret_flags:
+            if flag.endswith("=") and text.startswith(flag):
+                redacted.append(f"{flag}***")
+                matched_eq = True
+                break
+        if matched_eq:
+            continue
+        if text in secret_flags:
+            redacted.append(text)
+            hide_next = True
+            continue
+        redacted.append(text)
+    return redacted
+
 
 class ProcessManager:
     def __init__(
@@ -117,7 +160,7 @@ class ProcessManager:
             LOG.info(
                 "Starting server (%s): %s (cwd=%s, uid=%s)",
                 reason,
-                " ".join(cmd),
+                " ".join(redact_command(cmd, self.plugin)),
                 workdir,
                 self.run_uid,
             )
@@ -238,6 +281,7 @@ class ProcessManager:
             "last_started_at": self.last_started_at,
             "last_stopped_at": self.last_stopped_at,
             "run_uid": self.run_uid,
-            "command": self.build_command(),
+            # Never expose raw secrets on the passwordless status surface.
+            "command": redact_command(self.build_command(), self.plugin),
             "on_line_error": self.on_line_error,
         }
