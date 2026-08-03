@@ -196,6 +196,12 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-update">{update_check_hint}</div>
       </div>
       <div class="stat">
+        <div class="label">Backups</div>
+        <div class="value" id="v-backups">{backups}</div>
+        <div class="hint" id="h-backups-oldest">{backups_oldest}</div>
+        <div class="hint" id="h-backups-newest">{backups_newest}</div>
+      </div>
+      <div class="stat">
         <div class="label">Game server crashes</div>
         <div class="value" id="v-crashes">{crashes}</div>
         <div class="hint" id="h-crashes">{crashes_hint}</div>
@@ -296,6 +302,9 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('h-game-version-installed', u.game_version_installed);
         setText('v-update', u.update_pending);
         setText('h-update', u.update_check_hint);
+        setText('v-backups', u.backups);
+        setText('h-backups-oldest', u.backups_oldest);
+        setText('h-backups-newest', u.backups_newest);
         setText('v-crashes', u.crashes);
         setText('h-crashes', u.crashes_hint);
         setText('gating-note', u.gating_note);
@@ -522,6 +531,9 @@ class StatusServer:
                         ),
                         update_pending=_html_escape(view["update_pending"]),
                         update_check_hint=_html_escape(view["update_check_hint"]),
+                        backups=_html_escape(str(view["backups"])),
+                        backups_oldest=_html_escape(view["backups_oldest"]),
+                        backups_newest=_html_escape(view["backups_newest"]),
                         crashes=_html_escape(str(view["crashes"])),
                         crashes_hint=_html_escape(view["crashes_hint"]),
                         gating_note=_html_escape(view["gating_note"]),
@@ -645,6 +657,35 @@ def _format_crashes_hint(status: dict[str, Any]) -> str:
     return f"Supervisor uptime: {supervisor}"
 
 
+def _format_backups(status: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (count, oldest hint, newest hint)."""
+
+    info = status.get("backups") or {}
+    try:
+        count = int(info.get("archive_count") if info.get("archive_count") is not None else 0)
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        # Fall back to archive name list if summary fields are absent.
+        archives = info.get("archives") or []
+        count = len(archives) if isinstance(archives, list) else 0
+    if count <= 0:
+        return "0", "No backups yet", ""
+    oldest_at = info.get("oldest_backup_at")
+    newest_at = info.get("newest_backup_at")
+    oldest = (
+        f"Oldest: {_fmt_ago(oldest_at)}"
+        if oldest_at
+        else "Oldest: unknown"
+    )
+    newest = (
+        f"Newest: {_fmt_ago(newest_at)}"
+        if newest_at
+        else "Newest: unknown"
+    )
+    return str(count), oldest, newest
+
+
 def _format_update_check_hint(status: dict[str, Any]) -> str:
     checked_at = status.get("last_update_check_at")
     interval = int(status.get("auto_update_interval_minutes") or 0)
@@ -748,6 +789,7 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     game_version, game_version_build, game_version_installed = _format_game_version(
         status
     )
+    backups, backups_oldest, backups_newest = _format_backups(status)
     return {
         "game": game_name,
         "subtitle": _format_subtitle(status),
@@ -762,6 +804,9 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "game_version_installed": game_version_installed,
         "update_pending": "yes" if status.get("update_pending") else "no",
         "update_check_hint": _format_update_check_hint(status),
+        "backups": backups,
+        "backups_oldest": backups_oldest,
+        "backups_newest": backups_newest,
         "crashes": int(status.get("crash_count") or 0),
         "crashes_hint": _format_crashes_hint(status),
         "gating_note": gating_note,
