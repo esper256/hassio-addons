@@ -14,7 +14,7 @@ from typing import Any
 from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
-from .disk import ensure_free_mb
+from .disk import ensure_free_mb, world_save_size
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
@@ -138,6 +138,16 @@ class GameServerSupervisor:
             if self.monitor.player_tracking_enabled
             else "inactive_no_active_patterns"
         )
+        install_meta = steamcmd.read_local_install_meta(
+            self.config.install_dir, self.plugin.steam_app_id
+        )
+        if install_meta.get("build_id") and not self.local_build_id:
+            self.local_build_id = str(install_meta["build_id"])
+        world_size = world_save_size(
+            self.plugin.data_dir,
+            str(self.config.game_options.get("world_name") or ""),
+            fallback_paths=list(self.backups.sources),
+        )
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
@@ -146,9 +156,12 @@ class GameServerSupervisor:
             "starting": not self.process.running and not self._stop.is_set(),
             "supervisor_uptime_seconds": int(time.time() - self.started_at),
             "restart_count": self.process.restart_count,
+            "last_start_reason": self.process.last_start_reason,
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
             "remote_build_id": self.remote_build_id,
+            "install_last_updated_at": install_meta.get("last_updated"),
+            "world_save": world_size,
             "update_pending": self._update_pending,
             "update_reason": self._update_reason,
             "last_update_check_at": self.last_update_check_at,
@@ -158,6 +171,7 @@ class GameServerSupervisor:
             "update_apply_count": self.update_apply_count,
             "update_apply_failures": self._apply_failures,
             "update_not_before": self._update_not_before or None,
+            "auto_update_interval_minutes": self.config.auto_update_interval_minutes,
             "install_dir": self.config.install_dir,
             "player_gating": player_gating,
             "steam_gate": self.steam_gate.to_dict(),
@@ -288,11 +302,13 @@ class GameServerSupervisor:
                     stop_event=self._stop,
                 )
                 self.last_update_applied_at = time.time()
+                self.last_update_check_at = self.last_update_applied_at
                 self.update_apply_count += 1
                 self.last_update_error = None
                 self._apply_failures = 0
             except SteamCMDError as exc:
                 self.last_update_error = str(exc)
+                self.last_update_check_at = time.time()
                 self.notifier.notify(
                     "steamcmd_failed",
                     f"{self.plugin.name}: SteamCMD failed",
@@ -357,7 +373,7 @@ class GameServerSupervisor:
             return
         try:
             self.monitor.reset_session()
-            self.process.start()
+            self.process.start(reason="update_failed")
         except OSError:
             LOG.exception("Failed restarting server after update failure")
 
@@ -424,7 +440,7 @@ class GameServerSupervisor:
             self._update_reason = None
             self._update_bypass_window = False
         self.monitor.reset_session()
-        self.process.start()
+        self.process.start(reason="update")
         self.notifier.notify(
             "updated",
             f"{self.plugin.name}: updated",
@@ -521,7 +537,7 @@ class GameServerSupervisor:
         self.ensure_installed()
         self.monitor.start()
         self.backups.start()
-        self.process.start()
+        self.process.start(reason="boot")
         self._publish_status()
 
         self._update_thread = threading.Thread(
@@ -569,7 +585,7 @@ class GameServerSupervisor:
                 if self._stop.is_set():
                     break
                 self.monitor.reset_session()
-                self.process.start()
+                self.process.start(reason="crash")
             else:
                 LOG.error("Not restarting after crash (limit reached or disabled)")
                 self.notifier.notify(

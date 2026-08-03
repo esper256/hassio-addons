@@ -19,12 +19,18 @@ from game_server.backup import (  # noqa: E402
     retention_from_profile,
     select_generational_keepers,
 )
+from game_server.disk import format_bytes, world_save_size  # noqa: E402
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
-from game_server.log_bridge import RecentLineDeduper  # noqa: E402
+from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
+from game_server.status_http import (  # noqa: E402
+    _fmt_ago,
+    _format_install_updated,
+    _format_update_check_hint,
+)
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _build_app_update_cmd,
@@ -32,6 +38,7 @@ from game_server.steamcmd import (  # noqa: E402
     looks_missing_configuration,
     parse_app_info_build_id,
     prepare_steam_env,
+    read_local_install_meta,
     update_available,
     wait_for_app_info,
 )
@@ -105,6 +112,24 @@ class MonitorTests(unittest.TestCase):
             report = mon.pattern_report()
             self.assertGreater(report["dry_run_pattern_count"], 0)
             self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
+
+    def test_dry_run_matches_necesse_style_ready_lines(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "\x1b[39m[2026-08-03 12:59:33] Started server using port 14159 "
+                "with 10 slots on world \"FamilyWorld.zip\", game version 1.3.1."
+            )
+            mon.ingest_stdout_line(
+                "[2026-08-03 12:59:48] Suggesting garbage collection due to empty server..."
+            )
+            highlights = mon.state.highlighted_lines
+            self.assertTrue(highlights)
+            joined = "\n".join(item["line"] for item in highlights)
+            self.assertIn("Started server using port", joined)
+            self.assertNotIn("\x1b[", joined)
+            self.assertIn("empty server", joined.lower())
 
     def test_active_patterns_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -277,6 +302,53 @@ class VersionTests(unittest.TestCase):
                 os.environ["APP_VERSION"] = old
 
 
+class StatusFormatTests(unittest.TestCase):
+    def test_fmt_ago(self) -> None:
+        now = 1_700_000_000.0
+        self.assertEqual(_fmt_ago(now - 10, now=now), "just now")
+        self.assertEqual(_fmt_ago(now - 120, now=now), "2m ago")
+        self.assertEqual(_fmt_ago(now - 7200, now=now), "2h ago")
+        self.assertEqual(_fmt_ago(now - 86400 * 3, now=now), "3d ago")
+
+    def test_format_bytes(self) -> None:
+        self.assertEqual(format_bytes(900), "900 B")
+        self.assertEqual(format_bytes(12 * 1024), "12 KB")
+        self.assertEqual(format_bytes(int(1.5 * 1024 * 1024)), "1.5 MB")
+        self.assertEqual(format_bytes(int(2.4 * 1024**3)), "2.4 GB")
+
+    def test_world_save_size_prefers_named_world_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"x" * 2048)
+            (root / "noise.log").write_text("ignore me", encoding="utf-8")
+            info = world_save_size(root, "FamilyWorld", fallback_paths=[root])
+            self.assertEqual(info["scope"], "world_file")
+            self.assertEqual(info["bytes"], 2048)
+            self.assertEqual(info["label"], "FamilyWorld.zip")
+
+    def test_update_check_and_install_hints(self) -> None:
+        now = time.time()
+        hint = _format_update_check_hint(
+            {
+                "last_update_check_at": now - 600,
+                "auto_update_interval_minutes": 15,
+                "update_pending": False,
+            }
+        )
+        self.assertIn("checked", hint)
+        self.assertIn("ago", hint)
+        value, detail = _format_install_updated(
+            {
+                "install_last_updated_at": now - 86400,
+                "local_build_id": "24494683",
+            }
+        )
+        self.assertEqual(value, "1d ago")
+        self.assertIn("24494683", detail)
+
+
 class LogBridgeTests(unittest.TestCase):
     def test_recent_line_deduper(self) -> None:
         deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
@@ -284,6 +356,13 @@ class LogBridgeTests(unittest.TestCase):
         self.assertFalse(deduper.remember_if_new("  Player joined  "))
         self.assertTrue(deduper.remember_if_new("Player left"))
         self.assertFalse(deduper.remember_if_new(""))
+
+    def test_strip_ansi(self) -> None:
+        raw = "\x1b[34m[2026-08-03 12:59:33] Started server using port 14159\x1b[39m"
+        self.assertEqual(
+            strip_ansi(raw),
+            "[2026-08-03 12:59:33] Started server using port 14159",
+        )
 
     def test_steamcmd_streaming_captures_output(self) -> None:
         code, output = _run_streaming(
@@ -377,6 +456,20 @@ class SteamCMDHelperTests(unittest.TestCase):
             self.assertLess(cmd.index("+login"), cmd.index("+app_update"))
             self.assertIn("validate", cmd)
             self.assertEqual(cmd[-1], "+quit")
+
+    def test_read_local_install_meta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            steamapps = install_dir / "steamapps"
+            steamapps.mkdir(parents=True)
+            (steamapps / "appmanifest_1.acf").write_text(
+                '"AppState"\n{\n\t"buildid"\t\t"24494683"\n'
+                '\t"LastUpdated"\t\t"1722686400"\n}\n',
+                encoding="utf-8",
+            )
+            meta = read_local_install_meta(install_dir, 1)
+            self.assertEqual(meta["build_id"], "24494683")
+            self.assertEqual(meta["last_updated"], 1722686400)
 
     def test_prepare_steam_env_creates_steamapps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

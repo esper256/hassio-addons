@@ -8,11 +8,16 @@ status UI so operators can promote precise regexes into each game's plugin
 from __future__ import annotations
 
 # Broad-on-purpose. Active plugin patterns should be much tighter.
+# Matched case-insensitively after ANSI stripping.
 DEFAULT_CANDIDATE_PATTERNS: dict[str, list[str]] = {
     "ready": [
         r"\bserver started\b",
+        r"\bstarted server\b",
+        r"\bstarted server using port\b",
         r"\blistening on\b",
         r"\bworld loaded\b",
+        r"\bloading dedicated server\b",
+        r"\btype help for list of commands\b",
         r"\bready\b",
     ],
     "player_join": [
@@ -30,6 +35,8 @@ DEFAULT_CANDIDATE_PATTERNS: dict[str, list[str]] = {
     "player_count": [
         r"players?\s*(online|:|/)",
         r"\b\d+\s*/\s*\d+\b",
+        r"\b\d+\s+saved players?\b",
+        r"\bempty server\b",
     ],
     "version_mismatch": [
         r"\bwrong version\b",

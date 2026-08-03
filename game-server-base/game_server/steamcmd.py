@@ -174,12 +174,34 @@ def manifest_path(install_dir: str | Path, app_id: int) -> Path | None:
 
 
 def read_local_build_id(install_dir: str | Path, app_id: int) -> str | None:
+    meta = read_local_install_meta(install_dir, app_id)
+    return meta.get("build_id")
+
+
+def read_local_install_meta(
+    install_dir: str | Path, app_id: int
+) -> dict[str, str | int | None]:
+    """Read local Steam appmanifest fields (build id + LastUpdated epoch)."""
+
     path = manifest_path(install_dir, app_id)
     if path is None:
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace")
-    match = re.search(r'"buildid"\s+"(\d+)"', text)
-    return match.group(1) if match else None
+        return {"build_id": None, "last_updated": None}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"build_id": None, "last_updated": None}
+    build_match = re.search(r'"buildid"\s+"(\d+)"', text)
+    updated_match = re.search(r'"LastUpdated"\s+"(\d+)"', text)
+    last_updated: int | None = None
+    if updated_match:
+        try:
+            last_updated = int(updated_match.group(1))
+        except ValueError:
+            last_updated = None
+    return {
+        "build_id": build_match.group(1) if build_match else None,
+        "last_updated": last_updated,
+    }
 
 
 def parse_app_info_build_id(output: str, branch: str = "public") -> str | None:
@@ -412,15 +434,6 @@ def server_installed(install_dir: str | Path, marker_relative: str | None = None
         return False
 
 
-def _platform_candidates(plugin: GamePlugin) -> list[str]:
-    preferred = (plugin.steam_platform or "").strip().lower()
-    platforms = [preferred]  # "" = native depot selection
-    alternate = "windows" if preferred != "windows" else "linux"
-    if alternate not in platforms:
-        platforms.append(alternate)
-    return platforms
-
-
 def install_or_update(
     steamcmd_dir: str | Path,
     install_dir: str | Path,
@@ -435,7 +448,8 @@ def install_or_update(
 
     Returns new local build id. SteamCMD access is serialized through SteamGate.
     Missing install configuration is handled by waiting for app info readiness
-    before running app_update.
+    before running app_update. Platform is whatever the game plugin declares
+    (this stack targets Linux hosts; no cross-OS depot fallback).
     """
 
     gate = get_gate()
@@ -443,7 +457,7 @@ def install_or_update(
     install_dir = Path(install_dir)
     validate = plugin.validate_on_update if validate is None else validate
     env = prepare_steam_env(install_dir)
-    platforms = _platform_candidates(plugin)
+    platform = (plugin.steam_platform or "").strip().lower()
 
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
@@ -457,6 +471,7 @@ def install_or_update(
             plugin.steam_app_id,
         )
         combined = ""
+        returncode = 1
         try:
             with gate.session("app_update", stop_event=stop_event):
                 # Readiness gate: poll app_info_print until buildid exists.
@@ -468,49 +483,29 @@ def install_or_update(
                     clear_cache_once=True,
                 )
 
-                # Install with preferred platform; only if Steam still reports
-                # missing configuration, try the alternate depot platform once.
-                returncode = 1
-                for index, platform in enumerate(platforms):
-                    cmd = _build_app_update_cmd(
-                        steamcmd_dir,
-                        install_dir,
-                        plugin,
-                        validate=validate,
-                        platform=platform,
-                    )
-                    LOG.info(
-                        "Running app_update for app %s (platform=%s)",
-                        plugin.steam_app_id,
-                        platform or "native",
-                    )
-                    returncode, combined = _run_streaming(cmd, timeout=3600, env=env)
-                    if _install_succeeded(
-                        returncode=returncode,
-                        output=combined,
-                        install_dir=install_dir,
-                        plugin=plugin,
-                    ):
-                        build_id = read_local_build_id(
-                            install_dir, plugin.steam_app_id
-                        )
-                        LOG.info(
-                            "SteamCMD succeeded (buildid=%s)", build_id or "unknown"
-                        )
-                        gate.note_success(kind="app_update")
-                        return build_id
-
-                    if (
-                        looks_missing_configuration(combined)
-                        and index + 1 < len(platforms)
-                    ):
-                        LOG.warning(
-                            "app_update reported missing configuration after app "
-                            "info was ready; trying alternate platform=%s",
-                            platforms[index + 1] or "native",
-                        )
-                        continue
-                    break
+                cmd = _build_app_update_cmd(
+                    steamcmd_dir,
+                    install_dir,
+                    plugin,
+                    validate=validate,
+                    platform=platform,
+                )
+                LOG.info(
+                    "Running app_update for app %s (platform=%s)",
+                    plugin.steam_app_id,
+                    platform or "native",
+                )
+                returncode, combined = _run_streaming(cmd, timeout=3600, env=env)
+                if _install_succeeded(
+                    returncode=returncode,
+                    output=combined,
+                    install_dir=install_dir,
+                    plugin=plugin,
+                ):
+                    build_id = read_local_build_id(install_dir, plugin.steam_app_id)
+                    LOG.info("SteamCMD succeeded (buildid=%s)", build_id or "unknown")
+                    gate.note_success(kind="app_update")
+                    return build_id
 
             LOG.warning(
                 "SteamCMD attempt %s failed (exit %s). Tail:\n%s",
@@ -525,8 +520,8 @@ def install_or_update(
                 # Config was supposed to be ready; this is a hard failure mode.
                 last_error = SteamCMDError(
                     f"SteamCMD still reports missing configuration for app "
-                    f"{plugin.steam_app_id} after app info readiness and platform "
-                    f"fallback"
+                    f"{plugin.steam_app_id} after app info readiness "
+                    f"(platform={platform or 'native'})"
                 )
             gate.note_failure(combined, kind="app_update")
         except InterruptedError as exc:

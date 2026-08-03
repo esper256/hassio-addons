@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import SupervisorConfig, format_bool
-from .log_bridge import STDOUT_DEDUPER
+from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.process")
@@ -36,12 +36,14 @@ class ProcessManager:
         self.run_gid = run_gid
         self.proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
+        self.start_count = 0
         self.restart_count = 0
         self.crash_count = 0
         self.intentional_stop = False
         self.last_exit_code: int | None = None
         self.last_started_at: float | None = None
         self.last_stopped_at: float | None = None
+        self.last_start_reason: str | None = None
         self._crash_times: deque[float] = deque(maxlen=100)
         self._reader: threading.Thread | None = None
         self.on_line_error: str | None = None
@@ -90,7 +92,7 @@ class ProcessManager:
         os.setgid(self.run_gid)
         os.setuid(self.run_uid)
 
-    def start(self) -> None:
+    def start(self, reason: str = "boot") -> None:
         with self._lock:
             if self.running:
                 return
@@ -108,8 +110,13 @@ class ProcessManager:
             env = os.environ.copy()
             env.update(self.plugin.env)
             want_stdin = bool(self.plugin.stop_stdin_commands)
+            if self.start_count > 0:
+                self.restart_count += 1
+            self.start_count += 1
+            self.last_start_reason = reason
             LOG.info(
-                "Starting server: %s (cwd=%s, uid=%s)",
+                "Starting server (%s): %s (cwd=%s, uid=%s)",
+                reason,
                 " ".join(cmd),
                 workdir,
                 self.run_uid,
@@ -126,7 +133,6 @@ class ProcessManager:
                 preexec_fn=self._preexec if self.run_uid is not None else None,
             )
             self.last_started_at = time.time()
-            self.restart_count += 1
             self._reader = threading.Thread(
                 target=self._read_output, name="game-stdout", daemon=True
             )
@@ -137,7 +143,7 @@ class ProcessManager:
         if proc is None or proc.stdout is None:
             return
         for line in proc.stdout:
-            text = line.rstrip("\n")
+            text = strip_ansi(line.rstrip("\n"))
             # Prefer process stdout over a later file-log echo of the same line.
             if STDOUT_DEDUPER.remember_if_new(text):
                 LOG.info("[game] %s", text)
@@ -223,7 +229,9 @@ class ProcessManager:
     def to_dict(self) -> dict:
         return {
             "running": self.running,
+            "start_count": self.start_count,
             "restart_count": self.restart_count,
+            "last_start_reason": self.last_start_reason,
             "crash_count": self.crash_count,
             "crashes_last_hour": self.crashes_in_last_hour(),
             "last_exit_code": self.last_exit_code,
