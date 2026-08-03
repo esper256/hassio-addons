@@ -4,6 +4,7 @@
 
 - Status UI cleanup: “Dedicated server supervisor v…”, drop redundant App version / Steam build / Player gating squares
 - Restarts no longer count the first boot; show last start reason (boot / crash / update)
+- Update pending shows last Steam check age; new Game files square shows when the install was last updated
 - Strip ANSI color codes from game logs; broaden dry-run ready/empty-server highlights
 - Log tools: human actions first, captures in a dropdown + download, raw tail falls back to recent output and can render as text
 

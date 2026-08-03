@@ -9,7 +9,7 @@ import threading
 import time
 from collections import deque
 
-# CSI / OSC color codes from Java / game consoles (e.g. Necesse DEBUG blue).
+# CSI / OSC color codes emitted by many game consoles.
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\x1b\\|\x07))")
 
 

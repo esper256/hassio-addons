@@ -138,6 +138,11 @@ class GameServerSupervisor:
             if self.monitor.player_tracking_enabled
             else "inactive_no_active_patterns"
         )
+        install_meta = steamcmd.read_local_install_meta(
+            self.config.install_dir, self.plugin.steam_app_id
+        )
+        if install_meta.get("build_id") and not self.local_build_id:
+            self.local_build_id = str(install_meta["build_id"])
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
@@ -150,6 +155,7 @@ class GameServerSupervisor:
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
             "remote_build_id": self.remote_build_id,
+            "install_last_updated_at": install_meta.get("last_updated"),
             "update_pending": self._update_pending,
             "update_reason": self._update_reason,
             "last_update_check_at": self.last_update_check_at,
@@ -159,6 +165,7 @@ class GameServerSupervisor:
             "update_apply_count": self.update_apply_count,
             "update_apply_failures": self._apply_failures,
             "update_not_before": self._update_not_before or None,
+            "auto_update_interval_minutes": self.config.auto_update_interval_minutes,
             "install_dir": self.config.install_dir,
             "player_gating": player_gating,
             "steam_gate": self.steam_gate.to_dict(),
@@ -289,11 +296,13 @@ class GameServerSupervisor:
                     stop_event=self._stop,
                 )
                 self.last_update_applied_at = time.time()
+                self.last_update_check_at = self.last_update_applied_at
                 self.update_apply_count += 1
                 self.last_update_error = None
                 self._apply_failures = 0
             except SteamCMDError as exc:
                 self.last_update_error = str(exc)
+                self.last_update_check_at = time.time()
                 self.notifier.notify(
                     "steamcmd_failed",
                     f"{self.plugin.name}: SteamCMD failed",

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -164,7 +165,16 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint">{restart_hint}</div>
       </div>
       <div class="stat"><div class="label">Crashes</div><div class="value">{crashes}</div></div>
-      <div class="stat"><div class="label">Update pending</div><div class="value">{update_pending}</div></div>
+      <div class="stat">
+        <div class="label">Update pending</div>
+        <div class="value">{update_pending}</div>
+        <div class="hint">{update_check_hint}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Game files</div>
+        <div class="value">{install_updated}</div>
+        <div class="hint">{install_updated_hint}</div>
+      </div>
     </div>
     <p class="sub warn">{gating_note}</p>
 
@@ -464,6 +474,10 @@ class StatusServer:
                         if status.get("restart_count", 0) or reason != "boot"
                         else "first start (not counted as a restart)"
                     )
+                    update_check_hint = _format_update_check_hint(status)
+                    install_updated, install_updated_hint = _format_install_updated(
+                        status
+                    )
                     html = HTML_PAGE.format(
                         game=game_name,
                         base_href=_html_escape(self._ingress_base()),
@@ -480,6 +494,9 @@ class StatusServer:
                         restart_hint=_html_escape(restart_hint),
                         crashes=status.get("crash_count", 0),
                         update_pending="yes" if status.get("update_pending") else "no",
+                        update_check_hint=_html_escape(update_check_hint),
+                        install_updated=_html_escape(install_updated),
+                        install_updated_hint=_html_escape(install_updated_hint),
                         pattern_rows=_format_pattern_rows(patterns.get("patterns") or []),
                         highlights=_html_escape(highlights),
                         recent=_html_escape(recent),
@@ -519,6 +536,74 @@ def _fmt_seconds(value: Any) -> str:
     if minutes:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def _fmt_ago(timestamp: Any, *, now: float | None = None) -> str:
+    """Human relative time like '12m ago' / '3d ago' from a unix timestamp."""
+
+    try:
+        ts = float(timestamp)
+    except (TypeError, ValueError):
+        return "unknown"
+    if ts <= 0:
+        return "unknown"
+    age = max(0, int((now if now is not None else time.time()) - ts))
+    if age < 45:
+        return "just now"
+    if age < 3600:
+        minutes = max(1, age // 60)
+        return f"{minutes}m ago"
+    if age < 86400:
+        hours = max(1, age // 3600)
+        return f"{hours}h ago"
+    if age < 86400 * 14:
+        days = max(1, age // 86400)
+        return f"{days}d ago"
+    if age < 86400 * 60:
+        weeks = max(1, age // (86400 * 7))
+        return f"{weeks}w ago"
+    months = max(1, age // (86400 * 30))
+    return f"{months}mo ago"
+
+
+def _format_update_check_hint(status: dict[str, Any]) -> str:
+    checked_at = status.get("last_update_check_at")
+    interval = int(status.get("auto_update_interval_minutes") or 0)
+    error = status.get("last_update_error")
+    if checked_at:
+        hint = f"checked {_fmt_ago(checked_at)}"
+        if status.get("update_pending") and status.get("update_reason"):
+            hint += f" · {status.get('update_reason')}"
+        elif error and not status.get("update_pending"):
+            # Keep this short; full error remains in status JSON.
+            hint += " · last check had an error"
+        return hint
+    if interval <= 0:
+        return "Steam checks disabled"
+    return "not checked yet"
+
+
+def _format_install_updated(status: dict[str, Any]) -> tuple[str, str]:
+    """Return (value, hint) for when game files were last updated on disk."""
+
+    install_ts = status.get("install_last_updated_at")
+    applied_ts = status.get("last_update_applied_at")
+    build = status.get("local_build_id")
+    if install_ts:
+        value = _fmt_ago(install_ts)
+        hint = f"Steam build {build}" if build else "from Steam install stamp"
+        return value, hint
+    if applied_ts:
+        value = _fmt_ago(applied_ts)
+        hint = (
+            f"supervisor last applied · build {build}"
+            if build
+            else "supervisor last applied an update"
+        )
+        return value, hint
+    if build:
+        return "unknown age", f"Steam build {build}"
+    return "unknown", "no Steam install stamp yet"
 
 
 def _html_escape(text: str) -> str:

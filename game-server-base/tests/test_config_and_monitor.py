@@ -25,6 +25,11 @@ from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
+from game_server.status_http import (  # noqa: E402
+    _fmt_ago,
+    _format_install_updated,
+    _format_update_check_hint,
+)
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _build_app_update_cmd,
@@ -32,6 +37,7 @@ from game_server.steamcmd import (  # noqa: E402
     looks_missing_configuration,
     parse_app_info_build_id,
     prepare_steam_env,
+    read_local_install_meta,
     update_available,
     wait_for_app_info,
 )
@@ -295,6 +301,35 @@ class VersionTests(unittest.TestCase):
                 os.environ["APP_VERSION"] = old
 
 
+class StatusFormatTests(unittest.TestCase):
+    def test_fmt_ago(self) -> None:
+        now = 1_700_000_000.0
+        self.assertEqual(_fmt_ago(now - 10, now=now), "just now")
+        self.assertEqual(_fmt_ago(now - 120, now=now), "2m ago")
+        self.assertEqual(_fmt_ago(now - 7200, now=now), "2h ago")
+        self.assertEqual(_fmt_ago(now - 86400 * 3, now=now), "3d ago")
+
+    def test_update_check_and_install_hints(self) -> None:
+        now = time.time()
+        hint = _format_update_check_hint(
+            {
+                "last_update_check_at": now - 600,
+                "auto_update_interval_minutes": 15,
+                "update_pending": False,
+            }
+        )
+        self.assertIn("checked", hint)
+        self.assertIn("ago", hint)
+        value, detail = _format_install_updated(
+            {
+                "install_last_updated_at": now - 86400,
+                "local_build_id": "24494683",
+            }
+        )
+        self.assertEqual(value, "1d ago")
+        self.assertIn("24494683", detail)
+
+
 class LogBridgeTests(unittest.TestCase):
     def test_recent_line_deduper(self) -> None:
         deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
@@ -402,6 +437,20 @@ class SteamCMDHelperTests(unittest.TestCase):
             self.assertLess(cmd.index("+login"), cmd.index("+app_update"))
             self.assertIn("validate", cmd)
             self.assertEqual(cmd[-1], "+quit")
+
+    def test_read_local_install_meta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            steamapps = install_dir / "steamapps"
+            steamapps.mkdir(parents=True)
+            (steamapps / "appmanifest_1.acf").write_text(
+                '"AppState"\n{\n\t"buildid"\t\t"24494683"\n'
+                '\t"LastUpdated"\t\t"1722686400"\n}\n',
+                encoding="utf-8",
+            )
+            meta = read_local_install_meta(install_dir, 1)
+            self.assertEqual(meta["build_id"], "24494683")
+            self.assertEqual(meta["last_updated"], 1722686400)
 
     def test_prepare_steam_env_creates_steamapps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

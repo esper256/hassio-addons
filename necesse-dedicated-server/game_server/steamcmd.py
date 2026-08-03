@@ -174,12 +174,34 @@ def manifest_path(install_dir: str | Path, app_id: int) -> Path | None:
 
 
 def read_local_build_id(install_dir: str | Path, app_id: int) -> str | None:
+    meta = read_local_install_meta(install_dir, app_id)
+    return meta.get("build_id")
+
+
+def read_local_install_meta(
+    install_dir: str | Path, app_id: int
+) -> dict[str, str | int | None]:
+    """Read local Steam appmanifest fields (build id + LastUpdated epoch)."""
+
     path = manifest_path(install_dir, app_id)
     if path is None:
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace")
-    match = re.search(r'"buildid"\s+"(\d+)"', text)
-    return match.group(1) if match else None
+        return {"build_id": None, "last_updated": None}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"build_id": None, "last_updated": None}
+    build_match = re.search(r'"buildid"\s+"(\d+)"', text)
+    updated_match = re.search(r'"LastUpdated"\s+"(\d+)"', text)
+    last_updated: int | None = None
+    if updated_match:
+        try:
+            last_updated = int(updated_match.group(1))
+        except ValueError:
+            last_updated = None
+    return {
+        "build_id": build_match.group(1) if build_match else None,
+        "last_updated": last_updated,
+    }
 
 
 def parse_app_info_build_id(output: str, branch: str = "public") -> str | None:
