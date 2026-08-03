@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from .version import app_version
+
 LOG = logging.getLogger("game_server.status_http")
+
+# Home Assistant Ingress proxy source address (Supervisor).
+INGRESS_PEER = "172.30.32.2"
 
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -18,6 +24,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="refresh" content="20" />
+  <base href="{base_href}" />
   <title>{game} server status</title>
   <style>
     :root {{
@@ -117,15 +124,16 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
   <main>
     <h1>{game}</h1>
-    <p class="sub">Dedicated server supervisor · no SSH needed for logs</p>
+    <p class="sub">Dedicated server supervisor · app {app_version} · Steam build {build}</p>
     <div class="grid">
+      <div class="stat"><div class="label">App version</div><div class="value accent">{app_version}</div></div>
       <div class="stat"><div class="label">Server</div><div class="value {running_class}">{running}</div></div>
       <div class="stat"><div class="label">Players</div><div class="value">{players}</div></div>
       <div class="stat"><div class="label">Player gating</div><div class="value">{player_gating}</div></div>
       <div class="stat"><div class="label">Uptime</div><div class="value">{uptime}</div></div>
       <div class="stat"><div class="label">Restarts</div><div class="value">{restarts}</div></div>
       <div class="stat"><div class="label">Crashes</div><div class="value">{crashes}</div></div>
-      <div class="stat"><div class="label">Build</div><div class="value accent">{build}</div></div>
+      <div class="stat"><div class="label">Steam build</div><div class="value accent">{build}</div></div>
       <div class="stat"><div class="label">Update pending</div><div class="value">{update_pending}</div></div>
     </div>
     <p class="sub warn">{gating_note}</p>
@@ -135,7 +143,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <span class="tag active">active</span> can trigger updates/player state.
       <span class="tag dry_run">dry_run</span> only highlights candidates.
       <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
-      JSON: <a href="/api/logs/patterns">/api/logs/patterns</a>
+      JSON: <a href="api/logs/patterns">api/logs/patterns</a>
     </p>
     <table>
       <thead>
@@ -151,11 +159,11 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>Log tools</h2>
     <div class="actions">
-      <a href="/api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
-      <a href="/api/logs/suggest">Suggest patterns</a>
-      <a href="/api/logs/raw?lines=400">Raw log tail</a>
-      <a href="/api/logs/captures">List captures</a>
-      <a href="/api/status">Status JSON</a>
+      <a href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
+      <a href="api/logs/suggest">Suggest patterns</a>
+      <a href="api/logs/raw?lines=400">Raw log tail</a>
+      <a href="api/logs/captures">List captures</a>
+      <a href="api/status">Status JSON</a>
     </div>
     <p class="sub">Captures land under <code>/data/supervisor/captures</code> and are downloadable as tar.gz.</p>
     <ul>{captures}</ul>
@@ -166,10 +174,10 @@ HTML_PAGE = """<!DOCTYPE html>
   <script>
     async function postCapture(ev) {{
       ev.preventDefault();
-      const res = await fetch('/api/logs/capture', {{ method: 'POST' }});
+      const res = await fetch('api/logs/capture', {{ method: 'POST' }});
       const data = await res.json();
       if (data.download_path) {{
-        window.location = data.download_path;
+        window.location = data.download_path.replace(/^\\//, '');
       }} else {{
         alert(JSON.stringify(data, null, 2));
       }}
@@ -211,6 +219,22 @@ class StatusServer:
             def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
                 LOG.debug("%s - %s", self.address_string(), fmt % args)
 
+            def _peer_allowed(self) -> bool:
+                # Under Home Assistant, Ingress + watchdog come from Supervisor.
+                # Outside HA (Portainer/Docker), allow all peers.
+                if not os.environ.get("SUPERVISOR_TOKEN"):
+                    return True
+                peer = self.client_address[0]
+                return peer == INGRESS_PEER
+
+            def _ingress_base(self) -> str:
+                raw = (self.headers.get("X-Ingress-Path") or "").strip()
+                if not raw:
+                    return "/"
+                if not raw.startswith("/"):
+                    raw = "/" + raw
+                return raw.rstrip("/") + "/"
+
             def _send(
                 self,
                 code: int,
@@ -233,6 +257,9 @@ class StatusServer:
                 self._send(code, body, "application/json; charset=utf-8")
 
             def do_POST(self) -> None:  # noqa: N802
+                if not self._peer_allowed():
+                    self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                    return
                 path = urlparse(self.path).path
                 if path == "/api/logs/capture":
                     if capture_cb is None:
@@ -243,6 +270,9 @@ class StatusServer:
                 self._json(404, {"error": "not found"})
 
             def do_GET(self) -> None:  # noqa: N802
+                if not self._peer_allowed():
+                    self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                    return
                 parsed = urlparse(self.path)
                 path = parsed.path
                 query = parse_qs(parsed.query)
@@ -342,8 +372,9 @@ class StatusServer:
                     captures = status.get("log_captures") or []
                     capture_items = []
                     for item in captures[:8]:
+                        href = str(item.get("download_path") or "").lstrip("/")
                         capture_items.append(
-                            f'<li><a href="{item.get("download_path")}">{item.get("id")}</a>'
+                            f'<li><a href="{href}">{item.get("id")}</a>'
                             f' · {item.get("reason")}</li>'
                         )
                     players_known = monitor.get("players_known")
@@ -365,6 +396,10 @@ class StatusServer:
                         )
                     html = HTML_PAGE.format(
                         game=game_name,
+                        base_href=_html_escape(self._ingress_base()),
+                        app_version=_html_escape(
+                            str(status.get("app_version") or app_version())
+                        ),
                         running="running" if status.get("running") else "stopped",
                         running_class="good" if status.get("running") else "bad",
                         players=player_value,

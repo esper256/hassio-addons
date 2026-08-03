@@ -25,9 +25,17 @@ Requires an **amd64** Home Assistant OS host (SteamCMD). On aarch64 machines the
 6. On your router, forward **UDP 14159** to your Home Assistant host.
 7. In Necesse, connect to your HA host IP on port `14159` (with the password if you set one).
 
-The first start downloads the dedicated server through Steam. That can take several minutes. Watch the add-on **Logs** tab for `[steamcmd]` progress, then `[game]` / startup lines.
+The first start downloads the dedicated server through Steam. That can take several minutes. Watch the app **Logs** tab — the very first lines print `Home Assistant app version: …` so you can confirm the install.
 
-Open the add-on **Ingress** UI (or the “Open Web UI” style entry) for status, build id, backups, and log tools.
+### Status page (OPEN WEB UI)
+
+1. Start the app (it must be running).
+2. On the Info tab, click **OPEN WEB UI** (top of the page — not the “Ingress” info chip).
+3. Optional: enable **Show in sidebar** for a permanent Necesse entry.
+
+That UI is served through Home Assistant Ingress on internal port **8099**. No host port is published, so nothing clashes with other `:8080` services.
+
+The Info-tab **Ingress** chip that only says “This app supports ingress…” is an explanation dialog, not the status page.
 
 ---
 
@@ -82,8 +90,8 @@ Backups refuse empty/tiny worlds, back off after failures, and won’t run if fr
 
 ### Logs
 
-- **Home Assistant → add-on Logs tab** — live supervisor + game + SteamCMD output (`[game]`, `[game-log]`, `[steamcmd]`)
-- **Ingress** — status, pattern hits, raw tail, downloadable log captures (no SSH needed)
+- **Home Assistant → app Logs tab** — starts with a version banner, then supervisor + game + SteamCMD (`[game]`, `[game-log]`, `[steamcmd]`)
+- **OPEN WEB UI** — status, pattern hits, raw tail, downloadable log captures (no SSH / no host port)
 
 ---
 
@@ -98,7 +106,7 @@ docker compose -f necesse-dedicated-server/docker-compose.yml up -d --build
 Or in Portainer: deploy that compose file, then set `SERVER_PASSWORD` / `WORLD_NAME` in the environment block.
 
 - Game port: **UDP 14159**
-- Status UI: **HTTP 8080** (`/healthz`, `/api/status`, log tools)
+- Status UI: **HTTP 8099** (`/healthz`, `/api/status`, log tools) — mapped only for plain Docker; HAOS uses Ingress instead
 - Persistent data: bind-mount `./data` → `/data` (already in the sample compose)
 
 Home Assistant notifications are off in the sample compose (`HA_NOTIFICATIONS=false`) because there is no Supervisor API outside HAOS.
@@ -121,19 +129,7 @@ Everything important is under `/data` (the add-on data volume, or your Docker bi
 
 ## Optional: Home Assistant sensors
 
-If you expose port `8080` (or call the same APIs through Ingress tooling):
-
-```yaml
-rest:
-  - resource: http://homeassistant.local:8080/api/status
-    sensor:
-      - name: Necesse Players
-        value_template: "{{ value_json.monitor.player_count }}"
-      - name: Necesse Update Pending
-        value_template: "{{ value_json.update_pending }}"
-      - name: Necesse Build
-        value_template: "{{ value_json.local_build_id }}"
-```
+Prefer OPEN WEB UI / sidebar for day-to-day checks. For sensors, use Ingress or a future Core API push — avoid publishing a host status port.
 
 ---
 

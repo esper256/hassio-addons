@@ -26,6 +26,7 @@ from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.steamcmd import _run_streaming  # noqa: E402
+from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 
@@ -252,6 +253,19 @@ class SteamGateTests(unittest.TestCase):
                 pass
             self.assertGreaterEqual(sum(self.sleeps), 89)
             gate._sleep = original_sleep  # type: ignore[method-assign]
+
+
+class VersionTests(unittest.TestCase):
+    def test_app_version_reads_env(self) -> None:
+        old = os.environ.get("APP_VERSION")
+        os.environ["APP_VERSION"] = "2.1.8-test"
+        try:
+            self.assertEqual(app_version(), "2.1.8-test")
+        finally:
+            if old is None:
+                os.environ.pop("APP_VERSION", None)
+            else:
+                os.environ["APP_VERSION"] = old
 
 
 class LogBridgeTests(unittest.TestCase):

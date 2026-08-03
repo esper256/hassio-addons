@@ -181,7 +181,8 @@ class LogToolbox:
                     "created_at": meta.get("created_at"),
                     "reason": meta.get("reason"),
                     "has_archive": archive.is_file(),
-                    "download_path": f"/api/logs/captures/{path.name}/download",
+                    # Relative path so Home Assistant Ingress (X-Ingress-Path) works.
+                    "download_path": f"api/logs/captures/{path.name}/download",
                 }
             )
         return items
@@ -257,7 +258,7 @@ class LogToolbox:
         return {
             "id": capture_id,
             "path": str(dest),
-            "download_path": f"/api/logs/captures/{capture_id}/download",
+            "download_path": f"api/logs/captures/{capture_id}/download",
             "analysis_summary": {
                 key: len(vals) for key, vals in analysis.get("matches", {}).items()
             },

@@ -23,6 +23,7 @@ from .privileges import prepare_drop
 from .process_manager import ProcessManager
 from .status_http import StatusServer
 from .steam_gate import configure_gate
+from .version import app_version
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -136,6 +137,7 @@ class GameServerSupervisor:
         )
         return {
             "game": self.plugin.name,
+            "app_version": app_version(),
             "steam_app_id": self.plugin.steam_app_id,
             "running": self.process.running,
             "starting": not self.process.running and not self._stop.is_set(),
@@ -544,6 +546,11 @@ def main(argv: list[str] | None = None) -> int:
     ).upper()
     configure_logging(getattr(logging, level_name, logging.INFO))
 
+    version = app_version()
+    LOG.info("============================================================")
+    LOG.info("Home Assistant app version: %s", version)
+    LOG.info("============================================================")
+
     plugin_path = resolve_plugin_path(args.plugin)
     LOG.info("Loading game plugin from %s", plugin_path)
     plugin = load_plugin(plugin_path)
@@ -556,9 +563,14 @@ def main(argv: list[str] | None = None) -> int:
         "[game] process output, [game-log] file-only lines, [steamcmd] updates"
     )
     LOG.info(
-        "Starting supervisor for %s (appid=%s, install_dir=%s)",
+        "Ingress status UI listens on port %s (HA OPEN WEB UI; host port not required)",
+        config.status_http_port,
+    )
+    LOG.info(
+        "Starting supervisor for %s (appid=%s, app_version=%s, install_dir=%s)",
         plugin.name,
         plugin.steam_app_id,
+        version,
         config.install_dir,
     )
     supervisor = GameServerSupervisor(plugin, config)

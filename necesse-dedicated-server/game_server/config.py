@@ -40,10 +40,10 @@ class SupervisorConfig:
     run_as_user: str = "gameserver"
     drop_privileges: bool = True
 
-    # Status HTTP / notifications
+    # Status HTTP / notifications (8099 = Home Assistant Ingress default)
     status_http_enabled: bool = True
     status_http_host: str = "0.0.0.0"
-    status_http_port: int = 8080
+    status_http_port: int = 8099
     ha_notifications: bool = True
 
     # Backups
@@ -261,7 +261,7 @@ def load_config() -> SupervisorConfig:
         drop_privileges=_as_bool(normalized.get("drop_privileges"), True),
         status_http_enabled=_as_bool(normalized.get("status_http_enabled"), True),
         status_http_host=str(normalized.get("status_http_host") or "0.0.0.0"),
-        status_http_port=_as_int(normalized.get("status_http_port"), 8080),
+        status_http_port=_as_int(normalized.get("status_http_port"), 8099),
         ha_notifications=_as_bool(normalized.get("ha_notifications"), True),
         backup_enabled=_as_bool(normalized.get("backup_enabled"), True),
         backup_interval_minutes=_as_int(

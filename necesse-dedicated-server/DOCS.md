@@ -11,12 +11,19 @@ For the same guide on GitHub (including Docker/Portainer), see [README.md](READM
 ## Quick start
 
 1. Set **World name** and a **Server password** on the Configuration tab.
-2. Start the add-on.
+2. **Start** the app.
 3. Forward **UDP 14159** on your router to this Home Assistant host.
 4. In Necesse, join `your-ha-ip:14159`.
-5. Open this add-on’s Ingress panel for status, build id, backups, and log tools.
+5. On the Info tab click **OPEN WEB UI** for status, build id, backups, and log tools (optional: **Show in sidebar**).
 
-The first start downloads the dedicated server through Steam and can take several minutes. Use the **Logs** tab to watch `[steamcmd]` then `[game]` output.
+The first start downloads the dedicated server through Steam and can take several minutes. The **Logs** tab begins with `Home Assistant app version: …`, then `[steamcmd]` / `[game]` output.
+
+### OPEN WEB UI vs the Ingress chip
+
+- **OPEN WEB UI** (top of Info, only while the app is started) → the status page.
+- The **Ingress** chip that opens “This app supports ingress for secure access.” → just an explanation, not the UI.
+
+Status is served on internal port **8099** through Home Assistant’s authenticated proxy. No host port is published.
 
 ## Settings that matter
 
@@ -57,8 +64,8 @@ Empty/tiny worlds are skipped; failures back off; low free disk blocks backup/up
 
 | Where | What you’ll see |
 | --- | --- |
-| Add-on **Logs** tab | Supervisor events, `[game]` process output, `[game-log]` file-only lines, `[steamcmd]` updates |
-| **Ingress** | Status, pattern hits, raw tail, downloadable captures |
+| App **Logs** tab | Version banner, then supervisor / `[game]` / `[game-log]` / `[steamcmd]` |
+| **OPEN WEB UI** | Status, pattern hits, raw tail, downloadable captures |
 
 ## Where files live
 
@@ -75,20 +82,6 @@ Empty/tiny worlds are skipped; failures back off; low free disk blocks backup/up
 With **HA notifications** enabled (default), the add-on creates Home Assistant persistent notifications for version mismatch, crashes, and Steam/update failures (Core API via Supervisor — not MQTT).
 
 It also writes `/data/supervisor/status.json` continuously.
-
-Optional sensors (if you expose port 8080):
-
-```yaml
-rest:
-  - resource: http://homeassistant.local:8080/api/status
-    sensor:
-      - name: Necesse Players
-        value_template: "{{ value_json.monitor.player_count }}"
-      - name: Necesse Update Pending
-        value_template: "{{ value_json.update_pending }}"
-      - name: Necesse Build
-        value_template: "{{ value_json.local_build_id }}"
-```
 
 ## Advanced notes
 

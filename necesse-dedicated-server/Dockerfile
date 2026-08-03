@@ -12,7 +12,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GAME_PLUGIN=/opt/games/game.yaml \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt \
-    INSTALL_DIR=/data/game
+    INSTALL_DIR=/data/game \
+    APP_VERSION=${BUILD_VERSION} \
+    STATUS_HTTP_PORT=8099
 
 RUN dpkg --add-architecture i386 \
  && apt-get update \
@@ -41,8 +43,10 @@ RUN useradd -m -u 1000 -s /bin/bash gameserver \
 COPY game_server /opt/game_server
 # Necesse-only plugin config
 COPY games/game.yaml /opt/games/game.yaml
+COPY config.yaml /etc/hassio_app_config.yaml
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
+RUN chmod +x /run.sh \
+ && printf '%s' "${BUILD_VERSION}" > /etc/hassio_app_version
 
 WORKDIR /data/game
 
@@ -54,5 +58,6 @@ LABEL \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/esper256/hassio-addons"
 
-EXPOSE 14159/udp 8080
+# 8099 = HA Ingress convention (not published on the host by default)
+EXPOSE 14159/udp 8099
 ENTRYPOINT ["/run.sh"]
