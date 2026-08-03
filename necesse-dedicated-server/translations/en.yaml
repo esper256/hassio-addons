@@ -58,7 +58,7 @@ configuration:
     description: Automatically relaunch the server process after an unexpected exit.
   status_http_enabled:
     name: Status page
-    description: Serve the supervisor status/log HTTP UI used by Ingress and /healthz.
+    description: Serve the supervisor status/log HTTP UI used by Home Assistant OPEN WEB UI (Ingress on port 8099).
   ha_notifications:
     name: Home Assistant notifications
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
@@ -79,4 +79,3 @@ configuration:
     description: Skip backups/updates when free space under /data falls below this threshold.
 network:
   14159/udp: Necesse game traffic
-  8080/tcp: Status dashboard (optional host mapping; Ingress preferred)

@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "2.1.7"
+version: "2.1.8"
 slug: "necesse_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
 # SteamCMD / Necesse dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
@@ -12,17 +12,17 @@ init: false
 host_network: false
 hassio_api: true
 homeassistant_api: true
+# Ingress = OPEN WEB UI (appears after the app is started). Uses HA auth; no host port.
 ingress: true
-ingress_port: 8080
+ingress_port: 8099
 ingress_entry: /
+ingress_stream: true
 panel_icon: mdi:sword
 panel_title: Necesse
 ports:
   14159/udp: 14159
-  8080/tcp: null
 ports_description:
   14159/udp: Necesse game traffic (UDP)
-  8080/tcp: Status dashboard (also available via Ingress)
 options:
   world_name: "FamilyWorld"
   server_password: ""
@@ -79,7 +79,7 @@ backup_exclude:
   - "**/steamapps/**"
   - "**/steamcmd/**"
   - "game/**"
-watchdog: http://[HOST]:[PORT:8080]/healthz
+watchdog: http://[HOST]:[PORT:8099]/healthz
 # Supervisor hard-caps timeout at 300. Values above that make the app vanish from the store.
 # First SteamCMD download can still take longer; the process keeps running after start.
 timeout: 300

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.8
+
+- Align status UI with Home Assistant Ingress defaults (port **8099**, Supervisor-only peers, `X-Ingress-Path` base href)
+- Remove host `8080` mapping entirely — use **OPEN WEB UI** after start (not the Ingress info chip)
+- Print a clear `Home Assistant app version: …` banner at the earliest startup point (shell + Python logs)
+
 ## 2.1.7
 
 - Fix HAOS App store discovery: Supervisor rejects `timeout` above 300, which silently hid this app from the repository
