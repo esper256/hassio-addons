@@ -46,9 +46,17 @@ arg_map:
   max_client_latency: -maxlatency
   data_dir: -datadir
   logs_dir: -logs
-# Player/ready/mismatch stay empty until proven — those gate updates.
-# game_version is informational only (status UI); safe to activate from real logs:
-#   Started server using port … game version 1.3.1.
+# Promoted from real Ingress dry-run highlights (Necesse 1.3.1 logs).
+# Player identity is the SteamID64 from connect/disconnect lines (not display name).
+# Do NOT activate “Found N saved players” or “empty server” GC lines as player_count —
+# those are not online counts; join/leave tracking gates empty-server updates instead.
 log_patterns:
+  ready:
+    - '\bStarted server using port\s+(?P<port>\d+)\b'
   game_version:
     - '\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b'
+    - '\bLoading dedicated server on version\s+(?P<version>\d+(?:\.\d+)+)\b'
+  player_join:
+    - 'Client "(?P<player>[^"]+)" connected on slot\s+\d+/\d+'
+  player_leave:
+    - 'Player (?P<player>\S+)\s+\([^)]*\)\s+disconnected\b'

@@ -143,15 +143,13 @@ Older versions wrapped a third-party image and bridged HA options with fragile s
 
 SteamCMD calls are serialized, spaced, and backed off on failure so a bad Steam day cannot spin a tight retry loop against Valve. Rate-limit-like output cools down for hours; state is kept in `/data/supervisor/steam_gate.json`.
 
-### Player / version log patterns (alpha-safe)
+### Player / version log patterns
 
-Active regexes ship **empty**. Generic candidates only *highlight* likely join/leave/version lines in Ingress until you promote proven ones into `games/game.yaml`. Until then:
+Necesse now ships proven active patterns in `games/game.yaml` for ready, game version, and player join/leave (SteamID64). That enables empty-server update gating.
 
-- Steam `buildid` auto-updates still work
-- “Update only when empty” cannot see players yet (it won’t block forever)
-- Version-mismatch auto-update stays off until you promote a pattern
+Version-mismatch auto-update stays off until a mismatch line is seen in Ingress and promoted. Generic dry-run candidates still highlight other likely lines.
 
-To promote: play / attempt a bad join → Ingress **Log pattern hits** → copy a clean dry-run regex into `log_patterns` → rebuild/restart.
+To promote more (or for a new game on this architecture): play / attempt a bad join → Ingress **Log pattern hits** → craft a tight regex from the real line → put it in `log_patterns` → rebuild/restart.
 
 ### Changelog
 

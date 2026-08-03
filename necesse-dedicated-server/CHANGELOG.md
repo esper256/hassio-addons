@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.13
+
+- Promote proven Necesse log patterns from Ingress dry-run highlights: ready (`Started server using port`), player join/leave (SteamID64), and an earlier game-version line (`Loading dedicated server on version`)
+- Empty-server update gating now uses join/leave tracking (not “saved players” / garbage-collection lines)
+- Status hero: Backups card with archive count plus oldest and newest backup ages
+
 ## 2.1.12
 
 - Reorganize status hero: Server, Number of players, Uptime, Game version, Update pending, Game server crashes
