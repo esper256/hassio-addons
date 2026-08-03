@@ -14,6 +14,7 @@ from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
+from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .migrate import apply_path_migrations
 from .monitor import LogMonitor
@@ -471,7 +472,6 @@ class GameServerSupervisor:
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    import sys
 
     parser = argparse.ArgumentParser(description="Generic Steam game server supervisor")
     parser.add_argument(
@@ -489,11 +489,7 @@ def main(argv: list[str] | None = None) -> int:
     level_name = (
         args.log_level or __import__("os").environ.get("LOG_LEVEL") or "INFO"
     ).upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
+    configure_logging(getattr(logging, level_name, logging.INFO))
 
     plugin_path = resolve_plugin_path(args.plugin)
     LOG.info("Loading game plugin from %s", plugin_path)
@@ -502,6 +498,10 @@ def main(argv: list[str] | None = None) -> int:
     if not config.install_dir:
         config.install_dir = "/data/game"
 
+    LOG.info(
+        "Home Assistant Logs tab = this container's stdout: supervisor events, "
+        "[game] process output, [game-log] file-only lines, [steamcmd] updates"
+    )
     LOG.info(
         "Starting supervisor for %s (appid=%s, install_dir=%s)",
         plugin.name,

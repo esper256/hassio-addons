@@ -82,6 +82,21 @@ rest:
         value_template: "{{ value_json.local_build_id }}"
 ```
 
+## Home Assistant Logs tab
+
+The add-on **Logs** tab is container stdout/stderr. This supervisor writes the operationally useful streams there:
+
+| Prefix | What you see |
+| --- | --- |
+| *(no prefix / supervisor)* | Install, update decisions, backups, crashes, notifications |
+| `[game]` | Dedicated server process stdout/stderr |
+| `[game-log]` | Lines from `/data/logs` that did **not** already appear on process stdout |
+| `[steamcmd]` | Live SteamCMD install/update progress (not quiet build-id polls) |
+
+Logging is line-buffered and flushed per record so lines show up promptly. Duplicate file/stdout echoes are suppressed for a few seconds so the same event is not printed twice.
+
+For pattern tuning and downloads, use Ingress (raw tail / captures) — that is separate from the HA Logs tab.
+
 ## Log patterns (alpha-safe)
 
 `games/game.yaml` ships with **empty active `log_patterns`**. Broad generic regexes run only in **dry-run** mode:

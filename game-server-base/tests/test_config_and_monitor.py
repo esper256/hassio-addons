@@ -20,10 +20,12 @@ from game_server.backup import (  # noqa: E402
     select_generational_keepers,
 )
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
+from game_server.log_bridge import RecentLineDeduper  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.migrate import apply_path_migrations  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, PathMigration, load_plugin  # noqa: E402
+from game_server.steamcmd import _run_streaming  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 
@@ -40,7 +42,7 @@ class ConfigTests(unittest.TestCase):
                         "server_slots": 8,
                         "auto_update_interval_minutes": 15,
                         "update_on_start": False,
-                        "backup_keep_monthly": 6,
+                        "backup_retention": "extended",
                     }
                 ),
                 encoding="utf-8",
@@ -61,7 +63,8 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(cfg.update_on_start)
             self.assertEqual(cfg.game_options["server_password"], "secret")
             self.assertEqual(cfg.install_dir, "/data/game")
-            self.assertEqual(cfg.backup_keep_monthly, 6)
+            self.assertEqual(cfg.backup_retention, "extended")
+            self.assertEqual(cfg.retention().keep_monthly, 24)
             self.assertEqual(format_bool(True, "one_zero"), "1")
 
 
@@ -119,6 +122,13 @@ class MonitorTests(unittest.TestCase):
 
 
 class BackupRetentionTests(unittest.TestCase):
+    def test_profiles(self) -> None:
+        standard = retention_from_profile("standard")
+        self.assertEqual(standard.keep_daily, 7)
+        self.assertEqual(standard.keep_weekly, 4)
+        self.assertEqual(standard.keep_monthly, 12)
+        self.assertEqual(retention_from_profile("nope").profile, "standard")
+
     def test_generational_keepers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -162,6 +172,25 @@ class BackupRetentionTests(unittest.TestCase):
             )
             self.assertIn(archives[0], keep)
             self.assertIn(archives[1], keep)
+
+
+class LogBridgeTests(unittest.TestCase):
+    def test_recent_line_deduper(self) -> None:
+        deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
+        self.assertTrue(deduper.remember_if_new("Player joined"))
+        self.assertFalse(deduper.remember_if_new("  Player joined  "))
+        self.assertTrue(deduper.remember_if_new("Player left"))
+        self.assertFalse(deduper.remember_if_new(""))
+
+    def test_steamcmd_streaming_captures_output(self) -> None:
+        code, output = _run_streaming(
+            [sys.executable, "-c", "print('steam-line-one'); print('steam-line-two')"],
+            timeout=10,
+            prefix="[steamcmd-test]",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("steam-line-one", output)
+        self.assertIn("steam-line-two", output)
 
 
 class LogToolsTests(unittest.TestCase):

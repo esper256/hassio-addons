@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import SupervisorConfig, format_bool
+from .log_bridge import STDOUT_DEDUPER
 from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.process")
@@ -136,7 +137,9 @@ class ProcessManager:
             return
         for line in proc.stdout:
             text = line.rstrip("\n")
-            LOG.info("[game] %s", text)
+            # Prefer process stdout over a later file-log echo of the same line.
+            if STDOUT_DEDUPER.remember_if_new(text):
+                LOG.info("[game] %s", text)
             if self.on_line:
                 try:
                     self.on_line(text)

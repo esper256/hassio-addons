@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -16,6 +17,46 @@ LOG = logging.getLogger("game_server.steamcmd")
 
 class SteamCMDError(RuntimeError):
     pass
+
+
+def _run_streaming(
+    cmd: list[str],
+    *,
+    timeout: float,
+    prefix: str = "[steamcmd]",
+) -> tuple[int, str]:
+    """Run a command, streaming stdout/stderr line-by-line into HA Logs."""
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    lines: list[str] = []
+
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            text = raw.rstrip("\n")
+            lines.append(text)
+            LOG.info("%s %s", prefix, text)
+
+    reader = threading.Thread(target=_reader, name="steamcmd-stdout", daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        reader.join(timeout=5)
+        raise
+    reader.join(timeout=30)
+    return int(proc.returncode or 0), "\n".join(lines)
 
 
 def steamcmd_bin(steamcmd_dir: str | Path) -> Path:
@@ -152,25 +193,21 @@ def install_or_update(
             plugin.steam_app_id,
         )
         try:
-            result = subprocess.run(
+            returncode, combined = _run_streaming(
                 [str(steamcmd_bin(steamcmd_dir)), "+runscript", str(script_path)],
-                check=False,
-                capture_output=True,
-                text=True,
                 timeout=3600,
             )
-            combined = (result.stdout or "") + "\n" + (result.stderr or "")
             success_markers = (
                 "Success! App '%s' fully installed" % plugin.steam_app_id,
                 "Success! App '%s' already up to date" % plugin.steam_app_id,
             )
             # SteamCMD sometimes returns non-zero even on success (state 0x6 etc.)
             looks_ok = any(marker in combined for marker in success_markers) or (
-                result.returncode == 0
+                returncode == 0
                 and read_local_build_id(install_dir, plugin.steam_app_id)
             )
             if looks_ok or (
-                result.returncode == 0
+                returncode == 0
                 and server_installed(install_dir, plugin.install_marker)
             ):
                 build_id = read_local_build_id(install_dir, plugin.steam_app_id)
@@ -180,12 +217,10 @@ def install_or_update(
             LOG.warning(
                 "SteamCMD attempt %s failed (exit %s). Tail:\n%s",
                 attempt,
-                result.returncode,
+                returncode,
                 "\n".join(combined.splitlines()[-40:]),
             )
-            last_error = SteamCMDError(
-                f"SteamCMD failed with exit {result.returncode}"
-            )
+            last_error = SteamCMDError(f"SteamCMD failed with exit {returncode}")
         except subprocess.TimeoutExpired as exc:
             LOG.warning("SteamCMD timed out on attempt %s", attempt)
             last_error = exc

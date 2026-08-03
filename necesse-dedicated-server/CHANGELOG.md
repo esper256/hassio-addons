@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.4
+
+- Stream SteamCMD install/update output into the Home Assistant Logs tab (`[steamcmd]`)
+- Mirror file-only game log lines to Logs (`[game-log]`) with short-window dedupe against `[game]` stdout
+- Flush supervisor logging so HA Logs stay near-realtime
+
 ## 2.1.3
 
 - Simplify backup UX to one `backup_retention` profile (`minimal` / `standard` / `extended`)

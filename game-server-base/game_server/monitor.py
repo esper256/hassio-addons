@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .log_bridge import STDOUT_DEDUPER
 from .patterns import DEFAULT_CANDIDATE_PATTERNS
 from .plugin import GamePlugin
 
@@ -269,14 +270,18 @@ class LogMonitor:
                 if not line:
                     time.sleep(0.25)
                     continue
-                self._handle_line(line.rstrip("\n"))
+                self._handle_line(line.rstrip("\n"), source="file")
         finally:
             if handle:
                 handle.close()
 
-    def _handle_line(self, line: str) -> None:
+    def _handle_line(self, line: str, *, source: str = "file") -> None:
         if not line.strip():
             return
+        # File-only lines never appear on process stdout; mirror them into HA Logs.
+        # Lines already emitted as [game] from process stdout are skipped via dedupe.
+        if source == "file" and STDOUT_DEDUPER.remember_if_new(line):
+            LOG.info("[game-log] %s", line)
         self.state.last_log_line = line
         self.state.recent_lines.append(line)
 
@@ -355,7 +360,7 @@ class LogMonitor:
                     LOG.exception("version mismatch callback failed")
 
     def ingest_stdout_line(self, line: str) -> None:
-        self._handle_line(line)
+        self._handle_line(line, source="stdout")
 
 
 def plugin_patterns_as_dict(plugin: GamePlugin) -> dict[str, list[str]]:
