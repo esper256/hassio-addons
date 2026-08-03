@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.12
+
+- Promote proven Necesse log patterns from Ingress dry-run highlights: ready (`Started server using port`), player join/leave (SteamID64), and an earlier game-version line (`Loading dedicated server on version`)
+- Empty-server update gating now uses join/leave tracking (not “saved players” / garbage-collection lines)
+
 ## 2.1.11
 
 - Status UI polish: dual uptime (game process + supervisor), clearer restart wording (“First start” / “Last restart: game crash” / “Last restart: server update”), “Game server crashes” label, and “Game files installed / XYZ ago”

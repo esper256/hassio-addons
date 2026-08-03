@@ -87,7 +87,7 @@ It also writes `/data/supervisor/status.json` continuously.
 
 **Steam safeguards.** SteamCMD is serialized, spaced (≥90s), and exponentially backed off on failure so the add-on cannot tight-loop against Valve. Rate-limit-like responses cool down for hours. State: `/data/supervisor/steam_gate.json`.
 
-**Log patterns (alpha-safe).** Active player/version regexes ship empty. Ingress can highlight dry-run candidates; promote proven ones into `games/game.yaml` before relying on empty-server gating or mismatch-triggered updates. Steam `buildid` polling still works without them.
+**Log patterns.** Ready, game version, and player join/leave are active (promoted from real Necesse logs). Empty-server update gating uses SteamID64 join/leave tracking. Version-mismatch patterns stay empty until proven; Ingress dry-run highlights still help discover them.
 
 **Docker / Portainer.** See [README.md](README.md#install-with-docker--portainer).
 

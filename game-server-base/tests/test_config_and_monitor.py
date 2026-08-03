@@ -59,6 +59,7 @@ from game_server.steamcmd import (  # noqa: E402
 from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
+NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
 
 
 class ConfigTests(unittest.TestCase):
@@ -110,6 +111,54 @@ class PluginTests(unittest.TestCase):
         assert plugin.world_save is not None
         self.assertEqual(plugin.world_save.strategy, "named_path")
         self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+
+class NecessePatternPromotionTests(unittest.TestCase):
+    """Exercise the new-game workflow: promote proven dry-run lines into active patterns."""
+
+    def test_real_highlight_lines_drive_ready_players_and_version(self) -> None:
+        self.assertTrue(NECESSE_PLUGIN.is_file(), f"missing {NECESSE_PLUGIN}")
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            self.assertTrue(mon.player_tracking_enabled)
+            samples = [
+                "[2026-08-03 13:57:00] Loading dedicated server on version 1.3.1.",
+                (
+                    '[2026-08-03 13:57:06] Started server using port 14159 with 10 slots '
+                    'on world "FamilyWorld.zip", game version 1.3.1.'
+                ),
+                "[2026-08-03 13:57:06] Found 0 saved players.",
+                "[2026-08-03 13:57:06] Type help for list of commands.",
+                (
+                    "[2026-08-03 13:57:21] Suggesting garbage collection "
+                    "due to empty server..."
+                ),
+                'Client "76561197968471340" connected on slot 1/10.',
+                "Creating new player: 76561197968471340",
+                (
+                    'Player 76561197968471340 ("TestPlayer") '
+                    "disconnected with message: Quit"
+                ),
+            ]
+            for line in samples:
+                mon.ingest_stdout_line(line)
+
+            self.assertTrue(mon.state.ready)
+            self.assertEqual(mon.state.game_version, "1.3.1")
+            self.assertTrue(mon.state.players_known)
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
+            # Re-join after leave to confirm identity is SteamID64, not display name.
+            mon.ingest_stdout_line(
+                'Client "76561197968471340" connected on slot 1/10.'
+            )
+            self.assertEqual(mon.state.players, {"76561197968471340"})
+            self.assertEqual(mon.state.player_count, 1)
+
+            # Misleading dry-run hits must not become active player_count signals.
+            self.assertEqual(plugin.log_patterns.player_count, [])
 
 
 class WorldSaveLocatorTests(unittest.TestCase):
