@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from .disk import format_bytes
 from .log_bridge import strip_ansi
 from .version import app_version
 
@@ -158,6 +159,11 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}">{running}</div></div>
       <div class="stat"><div class="label">Players</div><div class="value">{players}</div><div class="hint">{players_hint}</div></div>
+      <div class="stat">
+        <div class="label">World save</div>
+        <div class="value">{world_save}</div>
+        <div class="hint">{world_save_hint}</div>
+      </div>
       <div class="stat"><div class="label">Uptime</div><div class="value">{uptime}</div></div>
       <div class="stat">
         <div class="label">Restarts</div>
@@ -478,6 +484,7 @@ class StatusServer:
                     install_updated, install_updated_hint = _format_install_updated(
                         status
                     )
+                    world_save, world_save_hint = _format_world_save(status)
                     html = HTML_PAGE.format(
                         game=game_name,
                         base_href=_html_escape(self._ingress_base()),
@@ -488,6 +495,8 @@ class StatusServer:
                         running_class="good" if status.get("running") else "bad",
                         players=player_value,
                         players_hint=_html_escape(players_hint),
+                        world_save=_html_escape(world_save),
+                        world_save_hint=_html_escape(world_save_hint),
                         gating_note=_html_escape(gating_note),
                         uptime=_fmt_seconds(status.get("supervisor_uptime_seconds", 0)),
                         restarts=status.get("restart_count", 0),
@@ -604,6 +613,25 @@ def _format_install_updated(status: dict[str, Any]) -> tuple[str, str]:
     if build:
         return "unknown age", f"Steam build {build}"
     return "unknown", "no Steam install stamp yet"
+
+
+def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
+    info = status.get("world_save") or {}
+    raw_bytes = info.get("bytes")
+    try:
+        size = int(raw_bytes or 0)
+    except (TypeError, ValueError):
+        size = 0
+    label = str(info.get("label") or "").strip()
+    scope = str(info.get("scope") or "")
+    if size <= 0 and scope == "missing":
+        return "—", "no world save found yet"
+    value = format_bytes(size)
+    if label and scope == "world_file":
+        return value, label
+    if label:
+        return value, label
+    return value, "world data"
 
 
 def _html_escape(text: str) -> str:

@@ -14,7 +14,7 @@ from typing import Any
 from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
-from .disk import ensure_free_mb
+from .disk import ensure_free_mb, world_save_size
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
@@ -143,6 +143,11 @@ class GameServerSupervisor:
         )
         if install_meta.get("build_id") and not self.local_build_id:
             self.local_build_id = str(install_meta["build_id"])
+        world_size = world_save_size(
+            self.plugin.data_dir,
+            str(self.config.game_options.get("world_name") or ""),
+            fallback_paths=list(self.backups.sources),
+        )
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
@@ -156,6 +161,7 @@ class GameServerSupervisor:
             "local_build_id": self.local_build_id,
             "remote_build_id": self.remote_build_id,
             "install_last_updated_at": install_meta.get("last_updated"),
+            "world_save": world_size,
             "update_pending": self._update_pending,
             "update_reason": self._update_reason,
             "last_update_check_at": self.last_update_check_at,

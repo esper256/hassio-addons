@@ -58,3 +58,79 @@ def path_total_bytes(path: str | Path) -> int:
             except OSError:
                 continue
     return total
+
+
+def format_bytes(num_bytes: int | float | None) -> str:
+    """Human-readable size for status UI (KB / MB / GB, one decimal when useful)."""
+
+    if num_bytes is None:
+        return "unknown"
+    try:
+        value = float(num_bytes)
+    except (TypeError, ValueError):
+        return "unknown"
+    if value < 0:
+        return "unknown"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = value
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if size < 1024 or candidate == units[-1]:
+            break
+        size /= 1024
+    if unit == "B":
+        return f"{int(size)} B"
+    if size >= 100 or unit == "KB":
+        return f"{size:.0f} {unit}"
+    return f"{size:.1f} {unit}"
+
+
+def world_save_size(
+    data_dir: str | Path,
+    world_name: str | None = None,
+    *,
+    fallback_paths: list[str | Path] | None = None,
+) -> dict[str, object]:
+    """Best-effort size of the active world save.
+
+    Prefers a concrete world file when ``world_name`` is known; otherwise sums
+    fallback paths (typically plugin backup_paths / data_dir).
+    """
+
+    data_root = Path(data_dir)
+    name = (world_name or "").strip()
+    if name:
+        # Common dedicated-server layouts (zipped or directory worlds).
+        stem = name if name.endswith(".zip") else name
+        candidates = [
+            data_root / "saves" / "worlds" / f"{stem}.zip",
+            data_root / "saves" / "worlds" / stem,
+            data_root / "saves" / f"{stem}.zip",
+            data_root / "saves" / stem,
+            data_root / f"{stem}.zip",
+            data_root / stem,
+        ]
+        for path in candidates:
+            if path.is_file() or path.is_dir():
+                return {
+                    "bytes": path_total_bytes(path),
+                    "path": str(path),
+                    "label": path.name,
+                    "scope": "world_file",
+                }
+
+    total = 0
+    sources: list[str] = []
+    for raw in fallback_paths or [data_root]:
+        path = Path(raw)
+        if path.exists():
+            total += path_total_bytes(path)
+            sources.append(str(path))
+    return {
+        "bytes": total,
+        "path": sources[0] if len(sources) == 1 else None,
+        "label": "world data" if sources else None,
+        "scope": "data_dir" if sources else "missing",
+        "sources": sources,
+    }
