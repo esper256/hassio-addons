@@ -276,7 +276,6 @@ def install_or_update(
             break
 
         if attempt < retries:
-            # Prefer exponential backoff; legacy fixed delay is only a floor.
             delay = gate.retry_delay_seconds(attempt)
             if retry_delay_seconds is not None:
                 delay = max(delay, float(retry_delay_seconds))

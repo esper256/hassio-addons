@@ -16,7 +16,6 @@ from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
-from .migrate import apply_path_migrations
 from .monitor import LogMonitor
 from .notify import Notifier
 from .plugin import GamePlugin, load_plugin, resolve_plugin_path
@@ -63,10 +62,6 @@ class GameServerSupervisor:
         self.plugin.working_dir = str(
             config.game_options.get("working_dir") or config.install_dir
         )
-
-        # Plugin-declared one-time layout migrations (game-specific via YAML only).
-        for note in apply_path_migrations(plugin):
-            LOG.info("Migration applied: %s", note)
 
         Path(config.state_dir).mkdir(parents=True, exist_ok=True)
         Path(data_dir).mkdir(parents=True, exist_ok=True)

@@ -195,11 +195,6 @@ def load_config() -> SupervisorConfig:
         normalized[norm] = value
     normalized.update(_env_overrides())
 
-    # Compat: older knobs collapse to a profile name.
-    if "backup_retention" not in normalized:
-        if "backup_retain" in normalized or "backup_keep_monthly" in normalized:
-            normalized["backup_retention"] = "standard"
-
     supervisor_keys = {
         "update_on_start",
         "auto_update_interval_minutes",
@@ -226,12 +221,6 @@ def load_config() -> SupervisorConfig:
         "backup_min_source_bytes",
         "backup_retention",
         "backup_max_backoff_minutes",
-        "backup_retain",
-        "backup_keep_recent",
-        "backup_keep_daily",
-        "backup_keep_weekly",
-        "backup_keep_monthly",
-        "backup_keep_yearly",
         "min_free_disk_mb",
         "steamcmd_dir",
         "install_dir",

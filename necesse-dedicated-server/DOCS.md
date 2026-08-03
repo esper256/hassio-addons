@@ -85,10 +85,6 @@ rest:
         value_template: "{{ value_json.local_build_id }}"
 ```
 
-## Migrating from 1.x
-
-Take a Home Assistant backup first. On start, declared path migrations move older layouts into `/data/world` and `/data/game`.
-
 ## Advanced notes
 
 **Steam safeguards.** SteamCMD is serialized, spaced (≥90s), and exponentially backed off on failure so the add-on cannot tight-loop against Valve. Rate-limit-like responses cool down for hours. State: `/data/supervisor/steam_gate.json`.
