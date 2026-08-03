@@ -36,12 +36,13 @@ Status is served on internal port **8099** through Home Assistant’s authentica
 | Pause when empty | Pause the world with nobody online |
 | Java options | Memory etc. (default `-Xms512M -Xmx2G`) |
 | Update on start | Run SteamCMD when the add-on starts (recommended) |
-| Auto-update interval | How often to ask Steam for a newer build (`0` = off; values under 15 become 15) |
-| Update only when empty | Wait until nobody is online before restarting for an update |
+| Daily Steam check hour | Local hour to ask Steam once a day for a newer build (default **5**) |
+| Auto-update interval | Only used if the daily hour is cleared (`0` = off; values under 15 become 15) |
+| Update only when empty | When a newer build is ready, wait until nobody is online before restarting |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
 
-Optional quiet hours: `update_window_start_hour` / `update_window_end_hour`. Leave empty to allow routine updates any time.
+Optional quiet hours: `update_window_start_hour` / `update_window_end_hour`. Leave empty to allow a pending update to restart any time once the server is empty.
 
 ## After a Necesse client patch
 
@@ -87,7 +88,7 @@ It also writes `/data/supervisor/status.json` continuously.
 
 **Steam safeguards.** SteamCMD is serialized, spaced (≥90s), and exponentially backed off on failure so the add-on cannot tight-loop against Valve. Rate-limit-like responses cool down for hours. State: `/data/supervisor/steam_gate.json`.
 
-**Log patterns.** Ready, game version, and player join/leave are active (promoted from real Necesse logs). Empty-server update gating uses SteamID64 join/leave tracking. Version-mismatch patterns stay empty until proven; Ingress dry-run highlights still help discover them.
+**Log patterns.** Ready, game version, and player join/leave are active (promoted from real Necesse logs). Join/leave tracking (SteamID64) lets updates wait until nobody is online before restarting. Version-mismatch patterns stay empty until proven; Ingress dry-run highlights still help discover them.
 
 **Docker / Portainer.** See [README.md](README.md#install-with-docker--portainer).
 

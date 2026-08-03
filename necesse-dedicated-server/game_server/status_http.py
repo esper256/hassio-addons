@@ -207,7 +207,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-crashes">{crashes_hint}</div>
       </div>
     </div>
-    <p class="sub warn" id="gating-note">{gating_note}</p>
+    <p class="sub warn" id="update-players-note">{update_players_note}</p>
 
     <details class="log-watch"{log_watch_open}>
       <summary>Game server log watching pattern hits</summary>
@@ -307,7 +307,7 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('h-backups-newest', u.backups_newest);
         setText('v-crashes', u.crashes);
         setText('h-crashes', u.crashes_hint);
-        setText('gating-note', u.gating_note);
+        setText('update-players-note', u.update_players_note);
         setHtml('pattern-rows', u.pattern_rows);
         setText('highlights', u.highlights);
         const sel = document.getElementById('capture-select');
@@ -536,7 +536,7 @@ class StatusServer:
                         backups_newest=_html_escape(view["backups_newest"]),
                         crashes=_html_escape(str(view["crashes"])),
                         crashes_hint=_html_escape(view["crashes_hint"]),
-                        gating_note=_html_escape(view["gating_note"]),
+                        update_players_note=_html_escape(view["update_players_note"]),
                         log_watch_open=view["log_watch_open"],
                         pattern_rows=view["pattern_rows"],
                         highlights=_html_escape(view["highlights"]),
@@ -689,6 +689,7 @@ def _format_backups(status: dict[str, Any]) -> tuple[str, str, str]:
 def _format_update_check_hint(status: dict[str, Any]) -> str:
     checked_at = status.get("last_update_check_at")
     interval = int(status.get("auto_update_interval_minutes") or 0)
+    check_hour = status.get("auto_update_check_hour")
     error = status.get("last_update_error")
     if checked_at:
         hint = f"Checked {_fmt_ago(checked_at)}"
@@ -700,6 +701,12 @@ def _format_update_check_hint(status: dict[str, Any]) -> str:
         return hint
     if interval <= 0:
         return "Steam checks disabled"
+    if check_hour is not None:
+        try:
+            hour = max(0, min(23, int(check_hour)))
+        except (TypeError, ValueError):
+            hour = 5
+        return f"Next Steam check around {hour:02d}:00 local"
     return "Not checked yet"
 
 
@@ -773,17 +780,17 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         if players_known
         else "Unknown until player patterns are promoted"
     )
-    gating = status.get("player_gating") or "unknown"
-    if gating == "inactive_no_active_patterns":
-        gating_note = (
-            "Empty-server update gating is off until you promote proven "
-            "player join/leave patterns from dry-run highlights into the "
-            "game plugin. Steam build checks still run on their own."
+    waits = status.get("waits_for_empty_server") or status.get("player_gating")
+    if waits in ("no_player_tracking", "inactive_no_active_patterns"):
+        update_players_note = (
+            "Updates will not wait for players to leave until join/leave "
+            "log patterns are promoted from dry-run highlights into the "
+            "game plugin. Steam still checks for newer builds on its schedule."
         )
     else:
-        gating_note = (
-            "Active player patterns are enabled; updates can wait for "
-            "an empty server."
+        update_players_note = (
+            "When a newer build is available, the restart waits until nobody "
+            "is online so players are not interrupted."
         )
     uptime, uptime_hint = _format_uptime(status)
     game_version, game_version_build, game_version_installed = _format_game_version(
@@ -809,7 +816,7 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "backups_newest": backups_newest,
         "crashes": int(status.get("crash_count") or 0),
         "crashes_hint": _format_crashes_hint(status),
-        "gating_note": gating_note,
+        "update_players_note": update_players_note,
         # Collapse once any active pattern exists (setup complete enough).
         "log_watch_open": "" if has_active else " open",
         "pattern_rows": _format_pattern_rows(patterns),

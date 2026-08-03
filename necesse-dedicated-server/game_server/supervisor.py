@@ -7,7 +7,7 @@ import signal
 import tarfile
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -139,10 +139,10 @@ class GameServerSupervisor:
         monitor["recent_lines"] = list(self.monitor.state.recent_lines)
         pattern_report = self.monitor.pattern_report()
         disk_ok, free = ensure_free_mb(self.config.backup_dir, self.config.min_free_disk_mb)
-        player_gating = (
-            "active"
+        waits_for_empty_server = (
+            "yes"
             if self.monitor.player_tracking_enabled
-            else "inactive_no_active_patterns"
+            else "no_player_tracking"
         )
         install_meta = steamcmd.read_local_install_meta(
             self.config.install_dir, self.plugin.steam_app_id
@@ -185,8 +185,16 @@ class GameServerSupervisor:
             "update_apply_failures": self._apply_failures,
             "update_not_before": self._update_not_before or None,
             "auto_update_interval_minutes": self.config.auto_update_interval_minutes,
+            "auto_update_check_hour": self.config.auto_update_check_hour,
             "install_dir": self.config.install_dir,
-            "player_gating": player_gating,
+            # Plain-language status for the UI (avoid "gating" jargon).
+            "waits_for_empty_server": waits_for_empty_server,
+            # Backward-compatible alias for older status consumers.
+            "player_gating": (
+                "active"
+                if waits_for_empty_server == "yes"
+                else "inactive_no_active_patterns"
+            ),
             "steam_gate": self.steam_gate.to_dict(),
             "disk": {
                 "ok": disk_ok,
@@ -275,10 +283,10 @@ class GameServerSupervisor:
         if self.config.update_when_empty_only:
             online = self._players_online()
             if online is None:
-                # Desirable alpha failure mode: do not block Steam updates forever
-                # when player regexes are absent/unproven. Status shows gating inactive.
+                # Do not block Steam updates forever when player tracking is not
+                # available yet. Status explains that restarts may interrupt players.
                 LOG.debug(
-                    "Player gating unavailable; allowing update without empty check"
+                    "Player tracking unavailable; allowing update without empty check"
                 )
             elif online > 0:
                 return False
@@ -474,27 +482,73 @@ class GameServerSupervisor:
             force=True,
         )
 
+    @staticmethod
+    def _seconds_until_local_hour(hour: int, *, now: datetime | None = None) -> float:
+        """Seconds until the next local ``hour:00:00`` (always in the future)."""
+
+        current = now or datetime.now()
+        target_hour = max(0, min(23, int(hour)))
+        target = current.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if target <= current:
+            target = target + timedelta(days=1)
+        return max(1.0, (target - current).total_seconds())
+
+    def _seconds_until_next_update_check(self) -> float:
+        """How long to sleep before the next Steam "newer build?" probe."""
+
+        minutes = self.steam_gate.clamp_check_interval_minutes(
+            self.config.auto_update_interval_minutes
+        )
+        if minutes <= 0:
+            return 0.0
+        check_hour = self.config.auto_update_check_hour
+        if check_hour is not None:
+            # Prefer a once-daily wall-clock check (default 05:00 local) so we do
+            # not poll Steam every few minutes as an anonymous client.
+            return self._seconds_until_local_hour(check_hour)
+        return float(max(0, minutes) * 60)
+
     def _update_checker_loop(self) -> None:
         minutes = self.steam_gate.clamp_check_interval_minutes(
             self.config.auto_update_interval_minutes
         )
-        interval = max(0, minutes) * 60
-        if interval <= 0:
+        if minutes <= 0:
             LOG.info("Periodic Steam update checks disabled")
             return
-        LOG.info(
-            "Checking Steam for updates every %s minutes "
-            "(Steam gate min interval %.0fs, max retries %s)",
-            interval // 60,
-            self.steam_gate.policy.min_interval_seconds,
-            self.steam_gate.policy.max_retries,
-        )
-        while not self._stop.wait(interval):
-            wait_for = self.steam_gate.seconds_until_next_call()
-            if wait_for > 0:
+        check_hour = self.config.auto_update_check_hour
+        if check_hour is not None:
+            LOG.info(
+                "Checking Steam for updates once daily at local %02d:00 "
+                "(Steam spacing %.0fs, max retries %s)",
+                check_hour,
+                self.steam_gate.policy.min_interval_seconds,
+                self.steam_gate.policy.max_retries,
+            )
+        else:
+            LOG.info(
+                "Checking Steam for updates every %s minutes "
+                "(Steam spacing %.0fs, max retries %s)",
+                minutes,
+                self.steam_gate.policy.min_interval_seconds,
+                self.steam_gate.policy.max_retries,
+            )
+        while True:
+            wait_for = self._seconds_until_next_update_check()
+            if wait_for <= 0:
+                return
+            if check_hour is not None:
                 LOG.info(
-                    "Skipping Steam update check; gate requires %.0fs more cooldown",
+                    "Next Steam update check in %.0fs (daily at local %02d:00)",
                     wait_for,
+                    check_hour,
+                )
+            if self._stop.wait(wait_for):
+                return
+            cooldown = self.steam_gate.seconds_until_next_call()
+            if cooldown > 0:
+                LOG.info(
+                    "Skipping Steam update check; Steam cooldown %.0fs remaining",
+                    cooldown,
                 )
                 continue
             self.update_check_count += 1

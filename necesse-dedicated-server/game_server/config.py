@@ -23,7 +23,11 @@ class SupervisorConfig:
 
     # Update behaviour
     update_on_start: bool = True
-    auto_update_interval_minutes: int = 30
+    # 0 disables periodic Steam checks. Used when auto_update_check_hour is unset.
+    auto_update_interval_minutes: int = 1440
+    # Local hour (0-23) for the daily Steam "is there a newer build?" check.
+    # Default 05:00 so we ask Steam once a day, not every few minutes.
+    auto_update_check_hour: int | None = 5
     update_when_empty_only: bool = True
     update_on_version_mismatch: bool = True
     update_window_start_hour: int | None = None
@@ -135,6 +139,7 @@ def _env_overrides() -> dict[str, Any]:
     keys = [
         "UPDATE_ON_START",
         "AUTO_UPDATE_INTERVAL_MINUTES",
+        "AUTO_UPDATE_CHECK_HOUR",
         "UPDATE_WHEN_EMPTY_ONLY",
         "UPDATE_ON_VERSION_MISMATCH",
         "UPDATE_WINDOW_START_HOUR",
@@ -198,6 +203,7 @@ def load_config() -> SupervisorConfig:
     supervisor_keys = {
         "update_on_start",
         "auto_update_interval_minutes",
+        "auto_update_check_hour",
         "update_when_empty_only",
         "update_on_version_mismatch",
         "update_window_start_hour",
@@ -231,7 +237,10 @@ def load_config() -> SupervisorConfig:
     return SupervisorConfig(
         update_on_start=_as_bool(normalized.get("update_on_start"), True),
         auto_update_interval_minutes=_as_int(
-            normalized.get("auto_update_interval_minutes"), 30
+            normalized.get("auto_update_interval_minutes"), 1440
+        ),
+        auto_update_check_hour=_as_optional_int(
+            normalized.get("auto_update_check_hour", 5)
         ),
         update_when_empty_only=_as_bool(
             normalized.get("update_when_empty_only"), True

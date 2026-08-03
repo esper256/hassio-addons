@@ -52,12 +52,13 @@ You do not need every advanced knob. These are the ones families usually touch:
 | Pause when empty | Pause the world with nobody online |
 | Java options | Memory etc. (default `-Xms512M -Xmx2G`) |
 | Update on start | Run SteamCMD when the add-on starts (recommended) |
-| Auto-update interval | How often to ask Steam for a newer build (`0` = off; values under 15 become 15) |
-| Update only when empty | Wait until nobody is online before restarting for an update |
+| Daily Steam check hour | Local hour to ask Steam once a day for a newer build (default **5** = 5:00am) |
+| Auto-update interval | Only used if the daily hour is cleared (`0` = off; values under 15 become 15) |
+| Update only when empty | When a newer build is ready, wait until nobody is online before restarting |
 | Backup retention | `minimal` / `standard` / `extended` — how much history to keep |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
 
-Quiet-hour window options (`update_window_start_hour` / `end`) are optional. Leave them empty to allow routine updates any time.
+Optional quiet hours (`update_window_start_hour` / `end`) further limit when a pending update may restart the server. Leave them empty to allow the restart any time once the server is empty.
 
 ---
 
@@ -145,7 +146,7 @@ SteamCMD calls are serialized, spaced, and backed off on failure so a bad Steam 
 
 ### Player / version log patterns
 
-Necesse now ships proven active patterns in `games/game.yaml` for ready, game version, and player join/leave (SteamID64). That enables empty-server update gating.
+Necesse now ships proven active patterns in `games/game.yaml` for ready, game version, and player join/leave (SteamID64). That lets updates wait until nobody is online before restarting.
 
 Version-mismatch auto-update stays off until a mismatch line is seen in Ingress and promoted. Generic dry-run candidates still highlight other likely lines.
 

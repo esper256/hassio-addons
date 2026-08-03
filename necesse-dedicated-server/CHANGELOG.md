@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.15
+
+- Ask Steam for game updates once daily at local 05:00 by default (was every 30 minutes)
+- Plain-language status copy: schedule restarts for when nobody is online — drop “gating” jargon
+
 ## 2.1.14
 
 - Fix fresh SteamCMD installs failing with `Missing file permissions` by running SteamCMD as the `gameserver` user (same owner as `/data/game` / `/data/steam-home`) instead of root
