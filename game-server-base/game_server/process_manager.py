@@ -44,6 +44,7 @@ class ProcessManager:
         self.last_stopped_at: float | None = None
         self._crash_times: deque[float] = deque(maxlen=100)
         self._reader: threading.Thread | None = None
+        self.on_line_error: str | None = None
 
     @property
     def running(self) -> bool:
@@ -143,8 +144,14 @@ class ProcessManager:
             if self.on_line:
                 try:
                     self.on_line(text)
-                except Exception:  # noqa: BLE001
-                    LOG.exception("on_line callback failed")
+                except Exception as exc:  # noqa: BLE001
+                    # Keep reading stdout (game logs must not stop), but do not
+                    # keep invoking a broken callback forever.
+                    self.on_line_error = str(exc)
+                    LOG.exception(
+                        "on_line callback failed; disabling further line callbacks"
+                    )
+                    self.on_line = None
 
     def stop(self, timeout: float | None = None) -> None:
         timeout = (
@@ -169,7 +176,7 @@ class ProcessManager:
                         proc.stdin.write(command + "\n")
                         proc.stdin.flush()
                         time.sleep(1)
-                except Exception:  # noqa: BLE001
+                except (BrokenPipeError, OSError):
                     LOG.warning("Failed writing stop commands to stdin", exc_info=True)
             try:
                 proc.send_signal(signal.SIGTERM)
@@ -224,4 +231,5 @@ class ProcessManager:
             "last_stopped_at": self.last_stopped_at,
             "run_uid": self.run_uid,
             "command": self.build_command(),
+            "on_line_error": self.on_line_error,
         }

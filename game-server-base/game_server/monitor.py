@@ -356,8 +356,15 @@ class LogMonitor:
             if self.on_version_mismatch:
                 try:
                     self.on_version_mismatch(line)
-                except Exception:  # noqa: BLE001
-                    LOG.exception("version mismatch callback failed")
+                except Exception as exc:  # noqa: BLE001
+                    # Keep monitoring logs, but surface the bug once.
+                    LOG.exception(
+                        "version mismatch callback failed; disabling callback"
+                    )
+                    self.state.last_version_mismatch_line = (
+                        f"callback error: {exc}; last line: {line}"
+                    )
+                    self.on_version_mismatch = None
 
     def ingest_stdout_line(self, line: str) -> None:
         self._handle_line(line, source="stdout")

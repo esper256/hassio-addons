@@ -143,10 +143,13 @@ class BackupManager:
                     self._register_failure(self.last_error)
                 else:
                     self.consecutive_failures = 0
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, tarfile.TarError) as exc:
+                # Disk/tar problems are environmental; back off and keep trying.
                 self.last_error = str(exc)
                 self._register_failure(str(exc))
                 LOG.exception("Scheduled backup failed")
+            # Other exceptions are backup-code bugs — let the backup thread die
+            # so they are not hidden behind endless "scheduled backup failed".
             delay = self._current_delay_seconds()
             LOG.info("Next backup attempt in %s minutes", max(1, delay // 60))
 

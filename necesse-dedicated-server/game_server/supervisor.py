@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import tarfile
 import threading
 import time
 from datetime import datetime
@@ -23,6 +24,7 @@ from .privileges import prepare_drop
 from .process_manager import ProcessManager
 from .status_http import StatusServer
 from .steam_gate import configure_gate
+from .steamcmd import SteamCMDError
 from .version import app_version
 
 LOG = logging.getLogger("game_server.supervisor")
@@ -179,14 +181,16 @@ class GameServerSupervisor:
         while not self._stop.wait(15):
             try:
                 self._publish_status()
-            except Exception:  # noqa: BLE001
+            except OSError:
                 LOG.exception("Failed writing status.json")
+            # Other exceptions are supervisor bugs — let the status thread die
+            # so the failure is obvious in logs rather than hidden every 15s.
 
     def _on_version_mismatch(self, line: str) -> None:
         # Only invoked for active patterns (dry-run candidates never call this).
         try:
             self.capture_logs("version_mismatch")
-        except Exception:  # noqa: BLE001
+        except OSError:
             LOG.exception("Failed capturing logs on version mismatch")
         self.notifier.notify(
             "version_mismatch",
@@ -266,11 +270,14 @@ class GameServerSupervisor:
                     steamcmd.steam_home_dir(),
                 ],
             )
-        installed = steamcmd.server_installed(
+        had_install = steamcmd.server_installed(
             self.config.install_dir, self.plugin.install_marker
         ) or steamcmd.server_installed(self.config.install_dir)
-        if not installed or self.config.update_on_start:
-            LOG.info("Installing/updating game server via SteamCMD into %s", self.config.install_dir)
+        if not had_install or self.config.update_on_start:
+            LOG.info(
+                "Installing/updating game server via SteamCMD into %s",
+                self.config.install_dir,
+            )
             try:
                 self.local_build_id = steamcmd.install_or_update(
                     self.config.steamcmd_dir,
@@ -284,7 +291,7 @@ class GameServerSupervisor:
                 self.update_apply_count += 1
                 self.last_update_error = None
                 self._apply_failures = 0
-            except Exception as exc:  # noqa: BLE001
+            except SteamCMDError as exc:
                 self.last_update_error = str(exc)
                 self.notifier.notify(
                     "steamcmd_failed",
@@ -292,7 +299,20 @@ class GameServerSupervisor:
                     str(exc),
                     force=True,
                 )
-                raise
+                if had_install:
+                    # Steam/backend problem on restart: keep serving the existing
+                    # build instead of refusing to start the whole app.
+                    self.local_build_id = steamcmd.read_local_build_id(
+                        self.config.install_dir, self.plugin.steam_app_id
+                    )
+                    LOG.error(
+                        "SteamCMD update-on-start failed; continuing with existing "
+                        "install (buildid=%s): %s",
+                        self.local_build_id or "unknown",
+                        exc,
+                    )
+                else:
+                    raise
             if self.config.drop_privileges:
                 prepare_drop(
                     self.config.run_as_user,
@@ -330,17 +350,32 @@ class GameServerSupervisor:
                 force=True,
             )
 
+    def _restart_existing_after_update_failure(self) -> None:
+        """Bring the current install back up after a failed update attempt."""
+
+        if self.process.running or self._stop.is_set():
+            return
+        try:
+            self.monitor.reset_session()
+            self.process.start()
+        except OSError:
+            LOG.exception("Failed restarting server after update failure")
+
     def _apply_update(self) -> None:
         reason = self._update_reason or "requested"
         LOG.info("Applying update (%s)", reason)
         if self.config.backup_on_update:
+            # Graceful stop first so the world flush happens before backup.
+            if self.process.running:
+                self.process.stop()
             try:
-                # Graceful stop first so the world flush happens before backup.
-                if self.process.running:
-                    self.process.stop()
                 self.backups.create_backup(reason="pre-update")
-            except Exception:  # noqa: BLE001
-                LOG.exception("Pre-update backup failed; continuing with update")
+            except (OSError, tarfile.TarError) as exc:
+                # Do not mutate the install when we could not snapshot the world.
+                LOG.exception("Pre-update backup failed; aborting update")
+                self._schedule_update_retry(exc)
+                self._restart_existing_after_update_failure()
+                raise
 
         if self.process.running:
             self.process.stop()
@@ -368,16 +403,20 @@ class GameServerSupervisor:
             self.last_update_error = None
             self._apply_failures = 0
             self._update_not_before = 0.0
-        except Exception as exc:  # noqa: BLE001
-            self.capture_logs("update_failed")
+        except SteamCMDError as exc:
+            try:
+                self.capture_logs("update_failed")
+            except OSError:
+                LOG.exception("Failed capturing logs after update failure")
             self._schedule_update_retry(exc)
-            # Restart existing install so the kids can keep playing on current build.
-            if not self.process.running and not self._stop.is_set():
-                try:
-                    self.monitor.reset_session()
-                    self.process.start()
-                except Exception:  # noqa: BLE001
-                    LOG.exception("Failed restarting server after update failure")
+            self._restart_existing_after_update_failure()
+            raise
+        except Exception as exc:
+            # Unexpected supervisor bug after stopping the game: still try to
+            # recover the server, schedule backoff so we don't tight-loop, then
+            # propagate so the failure is visible.
+            self._schedule_update_retry(exc)
+            self._restart_existing_after_update_failure()
             raise
 
         with self._update_lock:
@@ -416,35 +455,42 @@ class GameServerSupervisor:
                     wait_for,
                 )
                 continue
-            try:
-                self.update_check_count += 1
-                self.last_update_check_at = time.time()
-                available, local, remote = steamcmd.update_available(
-                    self.config.steamcmd_dir,
-                    self.config.install_dir,
-                    self.plugin,
-                    stop_event=self._stop,
+            self.update_check_count += 1
+            self.last_update_check_at = time.time()
+            result = steamcmd.update_available(
+                self.config.steamcmd_dir,
+                self.config.install_dir,
+                self.plugin,
+                stop_event=self._stop,
+            )
+            self.local_build_id = result.local_build_id or self.local_build_id
+            self.remote_build_id = result.remote_build_id
+            if not result.check_ok:
+                self.last_update_error = result.error
+                LOG.warning(
+                    "Steam update check unavailable (local=%s): %s",
+                    result.local_build_id or "unknown",
+                    result.error,
                 )
-                self.local_build_id = local or self.local_build_id
-                self.remote_build_id = remote
-                if available:
-                    LOG.info(
-                        "Remote update available (local=%s remote=%s)",
-                        local,
-                        remote,
-                    )
-                    self.request_update(reason="steam_build", bypass_window=False)
-                else:
-                    LOG.info(
-                        "Game is up to date (buildid=%s)", local or remote or "unknown"
-                    )
-            except Exception as exc:  # noqa: BLE001
-                self.last_update_error = str(exc)
-                LOG.exception("Update check failed")
                 self.notifier.notify(
                     "update_check_failed",
                     f"{self.plugin.name}: update check failed",
-                    str(exc),
+                    str(result.error),
+                )
+                continue
+            if result.update_available:
+                LOG.info(
+                    "Remote update available (local=%s remote=%s)",
+                    result.local_build_id,
+                    result.remote_build_id,
+                )
+                self.request_update(reason="steam_build", bypass_window=False)
+            else:
+                LOG.info(
+                    "Game is up to date (buildid=%s)",
+                    result.local_build_id
+                    or result.remote_build_id
+                    or "unknown",
                 )
 
     def run(self) -> int:
@@ -487,10 +533,15 @@ class GameServerSupervisor:
             if self._update_pending and self._can_apply_update():
                 try:
                     self._apply_update()
-                except Exception:  # noqa: BLE001
-                    LOG.exception("Failed to apply update; backing off")
-                    # Backoff is scheduled inside _schedule_update_retry; never
-                    # tight-loop SteamCMD on a 30s timer again.
+                except SteamCMDError:
+                    LOG.exception("Steam update failed; backing off")
+                    # Backoff + server recovery already handled in _apply_update.
+                except Exception:
+                    LOG.exception(
+                        "Unexpected error applying update; backing off. "
+                        "This is likely a supervisor bug."
+                    )
+                    # _apply_update schedules backoff for unexpected errors too.
 
             code = self.process.wait(timeout=2)
             if code is None:
@@ -503,7 +554,7 @@ class GameServerSupervisor:
                 break
             try:
                 self.capture_logs("crash")
-            except Exception:  # noqa: BLE001
+            except OSError:
                 LOG.exception("Failed capturing logs after crash")
             self.notifier.notify(
                 "crash",

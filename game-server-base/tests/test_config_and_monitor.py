@@ -26,11 +26,13 @@ from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
+    UpdateCheckResult,
     _build_app_update_cmd,
     _run_streaming,
     looks_missing_configuration,
     parse_app_info_build_id,
     prepare_steam_env,
+    update_available,
     wait_for_app_info,
 )
 from game_server.version import app_version  # noqa: E402
@@ -392,6 +394,30 @@ class SteamCMDHelperTests(unittest.TestCase):
             self.assertEqual(env["HOME"], str(home))
             self.assertTrue((install_dir / "steamapps").is_dir())
             self.assertTrue((home / "Steam").is_dir())
+
+    def test_update_check_error_is_not_up_to_date(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            install_dir.mkdir()
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            import game_server.steamcmd as steamcmd_mod
+
+            def boom(*_a, **_k):  # noqa: ANN001
+                raise steamcmd_mod.SteamCMDError("steam unavailable")
+
+            original = steamcmd_mod.fetch_remote_build_id
+            steamcmd_mod.fetch_remote_build_id = boom  # type: ignore[assignment]
+            try:
+                result = update_available(steamcmd_dir, install_dir, plugin)
+            finally:
+                steamcmd_mod.fetch_remote_build_id = original  # type: ignore[assignment]
+            self.assertIsInstance(result, UpdateCheckResult)
+            self.assertFalse(result.check_ok)
+            self.assertFalse(result.update_available)
+            self.assertIn("steam unavailable", result.error or "")
 
 
 class LogToolsTests(unittest.TestCase):

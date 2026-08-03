@@ -8,12 +8,29 @@ import re
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .plugin import GamePlugin
 from .steam_gate import get_gate
 
 LOG = logging.getLogger("game_server.steamcmd")
+
+
+@dataclass(frozen=True)
+class UpdateCheckResult:
+    """Result of comparing local vs remote Steam build ids."""
+
+    update_available: bool
+    local_build_id: str | None
+    remote_build_id: str | None
+    # Set when the Steam check itself failed/was cancelled — not the same as
+    # "up to date".
+    error: str | None = None
+
+    @property
+    def check_ok(self) -> bool:
+        return self.error is None
 
 MISSING_CONFIG_MARKERS = (
     "missing configuration",
@@ -358,12 +375,14 @@ def fetch_remote_build_id(
     plugin: GamePlugin,
     *,
     stop_event: threading.Event | None = None,
-) -> str | None:
+) -> str:
+    """Return remote build id. Raises SteamCMDError on Steam/backend failure."""
+
     gate = get_gate()
     env = prepare_steam_env(Path(os.environ.get("INSTALL_DIR") or "/data/game"))
     try:
         with gate.session("app_info", stop_event=stop_event):
-            return wait_for_app_info(
+            build_id = wait_for_app_info(
                 steamcmd_dir,
                 plugin,
                 env=env,
@@ -371,13 +390,13 @@ def fetch_remote_build_id(
                 timeout_seconds=min(APP_INFO_READY_TIMEOUT_SECONDS, 60.0),
                 poll_interval_seconds=APP_INFO_POLL_INTERVAL_SECONDS,
             )
-    except InterruptedError:
-        LOG.info("Remote build id query cancelled by stop")
-        return None
+    except InterruptedError as exc:
+        raise SteamCMDError("Remote build id query cancelled by stop") from exc
     except SteamCMDError as exc:
-        LOG.warning("Could not obtain remote build id: %s", exc)
         gate.note_failure(str(exc), kind="app_info")
-        return None
+        raise
+    gate.note_success(kind="app_info")
+    return build_id
 
 
 def server_installed(install_dir: str | Path, marker_relative: str | None = None) -> bool:
@@ -521,10 +540,14 @@ def install_or_update(
             last_error = exc
             gate.note_failure(str(exc), kind="app_update")
             combined = str(exc)
-        except Exception as exc:  # noqa: BLE001
-            LOG.exception("SteamCMD attempt %s raised", attempt)
+        except OSError as exc:
+            # SteamCMD process/filesystem problems — retryable via the gate.
+            LOG.warning("SteamCMD attempt %s OS error: %s", attempt, exc)
             last_error = exc
             gate.note_failure(str(exc), kind="app_update")
+            combined = str(exc)
+        # Other exceptions (TypeError, AttributeError, etc.) propagate: those are
+        # supervisor bugs, not Steam backend failures.
 
         if gate.looks_rate_limited(combined) or gate.cooldown_remaining() >= 600:
             LOG.error(
@@ -551,14 +574,16 @@ def install_or_update(
             LOG.info("Backing off %.0fs before SteamCMD retry", delay)
             _interruptible_sleep(delay, stop_event)
 
+    # Always raise on failure. Callers that already have an install may catch
+    # SteamCMDError and keep serving the existing files — but must not treat
+    # this as a successful update.
     if server_installed(install_dir, plugin.install_marker) or server_installed(
         install_dir
     ):
-        LOG.error(
-            "SteamCMD failed after retries; keeping existing install. Last error: %s",
-            last_error,
+        raise SteamCMDError(
+            f"SteamCMD failed to update app {plugin.steam_app_id} after "
+            f"{retries} attempts (existing install left in place): {last_error}"
         )
-        return read_local_build_id(install_dir, plugin.steam_app_id)
 
     raise SteamCMDError(
         f"SteamCMD failed to install app {plugin.steam_app_id} after {retries} attempts: {last_error}"
@@ -571,14 +596,23 @@ def update_available(
     plugin: GamePlugin,
     *,
     stop_event: threading.Event | None = None,
-) -> tuple[bool, str | None, str | None]:
+) -> UpdateCheckResult:
     local = read_local_build_id(install_dir, plugin.steam_app_id)
-    remote = fetch_remote_build_id(steamcmd_dir, plugin, stop_event=stop_event)
-    if remote is None:
-        return False, local, remote
+    try:
+        remote = fetch_remote_build_id(
+            steamcmd_dir, plugin, stop_event=stop_event
+        )
+    except SteamCMDError as exc:
+        LOG.warning("Steam update check failed: %s", exc)
+        return UpdateCheckResult(
+            update_available=False,
+            local_build_id=local,
+            remote_build_id=None,
+            error=str(exc),
+        )
     if local is None:
-        return True, local, remote
-    return local != remote, local, remote
+        return UpdateCheckResult(True, local, remote)
+    return UpdateCheckResult(local != remote, local, remote)
 
 
 def ensure_steamcmd(steamcmd_dir: str | Path) -> None:
