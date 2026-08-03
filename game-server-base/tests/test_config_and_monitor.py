@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from game_server.backup import (  # noqa: E402
+    BackupManager,
     RetentionPolicy,
     retention_from_profile,
     select_generational_keepers,
@@ -28,6 +29,7 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
+    _format_backups,
     _format_crashes_hint,
     _format_game_version,
     _format_highlights,
@@ -61,6 +63,7 @@ from game_server.steamcmd import (  # noqa: E402
 from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
+NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
 
 
 class ConfigTests(unittest.TestCase):
@@ -112,6 +115,64 @@ class PluginTests(unittest.TestCase):
         assert plugin.world_save is not None
         self.assertEqual(plugin.world_save.strategy, "named_path")
         self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+
+class NecessePatternPromotionTests(unittest.TestCase):
+    """Exercise the new-game workflow: promote proven dry-run lines into active patterns."""
+
+    def test_real_highlight_lines_drive_ready_players_and_version(self) -> None:
+        self.assertTrue(NECESSE_PLUGIN.is_file(), f"missing {NECESSE_PLUGIN}")
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            self.assertTrue(mon.player_tracking_enabled)
+            samples = [
+                "[2026-08-03 13:57:00] Loading dedicated server on version 1.3.1.",
+                (
+                    '[2026-08-03 13:57:06] Started server using port 14159 with 10 slots '
+                    'on world "FamilyWorld.zip", game version 1.3.1.'
+                ),
+                "[2026-08-03 13:57:06] Found 0 saved players.",
+                "[2026-08-03 13:57:06] Type help for list of commands.",
+                (
+                    "[2026-08-03 13:57:21] Suggesting garbage collection "
+                    "due to empty server..."
+                ),
+                'Client "76561197968471340" connected on slot 1/10.',
+                "Creating new player: 76561197968471340",
+                (
+                    'Player 76561197968471340 ("TestPlayer") '
+                    "disconnected with message: Quit"
+                ),
+            ]
+            for line in samples:
+                mon.ingest_stdout_line(line)
+
+            self.assertTrue(mon.state.ready)
+            self.assertEqual(mon.state.game_version, "1.3.1")
+            self.assertTrue(mon.state.players_known)
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
+            # Re-join after leave to confirm identity is SteamID64, not display name.
+            mon.ingest_stdout_line(
+                'Client "76561197968471340" connected on slot 1/10.'
+            )
+            self.assertEqual(mon.state.players, {"76561197968471340"})
+            self.assertEqual(mon.state.player_count, 1)
+
+            # Misleading dry-run hits must not become active player_count signals.
+            self.assertEqual(plugin.log_patterns.player_count, [])
+
+            report = mon.pattern_report()
+            active = {
+                (p["category"], p["mode"])
+                for p in report["patterns"]
+                if p["mode"] == "active"
+            }
+            self.assertIn(("player_join", "active"), active)
+            self.assertIn(("player_leave", "active"), active)
+            self.assertIn(("ready", "active"), active)
 
 
 class WorldSaveLocatorTests(unittest.TestCase):
@@ -297,6 +358,43 @@ class MonitorTests(unittest.TestCase):
 
 
 class BackupRetentionTests(unittest.TestCase):
+    def test_archive_summary_and_ui(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"x" * 100)
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            empty = mgr.archive_summary()
+            self.assertEqual(empty["count"], 0)
+            count, oldest, newest = _format_backups({"backups": mgr.to_dict()})
+            self.assertEqual(count, "0")
+            self.assertEqual(oldest, "No backups yet")
+
+            older = backup_dir / "backup-20260101T000000Z-schedule.tar.gz"
+            newer = backup_dir / "backup-20260803T120000Z-schedule.tar.gz"
+            backup_dir.mkdir()
+            older.write_bytes(b"y" * 80)
+            newer.write_bytes(b"z" * 80)
+            # Force deterministic mtimes.
+            os.utime(older, (1_700_000_000, 1_700_000_000))
+            os.utime(newer, (1_700_100_000, 1_700_100_000))
+            summary = mgr.archive_summary()
+            self.assertEqual(summary["count"], 2)
+            self.assertEqual(summary["oldest_name"], older.name)
+            self.assertEqual(summary["newest_name"], newer.name)
+            count, oldest, newest = _format_backups({"backups": mgr.to_dict()})
+            self.assertEqual(count, "2")
+            self.assertTrue(oldest.startswith("Oldest: "))
+            self.assertTrue(newest.startswith("Newest: "))
+
     def test_profiles(self) -> None:
         standard = retention_from_profile("standard")
         self.assertEqual(standard.keep_daily, 7)

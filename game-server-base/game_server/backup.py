@@ -238,7 +238,41 @@ class BackupManager:
             except OSError:
                 LOG.warning("Failed to prune %s", stale)
 
+    def list_archives(self) -> list[Path]:
+        """Return on-disk backup archives oldest → newest."""
+
+        if not self.backup_dir.exists():
+            return []
+        return sorted(
+            self.backup_dir.glob("backup-*.tar.gz"),
+            key=lambda p: p.stat().st_mtime,
+        )
+
+    def archive_summary(self) -> dict[str, object]:
+        """Count + oldest/newest timestamps for status UI."""
+
+        archives = self.list_archives()
+        if not archives:
+            return {
+                "count": 0,
+                "oldest_at": None,
+                "newest_at": None,
+                "oldest_name": None,
+                "newest_name": None,
+            }
+        oldest = archives[0]
+        newest = archives[-1]
+        return {
+            "count": len(archives),
+            "oldest_at": oldest.stat().st_mtime,
+            "newest_at": newest.stat().st_mtime,
+            "oldest_name": oldest.name,
+            "newest_name": newest.name,
+        }
+
     def to_dict(self) -> dict:
+        summary = self.archive_summary()
+        archives = self.list_archives()
         return {
             "enabled": self.enabled,
             "backup_dir": str(self.backup_dir),
@@ -258,13 +292,16 @@ class BackupManager:
             "last_error": self.last_error,
             "last_skip_reason": self.last_skip_reason,
             "backup_count": self.backup_count,
+            "archive_count": summary["count"],
+            "oldest_backup_at": summary["oldest_at"],
+            "newest_backup_at": summary["newest_at"],
+            "oldest_backup_name": summary["oldest_name"],
+            "newest_backup_name": summary["newest_name"],
             "consecutive_failures": self.consecutive_failures,
             "next_delay_minutes": self._current_delay_seconds() // 60,
             "source_bytes": self.source_bytes(),
             "sources": [str(s) for s in self.sources],
-            "archives": [p.name for p in sorted(self.backup_dir.glob("backup-*.tar.gz"))]
-            if self.backup_dir.exists()
-            else [],
+            "archives": [p.name for p in archives],
         }
 
 
