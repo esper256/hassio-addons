@@ -10,12 +10,14 @@ If you want to package your own Steam game on this platform, see [game-server-ba
 
 ## Install on Home Assistant OS
 
-1. In Home Assistant: **Settings → Add-ons → Add-on store**.
+Requires an **amd64** Home Assistant OS host (SteamCMD). On aarch64 machines the App store will not offer this app.
+
+1. In Home Assistant: **Settings → Apps → App store** (older UI: Add-ons).
 2. Open the menu (⋮) → **Repositories** → add:
 
    `https://github.com/esper256/hassio-addons`
 
-3. Find **Necesse Dedicated Server** and install it.
+3. Refresh / check for updates, find **Necesse Dedicated Server**, and install it.
 4. Open the add-on’s **Configuration** tab and set at least:
    - **World name** — the save players will join (default `FamilyWorld`)
    - **Server password** — recommended for a house server

@@ -3,6 +3,11 @@
 This is the documentation shown inside Home Assistant for the **Necesse Dedicated Server** add-on.  
 For the same guide on GitHub (including Docker/Portainer), see [README.md](README.md).
 
+## Requirements
+
+- Home Assistant OS / Supervised (**Apps** store)
+- Host architecture **amd64** (SteamCMD). Not offered on aarch64.
+
 ## Quick start
 
 1. Set **World name** and a **Server password** on the Configuration tab.

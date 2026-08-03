@@ -1,4 +1,5 @@
-# https://developers.home-assistant.io/docs/add-ons/repository#repository-configuration
-name: esper256 Home Assistant add-on repository
-url: 'https://github.com/esper256/hassio-addons'
+# https://developers.home-assistant.io/docs/apps/publishing
+# Shown in Settings → Apps → App store → Repositories
+name: esper256 Home Assistant apps
+url: "https://github.com/esper256/hassio-addons"
 maintainer: Eric Friesen <eric@friesen.org>
