@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .backup import RetentionPolicy
+from .backup import RetentionPolicy, retention_from_profile
 
 
 OPTIONS_CANDIDATES = (
@@ -51,11 +51,8 @@ class SupervisorConfig:
     backup_dir: str = "/data/backups"
     backup_on_update: bool = True
     backup_min_source_bytes: int = 1024
-    backup_keep_recent: int = 5
-    backup_keep_daily: int = 7
-    backup_keep_weekly: int = 5
-    backup_keep_monthly: int = 12
-    backup_keep_yearly: int = 3
+    # One UX knob: minimal | standard | extended
+    backup_retention: str = "standard"
     backup_max_backoff_minutes: int = 1440
 
     # Disk
@@ -71,13 +68,7 @@ class SupervisorConfig:
     raw_options: dict[str, Any] = field(default_factory=dict)
 
     def retention(self) -> RetentionPolicy:
-        return RetentionPolicy(
-            keep_recent=self.backup_keep_recent,
-            keep_daily=self.backup_keep_daily,
-            keep_weekly=self.backup_keep_weekly,
-            keep_monthly=self.backup_keep_monthly,
-            keep_yearly=self.backup_keep_yearly,
-        )
+        return retention_from_profile(self.backup_retention)
 
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -164,11 +155,7 @@ def _env_overrides() -> dict[str, Any]:
         "BACKUP_DIR",
         "BACKUP_ON_UPDATE",
         "BACKUP_MIN_SOURCE_BYTES",
-        "BACKUP_KEEP_RECENT",
-        "BACKUP_KEEP_DAILY",
-        "BACKUP_KEEP_WEEKLY",
-        "BACKUP_KEEP_MONTHLY",
-        "BACKUP_KEEP_YEARLY",
+        "BACKUP_RETENTION",
         "BACKUP_MAX_BACKOFF_MINUTES",
         "MIN_FREE_DISK_MB",
         "STEAMCMD_DIR",
@@ -207,9 +194,10 @@ def load_config() -> SupervisorConfig:
         normalized[norm] = value
     normalized.update(_env_overrides())
 
-    # Compat: old backup_retain maps onto keep_recent if new knobs absent
-    if "backup_keep_recent" not in normalized and "backup_retain" in normalized:
-        normalized["backup_keep_recent"] = normalized["backup_retain"]
+    # Compat: older knobs collapse to a profile name.
+    if "backup_retention" not in normalized:
+        if "backup_retain" in normalized or "backup_keep_monthly" in normalized:
+            normalized["backup_retention"] = "standard"
 
     supervisor_keys = {
         "update_on_start",
@@ -235,13 +223,14 @@ def load_config() -> SupervisorConfig:
         "backup_dir",
         "backup_on_update",
         "backup_min_source_bytes",
+        "backup_retention",
+        "backup_max_backoff_minutes",
+        "backup_retain",
         "backup_keep_recent",
         "backup_keep_daily",
         "backup_keep_weekly",
         "backup_keep_monthly",
         "backup_keep_yearly",
-        "backup_max_backoff_minutes",
-        "backup_retain",
         "min_free_disk_mb",
         "steamcmd_dir",
         "install_dir",
@@ -293,11 +282,7 @@ def load_config() -> SupervisorConfig:
         backup_min_source_bytes=_as_int(
             normalized.get("backup_min_source_bytes"), 1024
         ),
-        backup_keep_recent=_as_int(normalized.get("backup_keep_recent"), 5),
-        backup_keep_daily=_as_int(normalized.get("backup_keep_daily"), 7),
-        backup_keep_weekly=_as_int(normalized.get("backup_keep_weekly"), 5),
-        backup_keep_monthly=_as_int(normalized.get("backup_keep_monthly"), 12),
-        backup_keep_yearly=_as_int(normalized.get("backup_keep_yearly"), 3),
+        backup_retention=str(normalized.get("backup_retention") or "standard"),
         backup_max_backoff_minutes=_as_int(
             normalized.get("backup_max_backoff_minutes"), 1440
         ),

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.3
+
+- Simplify backup UX to one `backup_retention` profile (`minimal` / `standard` / `extended`)
+- Standard = 7 daily → 4 weekly → 12 monthly cascade
+
 ## 2.1.2
 
 - Alpha-safe log watching: no active Necesse regexes by default

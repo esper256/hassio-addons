@@ -29,11 +29,7 @@ services:
       HA_NOTIFICATIONS: "false"
       BACKUP_ENABLED: "true"
       BACKUP_INTERVAL_MINUTES: "360"
-      BACKUP_KEEP_RECENT: "5"
-      BACKUP_KEEP_DAILY: "7"
-      BACKUP_KEEP_WEEKLY: "5"
-      BACKUP_KEEP_MONTHLY: "12"
-      BACKUP_KEEP_YEARLY: "3"
+      BACKUP_RETENTION: standard
       MIN_FREE_DISK_MB: "512"
       JAVA_OPTS: "-Xms512M -Xmx2G"
     volumes:

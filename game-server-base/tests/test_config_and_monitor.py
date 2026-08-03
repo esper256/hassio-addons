@@ -14,7 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from game_server.backup import RetentionPolicy, select_generational_keepers  # noqa: E402
+from game_server.backup import (  # noqa: E402
+    RetentionPolicy,
+    retention_from_profile,
+    select_generational_keepers,
+)
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.migrate import apply_path_migrations  # noqa: E402

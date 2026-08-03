@@ -64,28 +64,16 @@ configuration:
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
   backup_enabled:
     name: Enable backups
-    description: Periodically archive /data/world into /data/backups with generational retention.
+    description: Periodically archive /data/world into /data/backups.
   backup_interval_minutes:
     name: Backup interval (minutes)
-    description: Base schedule for backups. Failures/empty worlds use exponential backoff from this interval.
+    description: How often to attempt a backup. Failures/empty worlds back off from this interval.
   backup_on_update:
     name: Backup before update
     description: Create a world backup immediately before applying a Steam update.
-  backup_keep_recent:
-    name: Keep recent backups
-    description: Always keep this many newest backups.
-  backup_keep_daily:
-    name: Keep daily backups
-    description: Keep one backup per day for this many days.
-  backup_keep_weekly:
-    name: Keep weekly backups
-    description: Keep one backup per week for this many weeks.
-  backup_keep_monthly:
-    name: Keep monthly backups
-    description: Keep one backup per month for this many months.
-  backup_keep_yearly:
-    name: Keep yearly backups
-    description: Keep one backup per year for this many years.
+  backup_retention:
+    name: Backup retention
+    description: "How history is thinned over time. standard = 7 daily → 4 weekly → 12 monthly. minimal uses less disk; extended keeps longer history."
   min_free_disk_mb:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold.

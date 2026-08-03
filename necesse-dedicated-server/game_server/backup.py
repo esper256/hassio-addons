@@ -17,13 +17,60 @@ LOG = logging.getLogger("game_server.backup")
 
 @dataclass
 class RetentionPolicy:
-    """Grandfather-father-son style retention."""
+    """Cascading retention: daily → weekly → monthly (optional yearly)."""
 
-    keep_recent: int = 5
+    keep_recent: int = 0
     keep_daily: int = 7
-    keep_weekly: int = 5
+    keep_weekly: int = 4
     keep_monthly: int = 12
-    keep_yearly: int = 3
+    keep_yearly: int = 0
+    profile: str = "standard"
+
+    def describe(self) -> str:
+        parts = [
+            f"{self.keep_daily} daily",
+            f"{self.keep_weekly} weekly",
+            f"{self.keep_monthly} monthly",
+        ]
+        if self.keep_yearly:
+            parts.append(f"{self.keep_yearly} yearly")
+        return f"{self.profile} ({', '.join(parts)})"
+
+
+# Simple UX: one named profile instead of tuning each tier.
+# Standard matches the common NAS pattern: dailies for a week, weeklies for a
+# month, then monthlies for about a year.
+RETENTION_PROFILES: dict[str, RetentionPolicy] = {
+    "minimal": RetentionPolicy(
+        keep_daily=3,
+        keep_weekly=2,
+        keep_monthly=3,
+        keep_yearly=0,
+        profile="minimal",
+    ),
+    "standard": RetentionPolicy(
+        keep_daily=7,
+        keep_weekly=4,
+        keep_monthly=12,
+        keep_yearly=0,
+        profile="standard",
+    ),
+    "extended": RetentionPolicy(
+        keep_daily=7,
+        keep_weekly=8,
+        keep_monthly=24,
+        keep_yearly=2,
+        profile="extended",
+    ),
+}
+
+
+def retention_from_profile(name: str | None) -> RetentionPolicy:
+    key = (name or "standard").strip().lower()
+    if key not in RETENTION_PROFILES:
+        LOG.warning("Unknown backup_retention %r; using standard", name)
+        key = "standard"
+    return RETENTION_PROFILES[key]
 
 
 class BackupManager:
@@ -194,7 +241,8 @@ class BackupManager:
             "backup_dir": str(self.backup_dir),
             "interval_minutes": self.interval_seconds // 60,
             "retention": {
-                "keep_recent": self.retention.keep_recent,
+                "profile": self.retention.profile,
+                "description": self.retention.describe(),
                 "keep_daily": self.retention.keep_daily,
                 "keep_weekly": self.retention.keep_weekly,
                 "keep_monthly": self.retention.keep_monthly,

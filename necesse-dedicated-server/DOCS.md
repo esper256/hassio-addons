@@ -46,12 +46,17 @@ On apply: graceful save/exit → backup → SteamCMD update → restart.
 
 ## Backups
 
-Backups use generational retention, not “keep last 7 daily and delete the rest”:
+One retention dropdown, not five counters:
 
-- always keep N recent
-- one per day / week / month / year according to the keep_* settings
+| Profile | Keeps |
+| --- | --- |
+| `minimal` | 3 daily → 2 weekly → 3 monthly |
+| `standard` (default) | 7 daily → 4 weekly → 12 monthly |
+| `extended` | 7 daily → 8 weekly → 24 monthly → 2 yearly |
 
-Empty/tiny worlds are refused. Failures use exponential backoff from `backup_interval_minutes` (capped at 24h by default). Disk-space guard skips backup/update when free space is too low.
+Same idea as common NAS “GFS” backups: fresh copies stay dense, older history thins automatically so a forgotten server doesn’t rotate away the only good save in a week.
+
+Also: `backup_interval_minutes` (how often to create), `backup_on_update`, empty/tiny world refusal, exponential backoff on failure, and a free-disk guard.
 
 ## Notifications (no MQTT)
 
