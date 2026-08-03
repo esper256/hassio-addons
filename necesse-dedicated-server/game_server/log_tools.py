@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .plugin import GamePlugin, LogPatterns
+from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.log_tools")
 
