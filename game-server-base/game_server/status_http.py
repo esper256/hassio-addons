@@ -72,6 +72,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .stat .label {{ color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }}
     .stat .value {{ font-size: 1.35rem; font-weight: 600; }}
     .stat .hint {{ color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem; }}
+    .stat .hint:empty {{ display: none; margin: 0; }}
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
     .accent {{ color: var(--accent); }}
@@ -117,12 +118,28 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       min-width: min(100%, 28rem);
     }}
-    details.api {{
+    details.api, details.log-watch {{
       margin-top: 1rem;
       color: var(--muted);
       font-size: 0.9rem;
     }}
-    details.api summary {{ cursor: pointer; color: var(--accent); }}
+    details.api summary, details.log-watch summary {{
+      cursor: pointer;
+      color: var(--accent);
+    }}
+    details.log-watch {{
+      margin-top: 1.75rem;
+      font-size: 1rem;
+      color: var(--ink);
+    }}
+    details.log-watch > summary {{
+      font-size: 1.15rem;
+      font-weight: 600;
+      list-style: disclosure-closed;
+    }}
+    details.log-watch[open] > summary {{
+      margin-bottom: 0.6rem;
+    }}
     details.api ul {{ padding-left: 1.1rem; }}
     table {{
       width: 100%;
@@ -158,15 +175,9 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="grid" id="status-grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
       <div class="stat">
-        <div class="label">Game version</div>
-        <div class="value" id="v-game-version">{game_version}</div>
-        <div class="hint" id="h-game-version">{game_version_hint}</div>
-      </div>
-      <div class="stat"><div class="label">Players</div><div class="value" id="v-players">{players}</div><div class="hint" id="h-players">{players_hint}</div></div>
-      <div class="stat">
-        <div class="label">World save</div>
-        <div class="value" id="v-world">{world_save}</div>
-        <div class="hint" id="h-world">{world_save_hint}</div>
+        <div class="label">Number of players</div>
+        <div class="value" id="v-players">{players}</div>
+        <div class="hint" id="h-players">{players_hint}</div>
       </div>
       <div class="stat">
         <div class="label">Uptime</div>
@@ -174,13 +185,10 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-uptime">{uptime_hint}</div>
       </div>
       <div class="stat">
-        <div class="label">Restarts</div>
-        <div class="value" id="v-restarts">{restarts}</div>
-        <div class="hint" id="h-restarts">{restart_hint}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Game server crashes</div>
-        <div class="value" id="v-crashes">{crashes}</div>
+        <div class="label">Game version</div>
+        <div class="value" id="v-game-version">{game_version}</div>
+        <div class="hint" id="h-game-version-build">{game_version_build}</div>
+        <div class="hint" id="h-game-version-installed">{game_version_installed}</div>
       </div>
       <div class="stat">
         <div class="label">Update pending</div>
@@ -188,30 +196,31 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-update">{update_check_hint}</div>
       </div>
       <div class="stat">
-        <div class="label">Game files installed</div>
-        <div class="value" id="v-files">{install_updated}</div>
-        <div class="hint" id="h-files">{install_updated_hint}</div>
+        <div class="label">Game server crashes</div>
+        <div class="value" id="v-crashes">{crashes}</div>
+        <div class="hint" id="h-crashes">{crashes_hint}</div>
       </div>
     </div>
     <p class="sub warn" id="gating-note">{gating_note}</p>
 
-    <h2>Log pattern hits</h2>
-    <p class="sub">
-      <span class="tag active">active</span> can trigger updates/player state.
-      <span class="tag dry_run">dry_run</span> only highlights candidates for promotion.
-      <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
-    </p>
-    <table>
-      <thead>
-        <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Pattern</th><th>Last line</th></tr>
-      </thead>
-      <tbody>
-        {pattern_rows}
-      </tbody>
-    </table>
-
-    <h2>Highlighted lines</h2>
-    <pre id="highlights">{highlights}</pre>
+    <details class="log-watch"{log_watch_open}>
+      <summary>Game server log watching pattern hits</summary>
+      <p class="sub">
+        <span class="tag active">active</span> can trigger updates/player state.
+        <span class="tag dry_run">dry_run</span> only highlights candidates for promotion.
+        <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Pattern</th><th>Last line</th></tr>
+        </thead>
+        <tbody id="pattern-rows">
+          {pattern_rows}
+        </tbody>
+      </table>
+      <h2>Highlighted lines</h2>
+      <pre id="highlights">{highlights}</pre>
+    </details>
 
     <h2>Log tools</h2>
     <p class="sub">Human actions for diagnosing the live server. Prefer these over the JSON API links.</p>
@@ -236,9 +245,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/logs/raw?lines=400">Raw log tail JSON</a></li>
       </ul>
     </details>
-
-    <h2>Recent output</h2>
-    <pre id="recent">{recent}</pre>
   </main>
   <script>
     async function postCapture(ev) {{
@@ -266,6 +272,10 @@ HTML_PAGE = """<!DOCTYPE html>
       const el = document.getElementById(id);
       if (el) el.textContent = value == null ? '' : String(value);
     }}
+    function setHtml(id, value) {{
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = value == null ? '' : String(value);
+    }}
     async function softRefresh() {{
       try {{
         const res = await fetch('api/ui', {{ headers: {{ 'Accept': 'application/json' }} }});
@@ -277,24 +287,20 @@ HTML_PAGE = """<!DOCTYPE html>
           running.textContent = u.running;
           running.className = 'value ' + (u.running_class || '');
         }}
-        setText('v-game-version', u.game_version);
-        setText('h-game-version', u.game_version_hint);
         setText('v-players', u.players);
         setText('h-players', u.players_hint);
-        setText('v-world', u.world_save);
-        setText('h-world', u.world_save_hint);
         setText('v-uptime', u.uptime);
         setText('h-uptime', u.uptime_hint);
-        setText('v-restarts', u.restarts);
-        setText('h-restarts', u.restart_hint);
-        setText('v-crashes', u.crashes);
+        setText('v-game-version', u.game_version);
+        setText('h-game-version-build', u.game_version_build);
+        setText('h-game-version-installed', u.game_version_installed);
         setText('v-update', u.update_pending);
         setText('h-update', u.update_check_hint);
-        setText('v-files', u.install_updated);
-        setText('h-files', u.install_updated_hint);
+        setText('v-crashes', u.crashes);
+        setText('h-crashes', u.crashes_hint);
         setText('gating-note', u.gating_note);
+        setHtml('pattern-rows', u.pattern_rows);
         setText('highlights', u.highlights);
-        setText('recent', u.recent);
         const sel = document.getElementById('capture-select');
         if (sel && u.capture_options) {{
           const prev = sel.value;
@@ -499,34 +505,29 @@ class StatusServer:
 
                 if path in ("/", "/index.html", "/ingress"):
                     view = _ui_view(status, game_name)
-                    patterns = status.get("log_patterns") or {}
                     html = HTML_PAGE.format(
                         game=_html_escape(view["game"]),
                         base_href=_html_escape(self._ingress_base()),
                         subtitle=_html_escape(view["subtitle"]),
                         running=_html_escape(view["running"]),
                         running_class=_html_escape(view["running_class"]),
-                        game_version=_html_escape(view["game_version"]),
-                        game_version_hint=_html_escape(view["game_version_hint"]),
                         players=_html_escape(view["players"]),
                         players_hint=_html_escape(view["players_hint"]),
-                        world_save=_html_escape(view["world_save"]),
-                        world_save_hint=_html_escape(view["world_save_hint"]),
-                        gating_note=_html_escape(view["gating_note"]),
                         uptime=_html_escape(view["uptime"]),
                         uptime_hint=_html_escape(view["uptime_hint"]),
-                        restarts=_html_escape(str(view["restarts"])),
-                        restart_hint=_html_escape(view["restart_hint"]),
-                        crashes=_html_escape(str(view["crashes"])),
+                        game_version=_html_escape(view["game_version"]),
+                        game_version_build=_html_escape(view["game_version_build"]),
+                        game_version_installed=_html_escape(
+                            view["game_version_installed"]
+                        ),
                         update_pending=_html_escape(view["update_pending"]),
                         update_check_hint=_html_escape(view["update_check_hint"]),
-                        install_updated=_html_escape(view["install_updated"]),
-                        install_updated_hint=_html_escape(
-                            view["install_updated_hint"]
-                        ),
-                        pattern_rows=_format_pattern_rows(patterns.get("patterns") or []),
+                        crashes=_html_escape(str(view["crashes"])),
+                        crashes_hint=_html_escape(view["crashes_hint"]),
+                        gating_note=_html_escape(view["gating_note"]),
+                        log_watch_open=view["log_watch_open"],
+                        pattern_rows=view["pattern_rows"],
                         highlights=_html_escape(view["highlights"]),
-                        recent=_html_escape(view["recent"]),
                         capture_options=view["capture_options"],
                     ).encode("utf-8")
                     self._send(200, html, "text/html; charset=utf-8")
@@ -602,29 +603,26 @@ def _format_subtitle(status: dict[str, Any]) -> str:
     return subtitle
 
 
-def _format_game_version(status: dict[str, Any]) -> tuple[str, str]:
+def _format_game_version(status: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (human version, steam build hint, installed-ago hint)."""
+
     monitor = status.get("monitor") or {}
-    version = (
-        status.get("game_version")
-        or monitor.get("game_version")
-        or ""
-    )
-    version = str(version).strip()
-    if version:
-        return version, "From game server logs"
-    return "—", "Unknown until the server announces it"
-
-
-def _format_restart_hint(status: dict[str, Any]) -> str:
-    reason = str(status.get("last_start_reason") or "boot")
-    restarts = int(status.get("restart_count") or 0)
-    if restarts <= 0 or reason == "boot":
-        return "First start"
-    if reason == "crash":
-        return "Last restart: game crash"
-    if reason in ("update", "update_failed"):
-        return "Last restart: server update"
-    return "Last restart: server update"
+    version = str(
+        status.get("game_version") or monitor.get("game_version") or ""
+    ).strip()
+    if not version:
+        version = "unknown"
+    build = str(status.get("local_build_id") or "").strip()
+    build_hint = f"Steam build {build}" if build else ""
+    install_ts = status.get("install_last_updated_at")
+    applied_ts = status.get("last_update_applied_at")
+    if install_ts:
+        installed_hint = f"Installed {_fmt_ago(install_ts)}"
+    elif applied_ts:
+        installed_hint = f"Installed {_fmt_ago(applied_ts)}"
+    else:
+        installed_hint = ""
+    return version, build_hint, installed_hint
 
 
 def _format_uptime(status: dict[str, Any]) -> tuple[str, str]:
@@ -632,8 +630,19 @@ def _format_uptime(status: dict[str, Any]) -> tuple[str, str]:
         value = _fmt_seconds(status.get("game_uptime_seconds", 0))
     else:
         value = "—"
+    reason = str(status.get("last_start_reason") or "boot")
+    if reason == "crash":
+        hint = "Since crash restart"
+    elif reason in ("update", "update_failed"):
+        hint = "Since server update"
+    else:
+        hint = "Since first start"
+    return value, hint
+
+
+def _format_crashes_hint(status: dict[str, Any]) -> str:
     supervisor = _fmt_seconds(status.get("supervisor_uptime_seconds", 0))
-    return value, f"Supervisor uptime: {supervisor}"
+    return f"Supervisor uptime: {supervisor}"
 
 
 def _format_update_check_hint(status: dict[str, Any]) -> str:
@@ -709,11 +718,13 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     """Formatted strings for the status page and soft-refresh JSON."""
 
     monitor = status.get("monitor") or {}
-    recent_lines = [
-        strip_ansi(line) for line in (monitor.get("recent_lines") or [])[-40:]
-    ]
-    recent = "\n".join(recent_lines) or "(no log lines yet)"
-    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
+    patterns = (status.get("log_patterns") or {}).get("patterns") or []
+    has_active = any((item.get("mode") or "") == "active" for item in patterns)
+    active_categories = _active_pattern_categories(patterns)
+    highlights = _format_highlights(
+        monitor.get("highlighted_lines") or [],
+        active_categories=active_categories,
+    )
     players_known = monitor.get("players_known")
     players = str(monitor.get("player_count")) if players_known else "—"
     players_hint = (
@@ -734,32 +745,30 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
             "an empty server."
         )
     uptime, uptime_hint = _format_uptime(status)
-    install_updated, install_updated_hint = _format_install_updated(status)
-    world_save, world_save_hint = _format_world_save(status)
-    game_version, game_version_hint = _format_game_version(status)
+    game_version, game_version_build, game_version_installed = _format_game_version(
+        status
+    )
     return {
         "game": game_name,
         "subtitle": _format_subtitle(status),
         "running": "running" if status.get("running") else "stopped",
         "running_class": "good" if status.get("running") else "bad",
-        "game_version": game_version,
-        "game_version_hint": game_version_hint,
         "players": players,
         "players_hint": players_hint,
-        "world_save": world_save,
-        "world_save_hint": world_save_hint,
         "uptime": uptime,
         "uptime_hint": uptime_hint,
-        "restarts": int(status.get("restart_count") or 0),
-        "restart_hint": _format_restart_hint(status),
-        "crashes": int(status.get("crash_count") or 0),
+        "game_version": game_version,
+        "game_version_build": game_version_build,
+        "game_version_installed": game_version_installed,
         "update_pending": "yes" if status.get("update_pending") else "no",
         "update_check_hint": _format_update_check_hint(status),
-        "install_updated": install_updated,
-        "install_updated_hint": install_updated_hint,
+        "crashes": int(status.get("crash_count") or 0),
+        "crashes_hint": _format_crashes_hint(status),
         "gating_note": gating_note,
+        # Collapse once any active pattern exists (setup complete enough).
+        "log_watch_open": "" if has_active else " open",
+        "pattern_rows": _format_pattern_rows(patterns),
         "highlights": highlights,
-        "recent": recent,
         "capture_options": _format_capture_options(status.get("log_captures") or []),
     }
 
@@ -773,11 +782,31 @@ def _html_escape(text: str) -> str:
     )
 
 
+def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(item.get("category") or "")
+        for item in patterns
+        if (item.get("mode") or "") == "active" and item.get("category")
+    }
+
+
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     if not patterns:
         return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
+    active_categories = _active_pattern_categories(patterns)
+    # Hide dry-run rows once that category already has an active pattern.
+    visible = [
+        item
+        for item in patterns
+        if not (
+            (item.get("mode") or "") == "dry_run"
+            and str(item.get("category") or "") in active_categories
+        )
+    ]
+    if not visible:
+        return "<tr><td colspan='5'>(no patterns to show)</td></tr>"
     ordered = sorted(
-        patterns,
+        visible,
         key=lambda item: (
             0 if item.get("hits") else 1,
             0 if item.get("mode") == "active" else 1,
@@ -804,19 +833,34 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-def _format_highlights(items: list[dict[str, Any]]) -> str:
+def _format_highlights(
+    items: list[dict[str, Any]],
+    *,
+    active_categories: set[str] | None = None,
+) -> str:
     if not items:
         return (
             "(no pattern hits yet — once the server is online, dry_run candidates "
             "should light up lines like “Started server…” or “empty server”)"
         )
+    active = active_categories or set()
     lines = []
     for item in items[-30:]:
-        matches = item.get("matches") or []
+        matches = []
+        for match in item.get("matches") or []:
+            mode = str(match.get("mode") or "")
+            category = str(match.get("category") or "")
+            if mode == "dry_run" and category in active:
+                continue
+            matches.append(match)
+        if not matches:
+            continue
         tags = ", ".join(
             f"{m.get('mode')}:{m.get('category')}" for m in matches[:6]
         )
         lines.append(f"[{tags}] {strip_ansi(str(item.get('line') or ''))}")
+    if not lines:
+        return "(no pattern hits to show after hiding superseded dry-run matches)"
     return "\n".join(lines)
 
 
