@@ -30,9 +30,6 @@ class SteamPolicy:
 
     # Minimum seconds between any two SteamCMD process starts.
     min_interval_seconds: float = 90.0
-    # Spacing after known-flaky SteamCMD errors (e.g. "Missing configuration").
-    # Kept short so Home Assistant's ~300s start timeout can still succeed.
-    transient_spacing_seconds: float = 15.0
     # Install/update attempt budget (hard-capped regardless of options).
     max_retries: int = 3
     retry_base_seconds: float = 60.0
@@ -187,34 +184,10 @@ class SteamGate:
             self.last_kind = kind
             self._save()
 
-    def note_failure(
-        self,
-        output: str = "",
-        kind: str = "steamcmd",
-        *,
-        transient: bool = False,
-    ) -> None:
+    def note_failure(self, output: str = "", kind: str = "steamcmd") -> None:
         with self._state_lock:
             self.last_kind = kind
             now = self._time()
-            if transient:
-                # Known SteamCMD flakiness (e.g. "Missing configuration"): short
-                # spacing only — multi-minute cooldowns fight HA start timeout.
-                spacing = max(1.0, float(self.policy.transient_spacing_seconds))
-                self.last_result = "transient_failure"
-                self.cooldown_until = max(self.cooldown_until, now + spacing)
-                # Also relax min-interval so the next session can use that spacing.
-                self.last_steam_call_at = min(
-                    self.last_steam_call_at,
-                    now - (self.policy.min_interval_seconds - spacing),
-                )
-                LOG.warning(
-                    "Transient Steam failure; short spacing %.0fs before retry",
-                    spacing,
-                )
-                self._save()
-                return
-
             self.consecutive_failures += 1
             self.last_result = "failure"
             if self.looks_rate_limited(output):

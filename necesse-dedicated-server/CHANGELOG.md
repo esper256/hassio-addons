@@ -2,9 +2,9 @@
 
 ## 2.1.9
 
-- Fix fresh-install SteamCMD failure `Failed to install app '1169370' (Missing configuration)`: use CLI `+force_install_dir`/`+app_update`, refresh app info, clear stale appcache, and fall back across platforms
-- Treat "Missing configuration" as a short-spaced retry instead of a multi-minute Steam cooldown (fits HA's 300s start timeout)
-- Persist SteamCMD home under `/data/steam-home` and generate `en_US.UTF-8` to silence locale warnings
+- Fix fresh-install SteamCMD failure `Failed to install app '1169370' (Missing configuration)` by **waiting for Steam app info readiness** (`app_info_print` buildid) before `app_update`, instead of retrying installs as "transient"
+- Use CLI `+force_install_dir`/`+app_update`, persist Steam home under `/data/steam-home`, and only then try an alternate depot platform if install config is still missing
+- Generate `en_US.UTF-8` in the image to silence SteamCMD locale warnings
 
 ## 2.1.8
 
