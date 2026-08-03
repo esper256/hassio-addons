@@ -25,23 +25,6 @@ class LogPatterns:
 
 
 @dataclass
-class PathMigration:
-    """Copy an old layout into the current data paths once."""
-
-    source: str
-    destination: str
-    marker: str = ""
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PathMigration":
-        return cls(
-            source=str(data["source"]),
-            destination=str(data["destination"]),
-            marker=str(data.get("marker") or ""),
-        )
-
-
-@dataclass
 class GamePlugin:
     """Describes how to install and run one Steam dedicated server."""
 
@@ -68,7 +51,6 @@ class GamePlugin:
     stop_timeout_seconds: int = 60
     stop_stdin_commands: list[str] = field(default_factory=list)
     min_backup_bytes: int = 1024
-    path_migrations: list[PathMigration] = field(default_factory=list)
     # Optional runtime packages hint for image authors (documentation only).
     runtime_notes: str = ""
 
@@ -80,11 +62,6 @@ class GamePlugin:
         if isinstance(raw_candidates, dict):
             for key, values in raw_candidates.items():
                 candidates[str(key)] = [str(v) for v in (values or [])]
-        migrations = [
-            PathMigration.from_dict(item)
-            for item in (data.get("path_migrations") or [])
-            if isinstance(item, dict)
-        ]
         install_marker = data.get("install_marker")
         if not install_marker:
             raise ValueError("Game plugin requires install_marker")
@@ -121,7 +98,6 @@ class GamePlugin:
                 str(x) for x in (data.get("stop_stdin_commands") or [])
             ],
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
-            path_migrations=migrations,
             runtime_notes=str(data.get("runtime_notes") or ""),
         )
 

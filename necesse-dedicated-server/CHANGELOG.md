@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.6
+
+- Drop v1 upgrade path: remove `/home/necesse` and `/opt/game` migrations, and the generic `path_migrations` machinery that existed only for that
+- Remove transitional backup `keep_*` option shims; `backup_retention` is the only retention setting
+
 ## 2.1.5
 
 - Add a process-wide Steam gate: serialize SteamCMD, enforce spacing, exponential retry backoff, and long cooldowns on failure/rate-limit signals

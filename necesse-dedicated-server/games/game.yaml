@@ -14,14 +14,6 @@ stop_stdin_commands:
   - exit
 backup_paths:
   - /data/world
-# One-time path moves for older layouts / image versions.
-path_migrations:
-  - source: /home/necesse/.config/Necesse
-    destination: /data/world
-    marker: saves
-  - source: /opt/game
-    destination: /data/game
-    marker: Server.jar
 executable:
   - java
   - -jar

@@ -22,9 +22,8 @@ from game_server.backup import (  # noqa: E402
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
 from game_server.log_bridge import RecentLineDeduper  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
-from game_server.migrate import apply_path_migrations  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
-from game_server.plugin import LogPatterns, PathMigration, load_plugin  # noqa: E402
+from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.steamcmd import _run_streaming  # noqa: E402
 
@@ -297,23 +296,6 @@ class LogToolsTests(unittest.TestCase):
             self.assertTrue(
                 (state / "captures" / capture["id"] / "capture.tar.gz").is_file()
             )
-
-
-class MigrationTests(unittest.TestCase):
-    def test_path_migration_from_plugin(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "old"
-            dst = Path(tmp) / "new"
-            (src / "saves").mkdir(parents=True)
-            (src / "saves" / "world.zip").write_text("data", encoding="utf-8")
-            plugin = load_plugin(FIXTURE)
-            plugin.path_migrations = [
-                PathMigration(source=str(src), destination=str(dst), marker="saves")
-            ]
-            applied = apply_path_migrations(plugin)
-            self.assertEqual(len(applied), 1)
-            self.assertTrue((dst / "saves" / "world.zip").is_file())
-            self.assertEqual(apply_path_migrations(plugin), [])
 
 
 if __name__ == "__main__":
