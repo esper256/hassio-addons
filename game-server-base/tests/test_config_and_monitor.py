@@ -310,6 +310,24 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(_fmt_ago(now - 7200, now=now), "2h ago")
         self.assertEqual(_fmt_ago(now - 86400 * 3, now=now), "3d ago")
 
+    def test_format_bytes(self) -> None:
+        self.assertEqual(format_bytes(900), "900 B")
+        self.assertEqual(format_bytes(12 * 1024), "12 KB")
+        self.assertEqual(format_bytes(int(1.5 * 1024 * 1024)), "1.5 MB")
+        self.assertEqual(format_bytes(int(2.4 * 1024**3)), "2.4 GB")
+
+    def test_world_save_size_prefers_named_world_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"x" * 2048)
+            (root / "noise.log").write_text("ignore me", encoding="utf-8")
+            info = world_save_size(root, "FamilyWorld", fallback_paths=[root])
+            self.assertEqual(info["scope"], "world_file")
+            self.assertEqual(info["bytes"], 2048)
+            self.assertEqual(info["label"], "FamilyWorld.zip")
+
     def test_update_check_and_install_hints(self) -> None:
         now = time.time()
         hint = _format_update_check_hint(
