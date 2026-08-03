@@ -35,7 +35,7 @@ The Necesse add-on is the reference thin layer:
 6. From the repo root, after any supervisor change:
 
    ```bash
-   ./scripts/sync-game-server-base.sh
+   ./game-server-base/sync-into-addons.sh
    ```
 
    This copies **only** `game_server/` into each known add-on. It never overwrites `games/*.yaml`.

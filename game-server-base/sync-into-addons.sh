@@ -2,8 +2,9 @@
 # Copy only the generic supervisor package into game-specific HA add-on contexts.
 # Game plugins (games/*.yaml) are owned by each add-on and are never overwritten.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/game-server-base/game_server"
+BASE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$BASE/.." && pwd)"
+SRC="$BASE/game_server"
 
 sync_into() {
   local dst_root="$1"
