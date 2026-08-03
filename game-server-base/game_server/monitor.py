@@ -59,6 +59,10 @@ class MonitorState:
     player_count: int | None = None
     players_known: bool = False
     ready: bool = False
+    # Human-readable game version announced in logs (e.g. "1.3.1").
+    game_version: str | None = None
+    game_version_seen_at: float | None = None
+    game_version_line: str | None = None
     version_mismatch_count: int = 0
     last_version_mismatch_at: float | None = None
     last_version_mismatch_line: str | None = None
@@ -80,6 +84,9 @@ class MonitorState:
             ),
             "players_known": self.players_known,
             "ready": self.ready,
+            "game_version": self.game_version,
+            "game_version_seen_at": self.game_version_seen_at,
+            "game_version_line": self.game_version_line,
             "version_mismatch_count": self.version_mismatch_count,
             "last_version_mismatch_at": self.last_version_mismatch_at,
             "last_version_mismatch_line": self.last_version_mismatch_line,
@@ -349,6 +356,20 @@ class LogMonitor:
                 except ValueError:
                     pass
 
+        if "game_version" in active_hits:
+            match = active_hits["game_version"]
+            raw = match.groupdict().get("version") or (
+                match.group(1) if match.lastindex else None
+            )
+            if raw is not None:
+                version = str(raw).strip().rstrip(".,;")
+                if version:
+                    if version != self.state.game_version:
+                        LOG.info("Game version from logs: %s", version)
+                    self.state.game_version = version
+                    self.state.game_version_seen_at = time.time()
+                    self.state.game_version_line = line
+
         if "version_mismatch" in active_hits:
             self.state.version_mismatch_count += 1
             self.state.last_version_mismatch_at = time.time()
@@ -378,6 +399,7 @@ def plugin_patterns_as_dict(plugin: GamePlugin) -> dict[str, list[str]]:
         "player_join": list(patterns.player_join or []),
         "player_leave": list(patterns.player_leave or []),
         "player_count": list(patterns.player_count or []),
+        "game_version": list(patterns.game_version or []),
         "version_mismatch": list(patterns.version_mismatch or []),
     }
 

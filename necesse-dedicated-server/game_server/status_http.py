@@ -26,7 +26,6 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="refresh" content="20" />
   <base href="{base_href}" />
   <title>{game} server status</title>
   <style>
@@ -155,34 +154,46 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
   <main>
     <h1>{game}</h1>
-    <p class="sub">Dedicated server supervisor v{app_version}</p>
-    <div class="grid">
-      <div class="stat"><div class="label">Server</div><div class="value {running_class}">{running}</div></div>
-      <div class="stat"><div class="label">Players</div><div class="value">{players}</div><div class="hint">{players_hint}</div></div>
+    <p class="sub" id="subtitle">{subtitle}</p>
+    <div class="grid" id="status-grid">
+      <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
+      <div class="stat">
+        <div class="label">Game version</div>
+        <div class="value" id="v-game-version">{game_version}</div>
+        <div class="hint" id="h-game-version">{game_version_hint}</div>
+      </div>
+      <div class="stat"><div class="label">Players</div><div class="value" id="v-players">{players}</div><div class="hint" id="h-players">{players_hint}</div></div>
       <div class="stat">
         <div class="label">World save</div>
-        <div class="value">{world_save}</div>
-        <div class="hint">{world_save_hint}</div>
+        <div class="value" id="v-world">{world_save}</div>
+        <div class="hint" id="h-world">{world_save_hint}</div>
       </div>
-      <div class="stat"><div class="label">Uptime</div><div class="value">{uptime}</div></div>
+      <div class="stat">
+        <div class="label">Uptime</div>
+        <div class="value" id="v-uptime">{uptime}</div>
+        <div class="hint" id="h-uptime">{uptime_hint}</div>
+      </div>
       <div class="stat">
         <div class="label">Restarts</div>
-        <div class="value">{restarts}</div>
-        <div class="hint">{restart_hint}</div>
+        <div class="value" id="v-restarts">{restarts}</div>
+        <div class="hint" id="h-restarts">{restart_hint}</div>
       </div>
-      <div class="stat"><div class="label">Crashes</div><div class="value">{crashes}</div></div>
+      <div class="stat">
+        <div class="label">Game server crashes</div>
+        <div class="value" id="v-crashes">{crashes}</div>
+      </div>
       <div class="stat">
         <div class="label">Update pending</div>
-        <div class="value">{update_pending}</div>
-        <div class="hint">{update_check_hint}</div>
+        <div class="value" id="v-update">{update_pending}</div>
+        <div class="hint" id="h-update">{update_check_hint}</div>
       </div>
       <div class="stat">
-        <div class="label">Game files</div>
-        <div class="value">{install_updated}</div>
-        <div class="hint">{install_updated_hint}</div>
+        <div class="label">Game files installed</div>
+        <div class="value" id="v-files">{install_updated}</div>
+        <div class="hint" id="h-files">{install_updated_hint}</div>
       </div>
     </div>
-    <p class="sub warn">{gating_note}</p>
+    <p class="sub warn" id="gating-note">{gating_note}</p>
 
     <h2>Log pattern hits</h2>
     <p class="sub">
@@ -200,7 +211,7 @@ HTML_PAGE = """<!DOCTYPE html>
     </table>
 
     <h2>Highlighted lines</h2>
-    <pre>{highlights}</pre>
+    <pre id="highlights">{highlights}</pre>
 
     <h2>Log tools</h2>
     <p class="sub">Human actions for diagnosing the live server. Prefer these over the JSON API links.</p>
@@ -218,6 +229,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <summary>JSON API (automation / pattern tuning)</summary>
       <ul>
         <li><a href="api/status">Status JSON</a></li>
+        <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
@@ -226,7 +238,7 @@ HTML_PAGE = """<!DOCTYPE html>
     </details>
 
     <h2>Recent output</h2>
-    <pre>{recent}</pre>
+    <pre id="recent">{recent}</pre>
   </main>
   <script>
     async function postCapture(ev) {{
@@ -250,6 +262,48 @@ HTML_PAGE = """<!DOCTYPE html>
       window.location = select.value;
       return false;
     }}
+    function setText(id, value) {{
+      const el = document.getElementById(id);
+      if (el) el.textContent = value == null ? '' : String(value);
+    }}
+    async function softRefresh() {{
+      try {{
+        const res = await fetch('api/ui', {{ headers: {{ 'Accept': 'application/json' }} }});
+        if (!res.ok) return;
+        const u = await res.json();
+        setText('subtitle', u.subtitle);
+        const running = document.getElementById('v-running');
+        if (running) {{
+          running.textContent = u.running;
+          running.className = 'value ' + (u.running_class || '');
+        }}
+        setText('v-game-version', u.game_version);
+        setText('h-game-version', u.game_version_hint);
+        setText('v-players', u.players);
+        setText('h-players', u.players_hint);
+        setText('v-world', u.world_save);
+        setText('h-world', u.world_save_hint);
+        setText('v-uptime', u.uptime);
+        setText('h-uptime', u.uptime_hint);
+        setText('v-restarts', u.restarts);
+        setText('h-restarts', u.restart_hint);
+        setText('v-crashes', u.crashes);
+        setText('v-update', u.update_pending);
+        setText('h-update', u.update_check_hint);
+        setText('v-files', u.install_updated);
+        setText('h-files', u.install_updated_hint);
+        setText('gating-note', u.gating_note);
+        setText('highlights', u.highlights);
+        setText('recent', u.recent);
+        const sel = document.getElementById('capture-select');
+        if (sel && u.capture_options) {{
+          const prev = sel.value;
+          sel.innerHTML = u.capture_options;
+          if (prev) sel.value = prev;
+        }}
+      }} catch (e) {{}}
+    }}
+    setInterval(softRefresh, 20000);
   </script>
 </body>
 </html>
@@ -355,6 +409,10 @@ class StatusServer:
                     self._json(200, status)
                     return
 
+                if path == "/api/ui":
+                    self._json(200, _ui_view(status, game_name))
+                    return
+
                 if path == "/api/logs":
                     monitor = status.get("monitor") or {}
                     self._json(
@@ -440,76 +498,36 @@ class StatusServer:
                     return
 
                 if path in ("/", "/index.html", "/ingress"):
-                    monitor = status.get("monitor") or {}
+                    view = _ui_view(status, game_name)
                     patterns = status.get("log_patterns") or {}
-                    recent_lines = [
-                        strip_ansi(line)
-                        for line in (monitor.get("recent_lines") or [])[-40:]
-                    ]
-                    recent = "\n".join(recent_lines) or "(no log lines yet)"
-                    highlights = _format_highlights(
-                        monitor.get("highlighted_lines") or []
-                    )
-                    captures = status.get("log_captures") or []
-                    players_known = monitor.get("players_known")
-                    player_value = (
-                        str(monitor.get("player_count"))
-                        if players_known
-                        else "—"
-                    )
-                    players_hint = (
-                        "from active join/leave patterns"
-                        if players_known
-                        else "unknown until player patterns are promoted"
-                    )
-                    gating = status.get("player_gating") or "unknown"
-                    if gating == "inactive_no_active_patterns":
-                        gating_note = (
-                            "Empty-server update gating is off until you promote proven "
-                            "player join/leave patterns from dry-run highlights into the "
-                            "game plugin. Steam build checks still run on their own."
-                        )
-                    else:
-                        gating_note = (
-                            "Active player patterns are enabled; updates can wait for "
-                            "an empty server."
-                        )
-                    reason = status.get("last_start_reason") or "boot"
-                    restart_hint = (
-                        f"last start: {reason}"
-                        if status.get("restart_count", 0) or reason != "boot"
-                        else "first start (not counted as a restart)"
-                    )
-                    update_check_hint = _format_update_check_hint(status)
-                    install_updated, install_updated_hint = _format_install_updated(
-                        status
-                    )
-                    world_save, world_save_hint = _format_world_save(status)
                     html = HTML_PAGE.format(
-                        game=game_name,
+                        game=_html_escape(view["game"]),
                         base_href=_html_escape(self._ingress_base()),
-                        app_version=_html_escape(
-                            str(status.get("app_version") or app_version())
+                        subtitle=_html_escape(view["subtitle"]),
+                        running=_html_escape(view["running"]),
+                        running_class=_html_escape(view["running_class"]),
+                        game_version=_html_escape(view["game_version"]),
+                        game_version_hint=_html_escape(view["game_version_hint"]),
+                        players=_html_escape(view["players"]),
+                        players_hint=_html_escape(view["players_hint"]),
+                        world_save=_html_escape(view["world_save"]),
+                        world_save_hint=_html_escape(view["world_save_hint"]),
+                        gating_note=_html_escape(view["gating_note"]),
+                        uptime=_html_escape(view["uptime"]),
+                        uptime_hint=_html_escape(view["uptime_hint"]),
+                        restarts=_html_escape(str(view["restarts"])),
+                        restart_hint=_html_escape(view["restart_hint"]),
+                        crashes=_html_escape(str(view["crashes"])),
+                        update_pending=_html_escape(view["update_pending"]),
+                        update_check_hint=_html_escape(view["update_check_hint"]),
+                        install_updated=_html_escape(view["install_updated"]),
+                        install_updated_hint=_html_escape(
+                            view["install_updated_hint"]
                         ),
-                        running="running" if status.get("running") else "stopped",
-                        running_class="good" if status.get("running") else "bad",
-                        players=player_value,
-                        players_hint=_html_escape(players_hint),
-                        world_save=_html_escape(world_save),
-                        world_save_hint=_html_escape(world_save_hint),
-                        gating_note=_html_escape(gating_note),
-                        uptime=_fmt_seconds(status.get("supervisor_uptime_seconds", 0)),
-                        restarts=status.get("restart_count", 0),
-                        restart_hint=_html_escape(restart_hint),
-                        crashes=status.get("crash_count", 0),
-                        update_pending="yes" if status.get("update_pending") else "no",
-                        update_check_hint=_html_escape(update_check_hint),
-                        install_updated=_html_escape(install_updated),
-                        install_updated_hint=_html_escape(install_updated_hint),
                         pattern_rows=_format_pattern_rows(patterns.get("patterns") or []),
-                        highlights=_html_escape(highlights),
-                        recent=_html_escape(recent),
-                        capture_options=_format_capture_options(captures),
+                        highlights=_html_escape(view["highlights"]),
+                        recent=_html_escape(view["recent"]),
+                        capture_options=view["capture_options"],
                     ).encode("utf-8")
                     self._send(200, html, "text/html; charset=utf-8")
                     return
@@ -575,12 +593,55 @@ def _fmt_ago(timestamp: Any, *, now: float | None = None) -> str:
     return f"{months}mo ago"
 
 
+def _format_subtitle(status: dict[str, Any]) -> str:
+    version = str(status.get("app_version") or app_version())
+    steamcmd_ver = str(status.get("steamcmd_version") or "").strip()
+    subtitle = f"Dedicated server supervisor v{version}"
+    if steamcmd_ver:
+        subtitle += f" · SteamCMD {steamcmd_ver}"
+    return subtitle
+
+
+def _format_game_version(status: dict[str, Any]) -> tuple[str, str]:
+    monitor = status.get("monitor") or {}
+    version = (
+        status.get("game_version")
+        or monitor.get("game_version")
+        or ""
+    )
+    version = str(version).strip()
+    if version:
+        return version, "From game server logs"
+    return "—", "Unknown until the server announces it"
+
+
+def _format_restart_hint(status: dict[str, Any]) -> str:
+    reason = str(status.get("last_start_reason") or "boot")
+    restarts = int(status.get("restart_count") or 0)
+    if restarts <= 0 or reason == "boot":
+        return "First start"
+    if reason == "crash":
+        return "Last restart: game crash"
+    if reason in ("update", "update_failed"):
+        return "Last restart: server update"
+    return "Last restart: server update"
+
+
+def _format_uptime(status: dict[str, Any]) -> tuple[str, str]:
+    if status.get("running"):
+        value = _fmt_seconds(status.get("game_uptime_seconds", 0))
+    else:
+        value = "—"
+    supervisor = _fmt_seconds(status.get("supervisor_uptime_seconds", 0))
+    return value, f"Supervisor uptime: {supervisor}"
+
+
 def _format_update_check_hint(status: dict[str, Any]) -> str:
     checked_at = status.get("last_update_check_at")
     interval = int(status.get("auto_update_interval_minutes") or 0)
     error = status.get("last_update_error")
     if checked_at:
-        hint = f"checked {_fmt_ago(checked_at)}"
+        hint = f"Checked {_fmt_ago(checked_at)}"
         if status.get("update_pending") and status.get("update_reason"):
             hint += f" · {status.get('update_reason')}"
         elif error and not status.get("update_pending"):
@@ -589,30 +650,34 @@ def _format_update_check_hint(status: dict[str, Any]) -> str:
         return hint
     if interval <= 0:
         return "Steam checks disabled"
-    return "not checked yet"
+    return "Not checked yet"
 
 
 def _format_install_updated(status: dict[str, Any]) -> tuple[str, str]:
-    """Return (value, hint) for when game files were last updated on disk."""
+    """Return (value, hint) for when game server files were last updated on disk."""
 
     install_ts = status.get("install_last_updated_at")
     applied_ts = status.get("last_update_applied_at")
     build = status.get("local_build_id")
     if install_ts:
         value = _fmt_ago(install_ts)
-        hint = f"Steam build {build}" if build else "from Steam install stamp"
+        hint = (
+            f"Steam build {build} (game server files)"
+            if build
+            else "From Steam install stamp"
+        )
         return value, hint
     if applied_ts:
         value = _fmt_ago(applied_ts)
         hint = (
-            f"supervisor last applied · build {build}"
+            f"Supervisor last applied · build {build}"
             if build
-            else "supervisor last applied an update"
+            else "Supervisor last applied an update"
         )
         return value, hint
     if build:
-        return "unknown age", f"Steam build {build}"
-    return "unknown", "no Steam install stamp yet"
+        return "Unknown age", f"Steam build {build} (game server files)"
+    return "Unknown", "No Steam install stamp yet"
 
 
 def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
@@ -625,13 +690,78 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     label = str(info.get("label") or "").strip()
     scope = str(info.get("scope") or "")
     if size <= 0 and scope == "missing":
-        return "—", "no world save found yet"
+        if label:
+            return "—", f"Waiting for {label}"
+        return "—", "No world save found yet"
     value = format_bytes(size)
-    if label and scope == "world_file":
+    if scope == "named_path" and label:
         return value, label
+    if scope == "heuristic" and label:
+        return value, f"{label} (heuristic)"
+    if scope == "backup_sources":
+        return value, label or "World data directory"
     if label:
         return value, label
-    return value, "world data"
+    return value, "World data"
+
+
+def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
+    """Formatted strings for the status page and soft-refresh JSON."""
+
+    monitor = status.get("monitor") or {}
+    recent_lines = [
+        strip_ansi(line) for line in (monitor.get("recent_lines") or [])[-40:]
+    ]
+    recent = "\n".join(recent_lines) or "(no log lines yet)"
+    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
+    players_known = monitor.get("players_known")
+    players = str(monitor.get("player_count")) if players_known else "—"
+    players_hint = (
+        "From active join/leave patterns"
+        if players_known
+        else "Unknown until player patterns are promoted"
+    )
+    gating = status.get("player_gating") or "unknown"
+    if gating == "inactive_no_active_patterns":
+        gating_note = (
+            "Empty-server update gating is off until you promote proven "
+            "player join/leave patterns from dry-run highlights into the "
+            "game plugin. Steam build checks still run on their own."
+        )
+    else:
+        gating_note = (
+            "Active player patterns are enabled; updates can wait for "
+            "an empty server."
+        )
+    uptime, uptime_hint = _format_uptime(status)
+    install_updated, install_updated_hint = _format_install_updated(status)
+    world_save, world_save_hint = _format_world_save(status)
+    game_version, game_version_hint = _format_game_version(status)
+    return {
+        "game": game_name,
+        "subtitle": _format_subtitle(status),
+        "running": "running" if status.get("running") else "stopped",
+        "running_class": "good" if status.get("running") else "bad",
+        "game_version": game_version,
+        "game_version_hint": game_version_hint,
+        "players": players,
+        "players_hint": players_hint,
+        "world_save": world_save,
+        "world_save_hint": world_save_hint,
+        "uptime": uptime,
+        "uptime_hint": uptime_hint,
+        "restarts": int(status.get("restart_count") or 0),
+        "restart_hint": _format_restart_hint(status),
+        "crashes": int(status.get("crash_count") or 0),
+        "update_pending": "yes" if status.get("update_pending") else "no",
+        "update_check_hint": _format_update_check_hint(status),
+        "install_updated": install_updated,
+        "install_updated_hint": install_updated_hint,
+        "gating_note": gating_note,
+        "highlights": highlights,
+        "recent": recent,
+        "capture_options": _format_capture_options(status.get("log_captures") or []),
+    }
 
 
 def _html_escape(text: str) -> str:

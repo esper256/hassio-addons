@@ -19,7 +19,7 @@ from game_server.backup import (  # noqa: E402
     retention_from_profile,
     select_generational_keepers,
 )
-from game_server.disk import format_bytes, world_save_size  # noqa: E402
+from game_server.disk import format_bytes  # noqa: E402
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
@@ -28,17 +28,31 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
+    _format_game_version,
     _format_install_updated,
+    _format_restart_hint,
+    _format_subtitle,
     _format_update_check_hint,
+    _format_uptime,
+    _format_world_save,
 )
+from game_server.world_save import (  # noqa: E402
+    WorldSaveSpec,
+    backup_sources_for,
+    locate_active_world,
+)
+from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _build_app_update_cmd,
     _run_streaming,
+    configure_steamcmd_version_path,
     looks_missing_configuration,
     parse_app_info_build_id,
     prepare_steam_env,
     read_local_install_meta,
+    remember_steamcmd_version,
+    steamcmd_client_version,
     update_available,
     wait_for_app_info,
 )
@@ -92,6 +106,97 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(plugin.steam_app_id, 1)
         self.assertEqual(plugin.install_marker, "server.bin")
         self.assertEqual(plugin.log_patterns.player_join, [])
+        self.assertIsNotNone(plugin.world_save)
+        assert plugin.world_save is not None
+        self.assertEqual(plugin.world_save.strategy, "named_path")
+        self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+
+class WorldSaveLocatorTests(unittest.TestCase):
+    def test_named_path_prefers_plugin_template(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"x" * 2048)
+            (root / "noise.log").write_text("ignore me", encoding="utf-8")
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "named_path")
+            self.assertEqual(located.bytes, 2048)
+            self.assertEqual(located.label, "FamilyWorld.zip")
+            self.assertEqual(backup_sources_for(plugin, str(root)), ["/data/world"])
+
+    def test_named_path_missing_does_not_sum_data_dir(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "noise.bin").write_bytes(b"y" * 4096)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "missing")
+            self.assertEqual(located.bytes, 0)
+            self.assertTrue(str(located.path or "").endswith("FamilyWorld.zip"))
+            value, hint = _format_world_save({"world_save": located.to_dict()})
+            self.assertEqual(value, "—")
+            self.assertIn("FamilyWorld.zip", hint)
+
+    def test_no_world_save_spec_uses_backup_sources_only(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.world_save = None
+        plugin.backup_paths = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cfg.txt").write_bytes(b"z" * 100)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "backup_sources")
+            self.assertEqual(located.bytes, 100)
+            self.assertEqual(located.label, "world data")
+
+    def test_heuristic_is_opt_in_only(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        # Default named_path must not consult the heuristic module when templates miss
+        # a non-template layout.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            odd = root / "worlds" / "FamilyWorld.zip"
+            odd.parent.mkdir(parents=True)
+            odd.write_bytes(b"x" * 50)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "missing")
+
+            plugin.world_save = WorldSaveSpec(
+                strategy="named_path",
+                paths=["{data_dir}/saves/worlds/{world_name}.zip"],
+                allow_heuristic_fallback=True,
+            )
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "heuristic")
+            self.assertEqual(located.label, "FamilyWorld.zip")
+
+            direct = heuristic_locate_world(root, "FamilyWorld")
+            self.assertIsNotNone(direct)
+            assert direct is not None
+            self.assertEqual(direct.scope, "heuristic")
 
 
 class MonitorTests(unittest.TestCase):
@@ -130,6 +235,33 @@ class MonitorTests(unittest.TestCase):
             self.assertIn("Started server using port", joined)
             self.assertNotIn("\x1b[", joined)
             self.assertIn("empty server", joined.lower())
+            # Dry-run game_version candidates highlight but must not capture.
+            self.assertIsNone(mon.state.game_version)
+            self.assertTrue(
+                any(
+                    any(m.get("category") == "game_version" for m in item.get("matches") or [])
+                    for item in highlights
+                )
+            )
+
+    def test_active_game_version_capture(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            game_version=[r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                '[2026-08-03 12:59:33] Started server using port 14159 '
+                'with 10 slots on world "FamilyWorld.zip", game version 1.3.1.'
+            )
+            self.assertEqual(mon.state.game_version, "1.3.1")
+            self.assertIsNotNone(mon.state.game_version_seen_at)
+            value, hint = _format_game_version(
+                {"game_version": mon.state.game_version, "monitor": mon.state.to_dict()}
+            )
+            self.assertEqual(value, "1.3.1")
+            self.assertIn("logs", hint.lower())
 
     def test_active_patterns_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -316,18 +448,6 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(format_bytes(int(1.5 * 1024 * 1024)), "1.5 MB")
         self.assertEqual(format_bytes(int(2.4 * 1024**3)), "2.4 GB")
 
-    def test_world_save_size_prefers_named_world_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            world = root / "saves" / "worlds" / "FamilyWorld.zip"
-            world.parent.mkdir(parents=True)
-            world.write_bytes(b"x" * 2048)
-            (root / "noise.log").write_text("ignore me", encoding="utf-8")
-            info = world_save_size(root, "FamilyWorld", fallback_paths=[root])
-            self.assertEqual(info["scope"], "world_file")
-            self.assertEqual(info["bytes"], 2048)
-            self.assertEqual(info["label"], "FamilyWorld.zip")
-
     def test_update_check_and_install_hints(self) -> None:
         now = time.time()
         hint = _format_update_check_hint(
@@ -337,7 +457,7 @@ class StatusFormatTests(unittest.TestCase):
                 "update_pending": False,
             }
         )
-        self.assertIn("checked", hint)
+        self.assertTrue(hint.startswith("Checked "))
         self.assertIn("ago", hint)
         value, detail = _format_install_updated(
             {
@@ -347,6 +467,34 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertEqual(value, "1d ago")
         self.assertIn("24494683", detail)
+        self.assertIn("game server files", detail)
+
+    def test_restart_uptime_and_subtitle(self) -> None:
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 0, "last_start_reason": "boot"}),
+            "First start",
+        )
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 2, "last_start_reason": "crash"}),
+            "Last restart: game crash",
+        )
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 1, "last_start_reason": "update"}),
+            "Last restart: server update",
+        )
+        uptime, hint = _format_uptime(
+            {
+                "running": True,
+                "game_uptime_seconds": 125,
+                "supervisor_uptime_seconds": 3600,
+            }
+        )
+        self.assertEqual(uptime, "2m 5s")
+        self.assertEqual(hint, "Supervisor uptime: 1h 0m")
+        self.assertEqual(
+            _format_subtitle({"app_version": "2.1.10", "steamcmd_version": "1785186678"}),
+            "Dedicated server supervisor v2.1.10 · SteamCMD 1785186678",
+        )
 
 
 class LogBridgeTests(unittest.TestCase):
@@ -376,6 +524,20 @@ class LogBridgeTests(unittest.TestCase):
 
 
 class SteamCMDHelperTests(unittest.TestCase):
+    def test_remember_steamcmd_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "steamcmd_version.txt"
+            configure_steamcmd_version_path(path)
+            try:
+                remembered = remember_steamcmd_version(
+                    "Steam Console Client (c) Valve Corporation - version 1785186678"
+                )
+                self.assertEqual(remembered, "1785186678")
+                self.assertEqual(steamcmd_client_version(), "1785186678")
+                self.assertEqual(path.read_text(encoding="utf-8").strip(), "1785186678")
+            finally:
+                configure_steamcmd_version_path(None)
+
     def test_missing_configuration_detection(self) -> None:
         self.assertTrue(
             looks_missing_configuration(

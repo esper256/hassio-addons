@@ -41,6 +41,11 @@ KEYWORD_HINTS = {
         r"\bwrong version\b",
         r"\bupdate\b",
     ],
+    "game_version": [
+        r"\bgame version\b",
+        r"\bserver version\b",
+        r"\bversion\s*[:=]\s*\d",
+    ],
     "ready": [
         r"\blistening\b",
         r"\bstarted\b",
@@ -145,6 +150,7 @@ class LogToolbox:
             "player_leave": patterns.compiled("player_leave"),
             "version_mismatch": patterns.compiled("version_mismatch"),
             "player_count": patterns.compiled("player_count"),
+            "game_version": patterns.compiled("game_version"),
             "ready": patterns.compiled("ready"),
         }
         matches: dict[str, list[str]] = {k: [] for k in compiled}
@@ -186,6 +192,7 @@ class LogToolbox:
                 "player_leave": patterns.player_leave,
                 "version_mismatch": patterns.version_mismatch,
                 "player_count": patterns.player_count,
+                "game_version": patterns.game_version,
                 "ready": patterns.ready,
             },
             "matches": matches,

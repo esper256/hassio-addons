@@ -14,7 +14,7 @@ from typing import Any
 from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
-from .disk import ensure_free_mb, world_save_size
+from .disk import ensure_free_mb
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
@@ -26,6 +26,7 @@ from .status_http import StatusServer
 from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
 from .version import app_version
+from .world_save import backup_sources_for, locate_active_world
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -54,6 +55,9 @@ class GameServerSupervisor:
         self.update_check_count = 0
         self.update_apply_count = 0
         self.steam_gate = configure_gate(config.state_dir)
+        steamcmd.configure_steamcmd_version_path(
+            Path(config.state_dir) / "steamcmd_version.txt"
+        )
 
         data_dir = str(config.game_options.get("data_dir") or plugin.data_dir)
         logs_dir = str(config.game_options.get("logs_dir") or plugin.logs_dir)
@@ -110,7 +114,9 @@ class GameServerSupervisor:
             run_uid=self.run_ids[0] if self.run_ids else None,
             run_gid=self.run_ids[1] if self.run_ids else None,
         )
-        backup_sources = list(plugin.backup_paths) or [data_dir]
+        # Backups archive explicit plugin roots (usually the whole data dir).
+        # Active-world size for the UI is resolved separately via world_save.
+        backup_sources = backup_sources_for(plugin, data_dir)
         self.backups = BackupManager(
             config.backup_dir,
             backup_sources,
@@ -143,11 +149,11 @@ class GameServerSupervisor:
         )
         if install_meta.get("build_id") and not self.local_build_id:
             self.local_build_id = str(install_meta["build_id"])
-        world_size = world_save_size(
-            self.plugin.data_dir,
-            str(self.config.game_options.get("world_name") or ""),
-            fallback_paths=list(self.backups.sources),
-        )
+        world_size = locate_active_world(
+            self.plugin,
+            self.config.game_options,
+            data_dir=self.plugin.data_dir,
+        ).to_dict()
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
@@ -155,10 +161,17 @@ class GameServerSupervisor:
             "running": self.process.running,
             "starting": not self.process.running and not self._stop.is_set(),
             "supervisor_uptime_seconds": int(time.time() - self.started_at),
+            "game_uptime_seconds": (
+                int(time.time() - self.process.last_started_at)
+                if self.process.running and self.process.last_started_at
+                else 0
+            ),
             "restart_count": self.process.restart_count,
             "last_start_reason": self.process.last_start_reason,
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
+            "steamcmd_version": steamcmd.steamcmd_client_version(),
+            "game_version": self.monitor.state.game_version,
             "remote_build_id": self.remote_build_id,
             "install_last_updated_at": install_meta.get("last_updated"),
             "world_save": world_size,

@@ -16,6 +16,12 @@ stop_stdin_commands:
   - exit
 backup_paths:
   - /data/world
+# Active world artifact for status UI (backups still use backup_paths above).
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/saves/worlds/{world_name}.zip"
+    - "{data_dir}/saves/worlds/{world_name}"
 executable:
   - java
   - -jar
@@ -40,7 +46,9 @@ arg_map:
   max_client_latency: -maxlatency
   data_dir: -datadir
   logs_dir: -logs
-# Alpha: no active regexes (they would trigger updates/player gating).
-# Generic dry-run candidates in game-server-base highlight likely lines in Ingress.
-# Promote proven patterns here after watching /api/logs/patterns.
-log_patterns: {}
+# Player/ready/mismatch stay empty until proven — those gate updates.
+# game_version is informational only (status UI); safe to activate from real logs:
+#   Started server using port … game version 1.3.1.
+log_patterns:
+  game_version:
+    - '\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b'

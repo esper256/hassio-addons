@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .world_save import WorldSaveSpec
+
 
 @dataclass
 class LogPatterns:
@@ -19,6 +21,8 @@ class LogPatterns:
     version_mismatch: list[str] = field(default_factory=list)
     player_count: list[str] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
+    # Human-readable game/server version (e.g. "1.3.1"), not Steam build ids.
+    game_version: list[str] = field(default_factory=list)
 
     def compiled(self, key: str) -> list[re.Pattern[str]]:
         return [re.compile(p, re.IGNORECASE) for p in getattr(self, key)]
@@ -55,6 +59,8 @@ class GamePlugin:
     min_backup_bytes: int = 1024
     # Optional runtime packages hint for image authors (documentation only).
     runtime_notes: str = ""
+    # How to find the active world artifact for status UI (not backup roots).
+    world_save: WorldSaveSpec | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
@@ -92,6 +98,7 @@ class GamePlugin:
                 version_mismatch=list(patterns.get("version_mismatch") or []),
                 player_count=list(patterns.get("player_count") or []),
                 ready=list(patterns.get("ready") or []),
+                game_version=list(patterns.get("game_version") or []),
             ),
             log_pattern_candidates=candidates,
             ready_timeout_seconds=int(data.get("ready_timeout_seconds", 180)),
@@ -102,6 +109,7 @@ class GamePlugin:
             ],
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
             runtime_notes=str(data.get("runtime_notes") or ""),
+            world_save=WorldSaveSpec.from_dict(data.get("world_save")),
         )
 
 
