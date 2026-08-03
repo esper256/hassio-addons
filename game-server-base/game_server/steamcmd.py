@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .plugin import GamePlugin
 from .steam_gate import get_gate
@@ -35,6 +36,9 @@ class UpdateCheckResult:
 MISSING_CONFIG_MARKERS = (
     "missing configuration",
     "missing app configuration",
+)
+MISSING_PERMISSION_MARKERS = (
+    "missing file permissions",
 )
 
 # How long to wait for Steam to publish install config after login/app_info_update.
@@ -94,12 +98,31 @@ def remember_steamcmd_version(output: str) -> str | None:
     return version
 
 
+def _privilege_preexec(
+    run_uid: int | None, run_gid: int | None
+) -> Callable[[], None] | None:
+    """Drop to gameserver (or similar) inside the SteamCMD child process."""
+
+    if run_uid is None and run_gid is None:
+        return None
+
+    def _drop() -> None:
+        if run_gid is not None:
+            os.setgid(run_gid)
+        if run_uid is not None:
+            os.setuid(run_uid)
+
+    return _drop
+
+
 def _run_streaming(
     cmd: list[str],
     *,
     timeout: float,
     prefix: str = "[steamcmd]",
     env: dict[str, str] | None = None,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> tuple[int, str]:
     """Run a command, streaming stdout/stderr line-by-line into HA Logs."""
 
@@ -110,6 +133,7 @@ def _run_streaming(
         text=True,
         bufsize=1,
         env=env,
+        preexec_fn=_privilege_preexec(run_uid, run_gid),
     )
     lines: list[str] = []
 
@@ -155,6 +179,11 @@ def looks_missing_configuration(output: str) -> bool:
     return any(marker in text for marker in MISSING_CONFIG_MARKERS)
 
 
+def looks_missing_file_permissions(output: str) -> bool:
+    text = (output or "").lower()
+    return any(marker in text for marker in MISSING_PERMISSION_MARKERS)
+
+
 def steam_home_dir() -> Path:
     raw = (os.environ.get("STEAM_HOME") or "").strip()
     if raw:
@@ -162,55 +191,56 @@ def steam_home_dir() -> Path:
     return Path("/data/steam-home")
 
 
-def prepare_steam_env(install_dir: str | Path) -> dict[str, str]:
-    """Point SteamCMD at a persistent HOME and ensure steamapps exists."""
+def _chown_tree(path: Path, uid: int, gid: int) -> None:
+    try:
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)
+            for name in dirs + files:
+                try:
+                    os.chown(os.path.join(root, name), uid, gid)
+                except OSError:
+                    pass
+        os.chown(path, uid, gid)
+    except OSError:
+        LOG.warning("Could not chown %s to %s:%s", path, uid, gid, exc_info=True)
+
+
+def prepare_steam_env(
+    install_dir: str | Path,
+    *,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
+) -> dict[str, str]:
+    """Point SteamCMD at a persistent HOME and ensure steamapps/logs exist."""
 
     install_dir = Path(install_dir)
     install_dir.mkdir(parents=True, exist_ok=True)
-    (install_dir / "steamapps").mkdir(parents=True, exist_ok=True)
+    steamapps = install_dir / "steamapps"
+    steamapps.mkdir(parents=True, exist_ok=True)
 
     home = steam_home_dir()
     home.mkdir(parents=True, exist_ok=True)
-    (home / "Steam").mkdir(parents=True, exist_ok=True)
+    steam_root = home / "Steam"
+    steam_root.mkdir(parents=True, exist_ok=True)
+    logs = steam_root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+
+    # SteamCMD is picky about being able to write logs + install files as the
+    # same user. When we drop to gameserver, make sure those trees match.
+    if run_uid is not None and run_gid is not None and os.geteuid() == 0:
+        for path in (install_dir, steamapps, home, steam_root, logs):
+            _chown_tree(path, run_uid, run_gid)
+            try:
+                os.chmod(path, 0o755)
+            except OSError:
+                pass
 
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["STEAM_HOME"] = str(home)
     env.setdefault("LANG", os.environ.get("LANG") or "en_US.UTF-8")
     env.setdefault("LC_ALL", env["LANG"])
     return env
-
-
-def clear_steam_appcache(env: dict[str, str] | None = None) -> None:
-    """Drop local Steam appinfo cache when it appears corrupt/unusable."""
-
-    homes: list[Path] = []
-    if env and env.get("HOME"):
-        homes.append(Path(env["HOME"]))
-    homes.append(steam_home_dir())
-    homes.append(Path("/root"))
-    homes.append(Path.home())
-
-    seen: set[Path] = set()
-    removed = 0
-    for home in homes:
-        for relative in (
-            Path("Steam/appcache/appinfo.vdf"),
-            Path(".steam/appcache/appinfo.vdf"),
-            Path("Steam/appcache/packageinfo.vdf"),
-        ):
-            path = (home / relative).resolve()
-            if path in seen:
-                continue
-            seen.add(path)
-            if path.is_file():
-                try:
-                    path.unlink()
-                    removed += 1
-                    LOG.info("Cleared Steam appcache file %s", path)
-                except OSError:
-                    LOG.warning("Could not remove %s", path, exc_info=True)
-    if removed == 0:
-        LOG.info("No Steam appcache files to clear")
 
 
 def manifest_path(install_dir: str | Path, app_id: int) -> Path | None:
@@ -293,19 +323,29 @@ def _login_args(plugin: GamePlugin) -> list[str]:
 
 
 def _app_info_cmd(steamcmd_dir: str | Path, plugin: GamePlugin) -> list[str]:
-    return [
+    """Probe app info with the same platform pin used for app_update."""
+
+    cmd = [
         str(steamcmd_bin(steamcmd_dir)),
         "+@ShutdownOnFailedCommand",
         "1",
         "+@NoPromptForPassword",
         "1",
-        *_login_args(plugin),
-        "+app_info_update",
-        "1",
-        "+app_info_print",
-        str(plugin.steam_app_id),
-        "+quit",
     ]
+    platform = (plugin.steam_platform or "").strip().lower()
+    if platform in {"windows", "linux", "macos"}:
+        cmd.extend(["+@sSteamCmdForcePlatformType", platform])
+    cmd.extend(_login_args(plugin))
+    cmd.extend(
+        [
+            "+app_info_update",
+            "1",
+            "+app_info_print",
+            str(plugin.steam_app_id),
+            "+quit",
+        ]
+    )
+    return cmd
 
 
 def _build_app_update_cmd(
@@ -368,17 +408,20 @@ def wait_for_app_info(
     stop_event: threading.Event | None = None,
     timeout_seconds: float = APP_INFO_READY_TIMEOUT_SECONDS,
     poll_interval_seconds: float = APP_INFO_POLL_INTERVAL_SECONDS,
-    clear_cache_once: bool = False,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> str:
     """Block until Steam has install config for the app (a parseable build id).
 
     This is a readiness wait, not an install retry. "Not ready yet" does not
     count as a Steam failure and does not start cooldowns.
+
+    Do not clear the local Steam appcache here: that only forces another
+    anonymous appinfo fetch and is not a reliable fix for readiness lag.
     """
 
     deadline = time.time() + timeout_seconds
     probe = 0
-    cleared_cache = False
     cmd = _app_info_cmd(steamcmd_dir, plugin)
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -398,6 +441,8 @@ def wait_for_app_info(
                 cmd,
                 timeout=min(180.0, max(30.0, remaining)),
                 env=env,
+                run_uid=run_uid,
+                run_gid=run_gid,
             )
         except subprocess.TimeoutExpired as exc:
             raise SteamCMDError(
@@ -412,21 +457,6 @@ def wait_for_app_info(
                 build_id,
             )
             return build_id
-
-        # Mid-wait: one cache reset if Steam keeps returning empty/unusable info.
-        if (
-            clear_cache_once
-            and not cleared_cache
-            and probe >= 2
-            and time.time() + poll_interval_seconds < deadline
-        ):
-            LOG.warning(
-                "Steam app info still unavailable for app %s; clearing local "
-                "appcache once before continuing to wait",
-                plugin.steam_app_id,
-            )
-            clear_steam_appcache(env)
-            cleared_cache = True
 
         if time.time() + poll_interval_seconds >= deadline:
             break
@@ -448,11 +478,17 @@ def fetch_remote_build_id(
     plugin: GamePlugin,
     *,
     stop_event: threading.Event | None = None,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> str:
     """Return remote build id. Raises SteamCMDError on Steam/backend failure."""
 
     gate = get_gate()
-    env = prepare_steam_env(Path(os.environ.get("INSTALL_DIR") or "/data/game"))
+    env = prepare_steam_env(
+        Path(os.environ.get("INSTALL_DIR") or "/data/game"),
+        run_uid=run_uid,
+        run_gid=run_gid,
+    )
     try:
         with gate.session("app_info", stop_event=stop_event):
             build_id = wait_for_app_info(
@@ -462,6 +498,8 @@ def fetch_remote_build_id(
                 stop_event=stop_event,
                 timeout_seconds=min(APP_INFO_READY_TIMEOUT_SECONDS, 60.0),
                 poll_interval_seconds=APP_INFO_POLL_INTERVAL_SECONDS,
+                run_uid=run_uid,
+                run_gid=run_gid,
             )
     except InterruptedError as exc:
         raise SteamCMDError("Remote build id query cancelled by stop") from exc
@@ -473,16 +511,25 @@ def fetch_remote_build_id(
 
 
 def server_installed(install_dir: str | Path, marker_relative: str | None = None) -> bool:
+    """Return True only when a real game install is present.
+
+    Empty ``steamapps/`` scaffolding created before the first SteamCMD run must
+    not count as an installed server.
+    """
+
     root = Path(install_dir)
     if not root.is_dir():
         return False
     if marker_relative:
-        marker = root / marker_relative
-        return marker.exists()
+        return (root / marker_relative).exists()
+    # Marker-less fallback: require a Steam appmanifest, not just any file.
     try:
-        return any(root.iterdir())
+        for path in root.rglob("appmanifest_*.acf"):
+            if path.is_file():
+                return True
     except OSError:
         return False
+    return False
 
 
 def install_or_update(
@@ -494,23 +541,33 @@ def install_or_update(
     retry_delay_seconds: int | None = None,
     validate: bool | None = None,
     stop_event: threading.Event | None = None,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> str | None:
     """Ensure Steam app info is ready, then run app_update.
 
     Returns new local build id. SteamCMD access is serialized through SteamGate.
-    Missing install configuration is handled by waiting for app info readiness
-    before running app_update. Platform is whatever the game plugin declares
-    (this stack targets Linux hosts; no cross-OS depot fallback).
+    Prefer running SteamCMD as the same non-root user that owns ``/data/game``
+    (``run_uid``/``run_gid``); Valve often reports "Missing file permissions"
+    when root writes into a gameserver-owned tree (or the reverse).
     """
 
     gate = get_gate()
     retries = gate.clamp_retries(retries)
     install_dir = Path(install_dir)
     validate = plugin.validate_on_update if validate is None else validate
-    env = prepare_steam_env(install_dir)
+    env = prepare_steam_env(install_dir, run_uid=run_uid, run_gid=run_gid)
     platform = (plugin.steam_platform or "").strip().lower()
+    if run_uid is not None:
+        LOG.info(
+            "SteamCMD will run as uid=%s gid=%s (HOME=%s)",
+            run_uid,
+            run_gid,
+            env.get("HOME"),
+        )
 
     last_error: Exception | None = None
+    repaired_permissions = False
     for attempt in range(1, retries + 1):
         if stop_event is not None and stop_event.is_set():
             raise SteamCMDError("Stopped before SteamCMD install/update")
@@ -525,13 +582,19 @@ def install_or_update(
         returncode = 1
         try:
             with gate.session("app_update", stop_event=stop_event):
+                # Re-assert ownership/writability each attempt (volume remounts,
+                # partial installs, and Steam-created roots can drift).
+                env = prepare_steam_env(
+                    install_dir, run_uid=run_uid, run_gid=run_gid
+                )
                 # Readiness gate: poll app_info_print until buildid exists.
                 wait_for_app_info(
                     steamcmd_dir,
                     plugin,
                     env=env,
                     stop_event=stop_event,
-                    clear_cache_once=True,
+                    run_uid=run_uid,
+                    run_gid=run_gid,
                 )
 
                 cmd = _build_app_update_cmd(
@@ -546,7 +609,13 @@ def install_or_update(
                     plugin.steam_app_id,
                     platform or "native",
                 )
-                returncode, combined = _run_streaming(cmd, timeout=3600, env=env)
+                returncode, combined = _run_streaming(
+                    cmd,
+                    timeout=3600,
+                    env=env,
+                    run_uid=run_uid,
+                    run_gid=run_gid,
+                )
                 if _install_succeeded(
                     returncode=returncode,
                     output=combined,
@@ -567,8 +636,24 @@ def install_or_update(
             last_error = SteamCMDError(
                 f"SteamCMD failed to install app {plugin.steam_app_id}"
             )
+            if looks_missing_file_permissions(combined):
+                last_error = SteamCMDError(
+                    f"SteamCMD reported missing file permissions for app "
+                    f"{plugin.steam_app_id} (HOME={env.get('HOME')}, "
+                    f"install_dir={install_dir}, run_uid={run_uid})"
+                )
+                if not repaired_permissions:
+                    LOG.warning(
+                        "Repairing Steam/data directory ownership before retry"
+                    )
+                    env = prepare_steam_env(
+                        install_dir, run_uid=run_uid, run_gid=run_gid
+                    )
+                    repaired_permissions = True
             if looks_missing_configuration(combined):
-                # Config was supposed to be ready; this is a hard failure mode.
+                # Keep the normal retry/backoff budget. Do not clear appcache:
+                # that forces another anonymous Steam appinfo fetch and is not
+                # a reliable fix for this SteamCMD quirk.
                 last_error = SteamCMDError(
                     f"SteamCMD still reports missing configuration for app "
                     f"{plugin.steam_app_id} after app info readiness "
@@ -603,14 +688,9 @@ def install_or_update(
             )
             break
 
-        if looks_missing_configuration(combined):
-            # Don't burn the retry budget on a configuration problem.
-            LOG.error(
-                "Aborting remaining SteamCMD retries: install configuration for "
-                "app %s is unavailable",
-                plugin.steam_app_id,
-            )
-            break
+        # Missing configuration / permissions are often transient or repaired by
+        # cache clear + ownership fix above — keep using the normal retry budget
+        # instead of hard-aborting after the first post-readiness failure.
 
         if attempt < retries:
             delay = gate.retry_delay_seconds(attempt)
@@ -623,9 +703,7 @@ def install_or_update(
     # Always raise on failure. Callers that already have an install may catch
     # SteamCMDError and keep serving the existing files — but must not treat
     # this as a successful update.
-    if server_installed(install_dir, plugin.install_marker) or server_installed(
-        install_dir
-    ):
+    if server_installed(install_dir, plugin.install_marker):
         raise SteamCMDError(
             f"SteamCMD failed to update app {plugin.steam_app_id} after "
             f"{retries} attempts (existing install left in place): {last_error}"
@@ -642,11 +720,17 @@ def update_available(
     plugin: GamePlugin,
     *,
     stop_event: threading.Event | None = None,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> UpdateCheckResult:
     local = read_local_build_id(install_dir, plugin.steam_app_id)
     try:
         remote = fetch_remote_build_id(
-            steamcmd_dir, plugin, stop_event=stop_event
+            steamcmd_dir,
+            plugin,
+            stop_event=stop_event,
+            run_uid=run_uid,
+            run_gid=run_gid,
         )
     except SteamCMDError as exc:
         LOG.warning("Steam update check failed: %s", exc)

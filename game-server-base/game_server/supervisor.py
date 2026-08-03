@@ -285,26 +285,34 @@ class GameServerSupervisor:
         ok, _free = ensure_free_mb(self.config.install_dir, self.config.min_free_disk_mb)
         return ok
 
+    def _steamcmd_identity(self) -> tuple[int | None, int | None]:
+        """UID/GID SteamCMD should run as (same owner as /data/game)."""
+
+        if self.run_ids:
+            return self.run_ids[0], self.run_ids[1]
+        return None, None
+
     def ensure_installed(self) -> None:
         steamcmd.ensure_steamcmd(self.config.steamcmd_dir)
         # Re-apply ownership after SteamCMD bootstrap files appear.
         if self.config.drop_privileges:
-            prepare_drop(
+            self.run_ids = prepare_drop(
                 self.config.run_as_user,
                 [
                     self.config.steamcmd_dir,
                     self.config.install_dir,
                     steamcmd.steam_home_dir(),
                 ],
-            )
+            ) or self.run_ids
         had_install = steamcmd.server_installed(
             self.config.install_dir, self.plugin.install_marker
-        ) or steamcmd.server_installed(self.config.install_dir)
+        )
         if not had_install or self.config.update_on_start:
             LOG.info(
                 "Installing/updating game server via SteamCMD into %s",
                 self.config.install_dir,
             )
+            run_uid, run_gid = self._steamcmd_identity()
             try:
                 self.local_build_id = steamcmd.install_or_update(
                     self.config.steamcmd_dir,
@@ -313,6 +321,8 @@ class GameServerSupervisor:
                     retries=self.config.steamcmd_retries,
                     retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
                     stop_event=self._stop,
+                    run_uid=run_uid,
+                    run_gid=run_gid,
                 )
                 self.last_update_applied_at = time.time()
                 self.last_update_check_at = self.last_update_applied_at
@@ -409,6 +419,7 @@ class GameServerSupervisor:
         if self.process.running:
             self.process.stop()
 
+        run_uid, run_gid = self._steamcmd_identity()
         try:
             self.local_build_id = steamcmd.install_or_update(
                 self.config.steamcmd_dir,
@@ -417,16 +428,18 @@ class GameServerSupervisor:
                 retries=self.config.steamcmd_retries,
                 retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
                 stop_event=self._stop,
+                run_uid=run_uid,
+                run_gid=run_gid,
             )
             if self.config.drop_privileges:
-                prepare_drop(
+                self.run_ids = prepare_drop(
                     self.config.run_as_user,
                     [
                         self.config.install_dir,
                         self.config.steamcmd_dir,
                         steamcmd.steam_home_dir(),
                     ],
-                )
+                ) or self.run_ids
             self.last_update_applied_at = time.time()
             self.update_apply_count += 1
             self.last_update_error = None
@@ -486,11 +499,14 @@ class GameServerSupervisor:
                 continue
             self.update_check_count += 1
             self.last_update_check_at = time.time()
+            run_uid, run_gid = self._steamcmd_identity()
             result = steamcmd.update_available(
                 self.config.steamcmd_dir,
                 self.config.install_dir,
                 self.plugin,
                 stop_event=self._stop,
+                run_uid=run_uid,
+                run_gid=run_gid,
             )
             self.local_build_id = result.local_build_id or self.local_build_id
             self.remote_build_id = result.remote_build_id

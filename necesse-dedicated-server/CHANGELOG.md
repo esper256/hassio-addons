@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.14
+
+- Fix fresh SteamCMD installs failing with `Missing file permissions` by running SteamCMD as the `gameserver` user (same owner as `/data/game` / `/data/steam-home`) instead of root
+- Pin the Linux Steam platform on app-info readiness probes (same pin as `app_update`)
+- On post-readiness `Missing configuration`, keep the normal retry/backoff budget instead of hard-aborting after the first failure (no appcache wipe — that only forces extra anonymous Steam traffic)
+- Do not treat empty `steamapps/` scaffolding as an existing install; ensure `HOME`/`STEAM_HOME` point at `/data/steam-home` from `run.sh`
+
 ## 2.1.13
 
 - Promote proven Necesse log patterns from Ingress dry-run highlights: ready (`Started server using port`), player join/leave (SteamID64), and an earlier game-version line (`Loading dedicated server on version`)

@@ -23,7 +23,10 @@ export INSTALL_DIR="${INSTALL_DIR:-/data/game}"
 # HA Ingress default port; override for plain Docker if needed.
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
 
-mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game
+mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game /data/steam-home
+# SteamCMD reads HOME for its log directory; keep it on the persistent volume.
+export HOME="${STEAM_HOME:-/data/steam-home}"
+export STEAM_HOME="${STEAM_HOME:-/data/steam-home}"
 
 if [ -f "${OPTIONS_FILE}" ]; then
   echo "Using Home Assistant options from ${OPTIONS_FILE}"
