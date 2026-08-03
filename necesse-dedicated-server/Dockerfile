@@ -49,7 +49,7 @@ WORKDIR /data/game
 LABEL \
   io.hass.name="Necesse Dedicated Server" \
   io.hass.description="Necesse dedicated server with SteamCMD auto-updates, smart restarts, backups, and status page" \
-  io.hass.type="addon" \
+  io.hass.type="app" \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/esper256/hassio-addons"

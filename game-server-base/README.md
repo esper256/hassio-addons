@@ -1,5 +1,7 @@
 # Build a game add-on on `game-server-base`
 
+**Not an installable Home Assistant app.** This folder has no `config.yaml` on purpose so the HAOS App store never lists it. Only thin game add-ons (like Necesse) are installable.
+
 Most people visiting this repository want a **specific game**. If that’s you, start at the [repository README](../README.md) and open that game’s guide (for example [Necesse](../necesse-dedicated-server/README.md)).
 
 This document is for the other journey: **you want to run a different Steam dedicated server** on the same supervisor (auto-update, backups, crash restart, HA Ingress/status, Steam rate gate).

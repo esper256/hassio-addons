@@ -13,11 +13,17 @@ Pick the game and follow that guide. Everything you need to install and run it i
 
 ### Home Assistant in one line
 
-**Settings → Add-ons → Add-on store → ⋮ → Repositories** → add:
+Recent HAOS calls these **Apps** (formerly Add-ons):
+
+**Settings → Apps → App store → ⋮ → Repositories** → add:
 
 `https://github.com/esper256/hassio-addons`
 
-Then install the game add-on from that repository and continue in the game’s README.
+Then install the game app from that repository and continue in the game’s README.
+
+Only game folders that contain `config.yaml` appear in the store. `game-server-base/` is shared library code and is **not** an installable app.
+
+**Architecture:** Necesse is **amd64 only** (SteamCMD). On aarch64 HAOS (many Pis / Home Assistant Green) the store correctly hides it.
 
 ## I want to package a different Steam game
 

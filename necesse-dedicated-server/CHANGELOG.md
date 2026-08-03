@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.7
+
+- Fix HAOS App store discovery: Supervisor rejects `timeout` above 300, which silently hid this app from the repository
+- Cap start timeout at 300, set `io.hass.type=app`, drop unused `share` map
+- Document amd64-only availability and Apps (formerly Add-ons) UI paths
+
 ## 2.1.6
 
 - Drop v1 upgrade path: remove `/home/necesse` and `/opt/game` migrations, and the generic `path_migrations` machinery that existed only for that
