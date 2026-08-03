@@ -74,7 +74,7 @@ Shape reference (synthetic, not a real game):
 - Ship with `log_patterns: {}` until you’ve watched real logs.
 - Built-in generic candidates only **highlight** lines in Ingress (`/api/logs/patterns`); they do not gate players or force updates.
 - Promote a regex into `log_patterns` only after it cleanly matches the real event.
-- If active player patterns are missing, empty-server gating stays inactive so Steam `buildid` updates still work.
+- If active player patterns are missing, updates will not wait for an empty server (Steam `buildid` checks still run).
 
 ---
 

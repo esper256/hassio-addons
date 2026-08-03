@@ -142,8 +142,8 @@ class LogMonitor:
 
         if not self.player_tracking_enabled:
             LOG.warning(
-                "No active player log patterns configured; player-count gating "
-                "is inactive. Dry-run candidates will only highlight lines."
+                "No active player log patterns configured; updates will not wait "
+                "for an empty server. Dry-run candidates will only highlight lines."
             )
         if not self.version_mismatch_enabled:
             LOG.info(

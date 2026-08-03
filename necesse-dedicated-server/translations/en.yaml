@@ -40,10 +40,13 @@ configuration:
     description: Run SteamCMD before launching the server.
   auto_update_interval_minutes:
     name: Auto-update interval (minutes)
-    description: How often to ask Steam whether a newer dedicated-server build exists. 0 disables polling. Values below 15 are raised to 15 to avoid hammering Steam.
+    description: Used only when “Daily Steam check hour” is empty. How often to ask Steam whether a newer dedicated-server build exists. 0 turns periodic Steam checks off. Values below 15 are raised to 15.
+  auto_update_check_hour:
+    name: Daily Steam check hour
+    description: Local hour (0–23) to ask Steam once per day for a newer dedicated-server build. Default is 5 (5:00am). Leave empty to use the interval setting instead.
   update_when_empty_only:
     name: Update only when empty
-    description: Delay update restarts until the monitored player count is zero.
+    description: When a newer build is ready, wait until nobody is online before restarting so players are not interrupted.
   update_on_version_mismatch:
     name: Update on version mismatch
     description: If clients are rejected for a wrong/outdated version, schedule an update right away.

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,7 @@ from game_server.status_http import (  # noqa: E402
     _format_update_check_hint,
     _format_uptime,
     _format_world_save,
+    _ui_view,
 )
 from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
@@ -63,6 +65,7 @@ from game_server.steamcmd import (  # noqa: E402
     update_available,
     wait_for_app_info,
 )
+from game_server.supervisor import GameServerSupervisor  # noqa: E402
 from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
@@ -99,6 +102,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(cfg.game_options["world_name"], "TestWorld")
             self.assertEqual(cfg.auto_update_interval_minutes, 15)
+            self.assertEqual(cfg.auto_update_check_hour, 5)
             self.assertFalse(cfg.update_on_start)
             self.assertEqual(cfg.game_options["server_password"], "secret")
             self.assertEqual(cfg.install_dir, "/data/game")
@@ -568,6 +572,16 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertTrue(hint.startswith("Checked "))
         self.assertIn("ago", hint)
+        self.assertEqual(
+            _format_update_check_hint(
+                {
+                    "auto_update_interval_minutes": 1440,
+                    "auto_update_check_hour": 5,
+                    "update_pending": False,
+                }
+            ),
+            "Next Steam check around 05:00 local",
+        )
         value, detail = _format_install_updated(
             {
                 "install_last_updated_at": now - 86400,
@@ -577,6 +591,26 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(value, "1d ago")
         self.assertIn("24494683", detail)
         self.assertIn("game server files", detail)
+
+    def test_update_players_note_avoids_gating_jargon(self) -> None:
+        waiting = _ui_view({"waits_for_empty_server": "yes"}, "Necesse")
+        self.assertIn("nobody is online", waiting["update_players_note"])
+        self.assertNotIn("gating", waiting["update_players_note"].lower())
+        unknown = _ui_view(
+            {"waits_for_empty_server": "no_player_tracking"}, "Necesse"
+        )
+        self.assertIn("will not wait", unknown["update_players_note"])
+        self.assertNotIn("gating", unknown["update_players_note"].lower())
+
+    def test_seconds_until_daily_steam_check_hour(self) -> None:
+        now = datetime(2026, 8, 3, 4, 30, 0)
+        seconds = GameServerSupervisor._seconds_until_local_hour(5, now=now)
+        self.assertEqual(seconds, 30 * 60)
+        later = datetime(2026, 8, 3, 5, 0, 1)
+        seconds_next_day = GameServerSupervisor._seconds_until_local_hour(
+            5, now=later
+        )
+        self.assertGreater(seconds_next_day, 23 * 3600)
 
     def test_uptime_crashes_game_version_and_subtitle(self) -> None:
         uptime, hint = _format_uptime(
