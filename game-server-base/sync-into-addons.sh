@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# Copy only the generic supervisor package into game-specific HA add-on contexts.
-# Game plugins (games/*.yaml) are owned by each add-on and are never overwritten.
+# Maintainer sync: vendor game-server-base/game_server into each game add-on.
+#
+# Why: HA / Docker builds for a game add-on only see that add-on's tree. They do
+# not mount ../game-server-base at build or runtime. Each installable add-on
+# therefore keeps a copy of the generic supervisor under <addon>/game_server/.
+# After you edit game-server-base/, run this so those copies match before you
+# bump the add-on version and rebuild.
+#
+# Not a Docker/build step. Run by hand (or from CI) on the repo checkout. The
+# Dockerfile only COPY's the already-vendored <addon>/game_server/ tree.
+#
+# Targets: sibling directories that look like installable game add-ons
+# (config.yaml + games/). Never overwrites games/*.yaml or other add-on files.
 set -euo pipefail
 BASE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$BASE/.." && pwd)"
@@ -11,7 +22,22 @@ sync_into() {
   local dst="$dst_root/game_server"
   rm -rf "$dst"
   cp -a "$SRC" "$dst"
-  echo "Synced game_server -> $dst_root/"
+  echo "Synced game_server -> ${dst_root}/"
 }
 
-sync_into "$ROOT/necesse-dedicated-server"
+found=0
+for dest in "$ROOT"/*/; do
+  # Skip the source package itself.
+  if [[ "$(cd "$dest" && pwd)" == "$BASE" ]]; then
+    continue
+  fi
+  if [[ -f "${dest}config.yaml" && -d "${dest}games" ]]; then
+    sync_into "$(cd "$dest" && pwd)"
+    found=$((found + 1))
+  fi
+done
+
+if [[ "$found" -eq 0 ]]; then
+  echo "No game add-ons found under ${ROOT} (expected */config.yaml + */games/)" >&2
+  exit 1
+fi

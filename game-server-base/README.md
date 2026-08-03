@@ -38,7 +38,9 @@ The Necesse add-on is the reference thin layer:
    ./game-server-base/sync-into-addons.sh
    ```
 
-   This copies **only** `game_server/` into each known add-on. It never overwrites `games/*.yaml`.
+   Maintainer step on the repo checkout (not part of the Docker build). Copies
+   **only** `game_server/` into each sibling add-on that has `config.yaml` +
+   `games/`. It never overwrites `games/*.yaml`.
 
 7. Install via the HA add-on repo, or run with Docker using a compose file modeled on Necesse’s.
 
