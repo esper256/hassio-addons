@@ -1,0 +1,61 @@
+name: Necesse
+steam_app_id: 1169370
+steam_login: anonymous
+steam_branch: public
+validate_on_update: true
+working_dir: /opt/game
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: Server.jar
+backup_paths:
+  - /data/world
+executable:
+  - java
+  - -jar
+  - Server.jar
+  - -nogui
+bool_style: one_zero
+ready_timeout_seconds: 180
+arg_map:
+  world_name: -world
+  server_port: -port
+  server_slots: -slots
+  server_owner: -owner
+  server_motd: -motd
+  server_password: -password
+  pause_when_empty: -pausewhenempty
+  give_clients_power: -giveclientspower
+  enable_logging: -logging
+  zip_saves: -zipsaves
+  server_language: -language
+  settings_file: -settings
+  bind_ip: -ip
+  max_client_latency: -maxlatency
+  data_dir: -datadir
+  logs_dir: -logs
+log_patterns:
+  # Tunable: Necesse log wording can change between patches.
+  ready:
+    - "Server started"
+    - "Listening on"
+    - "Done$"
+    - "world loaded"
+  player_join:
+    - "(?P<player>[\\w .-]+) connected"
+    - "Player (?P<player>[\\w .-]+) joined"
+    - "(?P<player>[\\w .-]+) has joined"
+  player_leave:
+    - "(?P<player>[\\w .-]+) disconnected"
+    - "Player (?P<player>[\\w .-]+) left"
+    - "(?P<player>[\\w .-]+) has left"
+  player_count:
+    - "(?P<count>\\d+)\\s*/\\s*\\d+\\s+players"
+    - "Players online:\\s*(?P<count>\\d+)"
+  version_mismatch:
+    - "wrong version"
+    - "outdated (client|server)"
+    - "version mismatch"
+    - "incompatible (client|version)"
+    - "client version"
+    - "update (your|the) (client|server)"
+    - "newer version"

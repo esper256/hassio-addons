@@ -1,0 +1,40 @@
+services:
+  necesse:
+    build:
+      context: ..
+      dockerfile: game-server-base/Dockerfile
+    image: game-server-base:necesse
+    container_name: necesse
+    restart: unless-stopped
+    ports:
+      - "14159:14159/udp"
+      - "8080:8080"
+    environment:
+      GAME_PLUGIN: /opt/games/necesse.yaml
+      WORLD_NAME: FamilyWorld
+      SERVER_PASSWORD: changeme
+      SERVER_SLOTS: "10"
+      PAUSE_WHEN_EMPTY: "true"
+      ENABLE_LOGGING: "true"
+      ZIP_SAVES: "true"
+      UPDATE_ON_START: "true"
+      AUTO_UPDATE_INTERVAL_MINUTES: "30"
+      UPDATE_WHEN_EMPTY_ONLY: "true"
+      UPDATE_ON_VERSION_MISMATCH: "true"
+      # Quiet overnight window (local container time). Comment out to allow any hour.
+      # UPDATE_WINDOW_START_HOUR: "1"
+      # UPDATE_WINDOW_END_HOUR: "6"
+      STATUS_HTTP_ENABLED: "true"
+      STATUS_HTTP_PORT: "8080"
+      BACKUP_ENABLED: "true"
+      BACKUP_INTERVAL_MINUTES: "180"
+      BACKUP_RETAIN: "10"
+      JAVA_OPTS: "-Xms512M -Xmx2G"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
