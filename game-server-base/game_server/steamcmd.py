@@ -41,9 +41,57 @@ MISSING_CONFIG_MARKERS = (
 APP_INFO_READY_TIMEOUT_SECONDS = 90.0
 APP_INFO_POLL_INTERVAL_SECONDS = 5.0
 
+_STEAMCMD_VERSION_RE = re.compile(
+    r"Steam Console Client.*?version\s+(\d+)", re.IGNORECASE
+)
+_steamcmd_version: str | None = None
+_steamcmd_version_path: Path | None = None
+
 
 class SteamCMDError(RuntimeError):
     pass
+
+
+def configure_steamcmd_version_path(path: str | Path | None) -> None:
+    """Load/persist the SteamCMD client version beside supervisor state."""
+
+    global _steamcmd_version, _steamcmd_version_path
+    if path is None:
+        _steamcmd_version = None
+        _steamcmd_version_path = None
+        return
+    _steamcmd_version_path = Path(path)
+    try:
+        if _steamcmd_version_path.is_file():
+            text = _steamcmd_version_path.read_text(encoding="utf-8").strip()
+            if text:
+                _steamcmd_version = text
+                return
+    except OSError:
+        LOG.debug("Could not read SteamCMD version file", exc_info=True)
+    _steamcmd_version = None
+
+
+def steamcmd_client_version() -> str | None:
+    return _steamcmd_version
+
+
+def remember_steamcmd_version(output: str) -> str | None:
+    """Parse SteamCMD client version from process output and persist it."""
+
+    global _steamcmd_version
+    match = _STEAMCMD_VERSION_RE.search(output or "")
+    if not match:
+        return _steamcmd_version
+    version = match.group(1)
+    _steamcmd_version = version
+    if _steamcmd_version_path is not None:
+        try:
+            _steamcmd_version_path.parent.mkdir(parents=True, exist_ok=True)
+            _steamcmd_version_path.write_text(version + "\n", encoding="utf-8")
+        except OSError:
+            LOG.debug("Could not persist SteamCMD version", exc_info=True)
+    return version
 
 
 def _run_streaming(
@@ -72,6 +120,7 @@ def _run_streaming(
                 text = raw.rstrip("\n")
                 lines.append(text)
                 LOG.info("%s %s", prefix, text)
+                remember_steamcmd_version(text)
         finally:
             proc.stdout.close()
 
@@ -89,7 +138,9 @@ def _run_streaming(
             raise
     finally:
         reader.join(timeout=30)
-    return int(proc.returncode or 0), "\n".join(lines)
+    combined = "\n".join(lines)
+    remember_steamcmd_version(combined)
+    return int(proc.returncode or 0), combined
 
 
 def steamcmd_bin(steamcmd_dir: str | Path) -> Path:

@@ -3,8 +3,11 @@
 ## 2.1.10
 
 - Status UI cleanup: “Dedicated server supervisor v…”, drop redundant App version / Steam build / Player gating squares
-- Restarts no longer count the first boot; show last start reason (boot / crash / update)
-- Update pending shows last Steam check age; Game files shows when the install was last updated; World save shows human-readable save size
+- Restarts no longer count the first boot; under the count show “First start”, “Last restart: game crash”, or “Last restart: server update”
+- Uptime shows game-server process uptime plus supervisor uptime; crashes labeled as game server crashes
+- Game files installed shows age (“XYZ ago”) with Steam build for the game server files; SteamCMD client version appears next to the supervisor version
+- Soft-refresh status every 20s via `api/ui` (no full-page meta refresh / flicker)
+- Update pending shows last Steam check age; World save shows human-readable save size
 - Strip ANSI color codes from game logs; broaden dry-run ready/empty-server highlights
 - Log tools: human actions first, captures in a dropdown + download, raw tail falls back to recent output and can render as text
 

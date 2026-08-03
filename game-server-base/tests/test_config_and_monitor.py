@@ -29,16 +29,22 @@ from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests 
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
     _format_install_updated,
+    _format_restart_hint,
+    _format_subtitle,
     _format_update_check_hint,
+    _format_uptime,
 )
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _build_app_update_cmd,
     _run_streaming,
+    configure_steamcmd_version_path,
     looks_missing_configuration,
     parse_app_info_build_id,
     prepare_steam_env,
     read_local_install_meta,
+    remember_steamcmd_version,
+    steamcmd_client_version,
     update_available,
     wait_for_app_info,
 )
@@ -337,7 +343,7 @@ class StatusFormatTests(unittest.TestCase):
                 "update_pending": False,
             }
         )
-        self.assertIn("checked", hint)
+        self.assertTrue(hint.startswith("Checked "))
         self.assertIn("ago", hint)
         value, detail = _format_install_updated(
             {
@@ -347,6 +353,34 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertEqual(value, "1d ago")
         self.assertIn("24494683", detail)
+        self.assertIn("game server files", detail)
+
+    def test_restart_uptime_and_subtitle(self) -> None:
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 0, "last_start_reason": "boot"}),
+            "First start",
+        )
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 2, "last_start_reason": "crash"}),
+            "Last restart: game crash",
+        )
+        self.assertEqual(
+            _format_restart_hint({"restart_count": 1, "last_start_reason": "update"}),
+            "Last restart: server update",
+        )
+        uptime, hint = _format_uptime(
+            {
+                "running": True,
+                "game_uptime_seconds": 125,
+                "supervisor_uptime_seconds": 3600,
+            }
+        )
+        self.assertEqual(uptime, "2m 5s")
+        self.assertEqual(hint, "Supervisor uptime: 1h 0m")
+        self.assertEqual(
+            _format_subtitle({"app_version": "2.1.10", "steamcmd_version": "1785186678"}),
+            "Dedicated server supervisor v2.1.10 · SteamCMD 1785186678",
+        )
 
 
 class LogBridgeTests(unittest.TestCase):
@@ -376,6 +410,20 @@ class LogBridgeTests(unittest.TestCase):
 
 
 class SteamCMDHelperTests(unittest.TestCase):
+    def test_remember_steamcmd_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "steamcmd_version.txt"
+            configure_steamcmd_version_path(path)
+            try:
+                remembered = remember_steamcmd_version(
+                    "Steam Console Client (c) Valve Corporation - version 1785186678"
+                )
+                self.assertEqual(remembered, "1785186678")
+                self.assertEqual(steamcmd_client_version(), "1785186678")
+                self.assertEqual(path.read_text(encoding="utf-8").strip(), "1785186678")
+            finally:
+                configure_steamcmd_version_path(None)
+
     def test_missing_configuration_detection(self) -> None:
         self.assertTrue(
             looks_missing_configuration(

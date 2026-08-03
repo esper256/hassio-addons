@@ -54,6 +54,9 @@ class GameServerSupervisor:
         self.update_check_count = 0
         self.update_apply_count = 0
         self.steam_gate = configure_gate(config.state_dir)
+        steamcmd.configure_steamcmd_version_path(
+            Path(config.state_dir) / "steamcmd_version.txt"
+        )
 
         data_dir = str(config.game_options.get("data_dir") or plugin.data_dir)
         logs_dir = str(config.game_options.get("logs_dir") or plugin.logs_dir)
@@ -155,10 +158,16 @@ class GameServerSupervisor:
             "running": self.process.running,
             "starting": not self.process.running and not self._stop.is_set(),
             "supervisor_uptime_seconds": int(time.time() - self.started_at),
+            "game_uptime_seconds": (
+                int(time.time() - self.process.last_started_at)
+                if self.process.running and self.process.last_started_at
+                else 0
+            ),
             "restart_count": self.process.restart_count,
             "last_start_reason": self.process.last_start_reason,
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
+            "steamcmd_version": steamcmd.steamcmd_client_version(),
             "remote_build_id": self.remote_build_id,
             "install_last_updated_at": install_meta.get("last_updated"),
             "world_save": world_size,
