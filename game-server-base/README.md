@@ -30,7 +30,14 @@ Those belong in each game’s thin add-on/image directory.
 Point `GAME_PLUGIN` at a YAML/JSON file. Minimum fields:
 
 - `name`, `steam_app_id`, `executable`, `install_marker`
-- optional: `arg_map`, `log_patterns`, `stop_stdin_commands`, `path_migrations`, backup paths, etc.
+- optional: `arg_map`, `log_patterns`, `log_pattern_candidates`, `stop_stdin_commands`, `path_migrations`, backup paths, etc.
+
+### Log patterns: active vs dry-run
+
+- `log_patterns` — **active**. Can update player state and trigger version-mismatch updates.
+- Built-in generic candidates (`patterns.py`) plus optional `log_pattern_candidates` — **dry-run only**. Highlight hits in Ingress / `/api/logs/patterns`, never trigger actions.
+- Alpha recommendation: ship games with empty `log_patterns: {}` and promote regexes after watching dry-run hits.
+- If no active player patterns exist, empty-server gating is inactive so Steam buildid updates still work.
 
 See `tests/fixtures/example.game.yaml` for the shape.
 
