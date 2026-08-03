@@ -36,5 +36,5 @@ This repo’s shared supervisor (`game-server-base`) is game-agnostic. Use it wh
 | Path | What it is |
 | --- | --- |
 | `necesse-dedicated-server/` | Necesse HA add-on + Docker image (what most people install) |
-| `game-server-base/` | Shared SteamCMD supervisor (no game identity) |
-| `scripts/sync-game-server-base.sh` | Copies the supervisor into game add-ons after base changes |
+| `game-server-base/` | Shared SteamCMD supervisor (no game identity); `sync-into-addons.sh` copies it into game add-ons after base changes |
+| `tests/` | Repo-level checks (HA app `config.yaml` Supervisor rules) |

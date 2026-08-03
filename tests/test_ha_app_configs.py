@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""Validate Home Assistant app (add-on) config.yaml files against Supervisor rules.
+"""Validate Home Assistant app config.yaml files against Supervisor rules.
 
-Catches the class of silent failures where Supervisor skips an app during store
-reload because config validation failed (for example timeout > 300).
+Catches silent store failures where Supervisor skips an app during reload
+because config validation failed (for example timeout > 300).
 """
 
 from __future__ import annotations
 
 import re
-import sys
+import unittest
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover
-    print("PyYAML required: apt/pip install pyyaml", file=sys.stderr)
-    raise SystemExit(2)
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RE_SLUG = re.compile(r"^(?!-)[a-z0-9_-]+(?<!-)$")
@@ -98,34 +94,28 @@ def validate_config(path: Path) -> list[str]:
     return errors
 
 
-def main() -> int:
-    configs = discover_configs(ROOT)
-    # game-server-base must never present as an HA app.
-    base_configs = [p for p in configs if "game-server-base" in p.parts]
-    if base_configs:
-        print("ERROR: game-server-base must not contain config.yaml:", file=sys.stderr)
-        for path in base_configs:
-            print(f"  {path}", file=sys.stderr)
-        return 1
+class HaAppConfigTests(unittest.TestCase):
+    def test_game_server_base_is_not_an_ha_app(self) -> None:
+        base_configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" in p.parts
+        ]
+        self.assertEqual(
+            base_configs,
+            [],
+            "game-server-base must not contain config.yaml "
+            f"(found: {base_configs})",
+        )
 
-    if not configs:
-        print("ERROR: no app config.yaml found", file=sys.stderr)
-        return 1
-
-    errors: list[str] = []
-    for path in configs:
-        errors.extend(validate_config(path))
-        print(f"checked {path.relative_to(ROOT)}")
-
-    if errors:
-        print("\nValidation failed:", file=sys.stderr)
-        for err in errors:
-            print(f"  - {err}", file=sys.stderr)
-        return 1
-
-    print(f"OK: {len(configs)} HA app config(s) valid; game-server-base not advertised")
-    return 0
+    def test_installable_app_configs_pass_supervisor_rules(self) -> None:
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        self.assertTrue(configs, "expected at least one installable HA app config.yaml")
+        errors: list[str] = []
+        for path in configs:
+            errors.extend(validate_config(path))
+        self.assertEqual(errors, [], "\n".join(errors))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    unittest.main()
