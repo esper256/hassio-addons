@@ -25,7 +25,7 @@ Requires an **amd64** Home Assistant OS host (SteamCMD). On aarch64 machines the
 6. On your router, forward **UDP 14159** to your Home Assistant host.
 7. In Necesse, connect to your HA host IP on port `14159` (with the password if you set one).
 
-The first start downloads the dedicated server through Steam. That can take several minutes. Watch the app **Logs** tab — the very first lines print `Home Assistant app version: …` so you can confirm the install.
+The first start downloads the dedicated server through Steam. That can take several minutes. Watch the app **Logs** tab — the very first lines print `Home Assistant app version: …` so you can confirm the install. A one-off SteamCMD `Missing configuration` line can appear on a cold cache; the supervisor clears appcache and retries quickly.
 
 ### Status page (OPEN WEB UI)
 
