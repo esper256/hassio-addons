@@ -28,8 +28,9 @@ class SupervisorConfig:
     update_on_version_mismatch: bool = True
     update_window_start_hour: int | None = None
     update_window_end_hour: int | None = None
-    steamcmd_retries: int = 5
-    steamcmd_retry_delay_seconds: int = 30
+    # Soft preference only — SteamGate hard-caps retries and uses exponential backoff.
+    steamcmd_retries: int = 3
+    steamcmd_retry_delay_seconds: int = 60
 
     # Process supervision
     restart_on_crash: bool = True
@@ -255,9 +256,9 @@ def load_config() -> SupervisorConfig:
         update_window_end_hour=_as_optional_int(
             normalized.get("update_window_end_hour")
         ),
-        steamcmd_retries=_as_int(normalized.get("steamcmd_retries"), 5),
+        steamcmd_retries=_as_int(normalized.get("steamcmd_retries"), 3),
         steamcmd_retry_delay_seconds=_as_int(
-            normalized.get("steamcmd_retry_delay_seconds"), 30
+            normalized.get("steamcmd_retry_delay_seconds"), 60
         ),
         restart_on_crash=_as_bool(normalized.get("restart_on_crash"), True),
         crash_restart_delay_seconds=_as_int(

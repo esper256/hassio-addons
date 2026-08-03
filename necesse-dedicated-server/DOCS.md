@@ -44,6 +44,18 @@ Updates apply when:
 
 On apply: graceful save/exit → backup → SteamCMD update → restart.
 
+### Steam hammering safeguards
+
+SteamCMD is gated so a broken Steam day (or a stuck retry loop) cannot spam Valve:
+
+- **One SteamCMD at a time** for the whole add-on
+- **≥90s spacing** between any SteamCMD process starts
+- **Exponential backoff** on install/update retries (≈60s → 120s → … capped at 15m), hard-capped at **3 attempts**
+- **Shared failure cooldown** across update checks and applies (grows to 1h; rate-limit-like output forces **6h**)
+- **No more 30s tight retry loop** after a failed apply — failures schedule a future attempt and bring the current build back up
+- Periodic check interval is floored at **15 minutes** (0 still disables polling)
+- Gate state persists in `/data/supervisor/steam_gate.json` so a container restart does not immediately resume hammering
+
 ## Backups
 
 One retention dropdown, not five counters:
