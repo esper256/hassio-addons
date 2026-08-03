@@ -1,0 +1,82 @@
+configuration:
+  world_name:
+    name: World name
+    description: Necesse save/world name passed as -world.
+  server_password:
+    name: Server password
+    description: Password required to join. Leave empty for an open server.
+  server_slots:
+    name: Max players
+    description: Maximum concurrent players.
+  server_port:
+    name: Server port
+    description: UDP port the Necesse process listens on inside the container.
+  server_owner:
+    name: Server owner
+    description: Optional owner player name.
+  server_motd:
+    name: Message of the day
+    description: Shown to connecting players.
+  pause_when_empty:
+    name: Pause when empty
+    description: Pause the world simulation when no players are online.
+  give_clients_power:
+    name: Give clients power
+    description: More permissive client authority (Necesse -giveclientspower).
+  enable_logging:
+    name: Enable logging
+    description: Write Necesse server logs under /data/logs.
+  zip_saves:
+    name: Zip saves
+    description: Store worlds as zip saves.
+  server_language:
+    name: Language
+    description: Server language code (for example en).
+  java_opts:
+    name: Java options
+    description: Extra JVM flags, for example memory limits.
+  update_on_start:
+    name: Update on start
+    description: Run SteamCMD before launching the server.
+  auto_update_interval_minutes:
+    name: Auto-update interval (minutes)
+    description: How often to ask Steam whether a newer dedicated-server build exists. 0 disables polling.
+  update_when_empty_only:
+    name: Update only when empty
+    description: Delay update restarts until the monitored player count is zero.
+  update_on_version_mismatch:
+    name: Update on version mismatch
+    description: If clients are rejected for a wrong/outdated version, schedule an update right away.
+  update_window_start_hour:
+    name: Update window start hour
+    description: Optional local hour (0-23) when routine Steam updates may begin. Leave empty for any time.
+  update_window_end_hour:
+    name: Update window end hour
+    description: Optional local hour (0-23) when routine Steam updates must stop. Leave empty for any time.
+  restart_on_crash:
+    name: Restart on crash
+    description: Automatically relaunch the server process after an unexpected exit.
+  status_http_enabled:
+    name: Status page
+    description: Serve the supervisor status/log HTTP UI used by Ingress and /healthz.
+  ha_notifications:
+    name: Home Assistant notifications
+    description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
+  backup_enabled:
+    name: Enable backups
+    description: Periodically archive /data/world into /data/backups.
+  backup_interval_minutes:
+    name: Backup interval (minutes)
+    description: How often to attempt a backup. Failures/empty worlds back off from this interval.
+  backup_on_update:
+    name: Backup before update
+    description: Create a world backup immediately before applying a Steam update.
+  backup_retention:
+    name: Backup retention
+    description: "How history is thinned over time. standard = 7 daily → 4 weekly → 12 monthly. minimal uses less disk; extended keeps longer history."
+  min_free_disk_mb:
+    name: Minimum free disk (MiB)
+    description: Skip backups/updates when free space under /data falls below this threshold.
+network:
+  14159/udp: Necesse game traffic
+  8080/tcp: Status dashboard (optional host mapping; Ingress preferred)

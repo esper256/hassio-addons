@@ -1,0 +1,25 @@
+# Synthetic plugin used only by unit tests. Not a real game.
+name: ExampleGame
+steam_app_id: 1
+steam_login: anonymous
+working_dir: /data/game
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: server.bin
+min_backup_bytes: 1
+stop_timeout_seconds: 5
+stop_stdin_commands:
+  - quit
+backup_paths:
+  - /data/world
+executable:
+  - /bin/true
+bool_style: one_zero
+arg_map:
+  world_name: -world
+  server_slots: -slots
+  data_dir: -datadir
+  logs_dir: -logs
+# Empty active patterns by default (alpha-safe). Tests that need active
+# patterns mutate the loaded plugin in memory.
+log_patterns: {}

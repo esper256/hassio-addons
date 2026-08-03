@@ -1,0 +1,52 @@
+name: Necesse
+steam_app_id: 1169370
+steam_login: anonymous
+steam_branch: public
+validate_on_update: true
+working_dir: /data/game
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: Server.jar
+min_backup_bytes: 1024
+stop_timeout_seconds: 60
+stop_stdin_commands:
+  - save
+  - exit
+backup_paths:
+  - /data/world
+# One-time path moves for older layouts / image versions.
+path_migrations:
+  - source: /home/necesse/.config/Necesse
+    destination: /data/world
+    marker: saves
+  - source: /opt/game
+    destination: /data/game
+    marker: Server.jar
+executable:
+  - java
+  - -jar
+  - Server.jar
+  - -nogui
+bool_style: one_zero
+ready_timeout_seconds: 180
+arg_map:
+  world_name: -world
+  server_port: -port
+  server_slots: -slots
+  server_owner: -owner
+  server_motd: -motd
+  server_password: -password
+  pause_when_empty: -pausewhenempty
+  give_clients_power: -giveclientspower
+  enable_logging: -logging
+  zip_saves: -zipsaves
+  server_language: -language
+  settings_file: -settings
+  bind_ip: -ip
+  max_client_latency: -maxlatency
+  data_dir: -datadir
+  logs_dir: -logs
+# Alpha: no active regexes (they would trigger updates/player gating).
+# Generic dry-run candidates in game-server-base highlight likely lines in Ingress.
+# Promote proven patterns here after watching /api/logs/patterns.
+log_patterns: {}
