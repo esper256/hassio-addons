@@ -157,6 +157,11 @@ HTML_PAGE = """<!DOCTYPE html>
     <p class="sub" id="subtitle">{subtitle}</p>
     <div class="grid" id="status-grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
+      <div class="stat">
+        <div class="label">Game version</div>
+        <div class="value" id="v-game-version">{game_version}</div>
+        <div class="hint" id="h-game-version">{game_version_hint}</div>
+      </div>
       <div class="stat"><div class="label">Players</div><div class="value" id="v-players">{players}</div><div class="hint" id="h-players">{players_hint}</div></div>
       <div class="stat">
         <div class="label">World save</div>
@@ -272,6 +277,8 @@ HTML_PAGE = """<!DOCTYPE html>
           running.textContent = u.running;
           running.className = 'value ' + (u.running_class || '');
         }}
+        setText('v-game-version', u.game_version);
+        setText('h-game-version', u.game_version_hint);
         setText('v-players', u.players);
         setText('h-players', u.players_hint);
         setText('v-world', u.world_save);
@@ -499,6 +506,8 @@ class StatusServer:
                         subtitle=_html_escape(view["subtitle"]),
                         running=_html_escape(view["running"]),
                         running_class=_html_escape(view["running_class"]),
+                        game_version=_html_escape(view["game_version"]),
+                        game_version_hint=_html_escape(view["game_version_hint"]),
                         players=_html_escape(view["players"]),
                         players_hint=_html_escape(view["players_hint"]),
                         world_save=_html_escape(view["world_save"]),
@@ -591,6 +600,19 @@ def _format_subtitle(status: dict[str, Any]) -> str:
     if steamcmd_ver:
         subtitle += f" · SteamCMD {steamcmd_ver}"
     return subtitle
+
+
+def _format_game_version(status: dict[str, Any]) -> tuple[str, str]:
+    monitor = status.get("monitor") or {}
+    version = (
+        status.get("game_version")
+        or monitor.get("game_version")
+        or ""
+    )
+    version = str(version).strip()
+    if version:
+        return version, "From game server logs"
+    return "—", "Unknown until the server announces it"
 
 
 def _format_restart_hint(status: dict[str, Any]) -> str:
@@ -714,11 +736,14 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     uptime, uptime_hint = _format_uptime(status)
     install_updated, install_updated_hint = _format_install_updated(status)
     world_save, world_save_hint = _format_world_save(status)
+    game_version, game_version_hint = _format_game_version(status)
     return {
         "game": game_name,
         "subtitle": _format_subtitle(status),
         "running": "running" if status.get("running") else "stopped",
         "running_class": "good" if status.get("running") else "bad",
+        "game_version": game_version,
+        "game_version_hint": game_version_hint,
         "players": players,
         "players_hint": players_hint,
         "world_save": world_save,

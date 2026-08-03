@@ -61,7 +61,7 @@ Minimum useful fields:
 | `stop_stdin_commands` | Optional graceful stop (`save` / `exit`, etc.) |
 | `backup_paths` | What to archive (usually the whole data dir) |
 | `world_save` | Active world artifact for status UI (`strategy: named_path` + `paths` templates). Separate from backups. |
-| `log_patterns` | **Active** regexes (player count / version mismatch). Prefer empty until proven. |
+| `log_patterns` | **Active** regexes (`game_version`, player count, version mismatch, …). Prefer empty until proven, except informational captures like `game_version`. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
 
 Shape reference (synthetic, not a real game):  

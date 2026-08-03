@@ -171,6 +171,7 @@ class GameServerSupervisor:
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
             "steamcmd_version": steamcmd.steamcmd_client_version(),
+            "game_version": self.monitor.state.game_version,
             "remote_build_id": self.remote_build_id,
             "install_last_updated_at": install_meta.get("last_updated"),
             "world_save": world_size,

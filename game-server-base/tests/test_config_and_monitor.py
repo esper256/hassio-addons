@@ -28,6 +28,7 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
+    _format_game_version,
     _format_install_updated,
     _format_restart_hint,
     _format_subtitle,
@@ -234,6 +235,33 @@ class MonitorTests(unittest.TestCase):
             self.assertIn("Started server using port", joined)
             self.assertNotIn("\x1b[", joined)
             self.assertIn("empty server", joined.lower())
+            # Dry-run game_version candidates highlight but must not capture.
+            self.assertIsNone(mon.state.game_version)
+            self.assertTrue(
+                any(
+                    any(m.get("category") == "game_version" for m in item.get("matches") or [])
+                    for item in highlights
+                )
+            )
+
+    def test_active_game_version_capture(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            game_version=[r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                '[2026-08-03 12:59:33] Started server using port 14159 '
+                'with 10 slots on world "FamilyWorld.zip", game version 1.3.1.'
+            )
+            self.assertEqual(mon.state.game_version, "1.3.1")
+            self.assertIsNotNone(mon.state.game_version_seen_at)
+            value, hint = _format_game_version(
+                {"game_version": mon.state.game_version, "monitor": mon.state.to_dict()}
+            )
+            self.assertEqual(value, "1.3.1")
+            self.assertIn("logs", hint.lower())
 
     def test_active_patterns_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)

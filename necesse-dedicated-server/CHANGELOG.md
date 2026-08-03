@@ -9,6 +9,7 @@
 - Soft-refresh status every 20s via `api/ui` (no full-page meta refresh / flicker)
 - Update pending shows last Steam check age; World save shows human-readable save size
 - Shared world-save locator: plugin `world_save.paths` for the active artifact (UI); `backup_paths` for archives; path-guessing quarantined behind explicit heuristic opt-in
+- Capture human-readable game version from logs (e.g. `1.3.1`) and show it on the status page; Necesse activates the proven “game version …” startup pattern
 - Strip ANSI color codes from game logs; broaden dry-run ready/empty-server highlights
 - Log tools: human actions first, captures in a dropdown + download, raw tail falls back to recent output and can render as text
 

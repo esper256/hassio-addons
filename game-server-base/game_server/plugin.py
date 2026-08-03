@@ -21,6 +21,8 @@ class LogPatterns:
     version_mismatch: list[str] = field(default_factory=list)
     player_count: list[str] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
+    # Human-readable game/server version (e.g. "1.3.1"), not Steam build ids.
+    game_version: list[str] = field(default_factory=list)
 
     def compiled(self, key: str) -> list[re.Pattern[str]]:
         return [re.compile(p, re.IGNORECASE) for p in getattr(self, key)]
@@ -96,6 +98,7 @@ class GamePlugin:
                 version_mismatch=list(patterns.get("version_mismatch") or []),
                 player_count=list(patterns.get("player_count") or []),
                 ready=list(patterns.get("ready") or []),
+                game_version=list(patterns.get("game_version") or []),
             ),
             log_pattern_candidates=candidates,
             ready_timeout_seconds=int(data.get("ready_timeout_seconds", 180)),

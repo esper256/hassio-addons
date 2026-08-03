@@ -38,6 +38,12 @@ DEFAULT_CANDIDATE_PATTERNS: dict[str, list[str]] = {
         r"\b\d+\s+saved players?\b",
         r"\bempty server\b",
     ],
+    # Announce lines only — mismatch/outdated belong in version_mismatch.
+    "game_version": [
+        r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b",
+        r"\bserver version\s*(?:[:=]\s*)?(?P<version>\d+(?:\.\d+)+)\b",
+        r"\bversion\s*(?:[:=]\s*)(?P<version>\d+(?:\.\d+)+)\b",
+    ],
     "version_mismatch": [
         r"\bwrong version\b",
         r"\bversion mismatch\b",
