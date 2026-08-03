@@ -83,8 +83,7 @@ class Notifier:
                     LOG.info("HA notification sent: %s", title)
                     return True
                 LOG.warning("HA notification HTTP %s", resp.status)
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            # HA Core / Supervisor network path — expected to fail sometimes.
             LOG.warning("HA notification failed: %s", exc)
-        except Exception:  # noqa: BLE001
-            LOG.exception("HA notification failed")
         return False

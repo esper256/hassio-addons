@@ -126,7 +126,7 @@ def load_options_json(path: Path | None = None) -> dict[str, Any]:
             data = json.load(handle)
         if isinstance(data, dict):
             return data
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"Failed to parse options JSON at {path}: {exc}") from exc
     return {}
 

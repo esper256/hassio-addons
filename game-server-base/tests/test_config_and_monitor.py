@@ -25,7 +25,16 @@ from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
-from game_server.steamcmd import _run_streaming  # noqa: E402
+from game_server.steamcmd import (  # noqa: E402
+    UpdateCheckResult,
+    _build_app_update_cmd,
+    _run_streaming,
+    looks_missing_configuration,
+    parse_app_info_build_id,
+    prepare_steam_env,
+    update_available,
+    wait_for_app_info,
+)
 from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
@@ -285,6 +294,130 @@ class LogBridgeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("steam-line-one", output)
         self.assertIn("steam-line-two", output)
+
+
+class SteamCMDHelperTests(unittest.TestCase):
+    def test_missing_configuration_detection(self) -> None:
+        self.assertTrue(
+            looks_missing_configuration(
+                "ERROR! Failed to install app '1169370' (Missing configuration)"
+            )
+        )
+        self.assertFalse(looks_missing_configuration("Success! App '1' fully installed"))
+
+    def test_parse_app_info_build_id(self) -> None:
+        sample = (
+            '"1"\n{\n  "branches"\n  {\n    "public"\n    {\n'
+            '      "buildid"\t\t"424242"\n    }\n  }\n}\n'
+        )
+        self.assertEqual(parse_app_info_build_id(sample, "public"), "424242")
+        self.assertIsNone(parse_app_info_build_id("Missing configuration", "public"))
+        self.assertIsNone(parse_app_info_build_id("", "public"))
+
+    def test_wait_for_app_info_polls_until_ready(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        calls = {"n": 0}
+        outputs = [
+            "not ready yet",
+            '"1"\n{\n  "branches"\n  {\n    "public"\n    {\n'
+            '      "buildid"\t\t"99"\n    }\n  }\n}\n',
+        ]
+
+        def fake_run(cmd, *, timeout, prefix="[steamcmd]", env=None):  # noqa: ANN001
+            idx = min(calls["n"], len(outputs) - 1)
+            calls["n"] += 1
+            return 0, outputs[idx]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            old_home = os.environ.get("STEAM_HOME")
+            os.environ["STEAM_HOME"] = str(Path(tmp) / "steam-home")
+            import game_server.steamcmd as steamcmd_mod
+
+            original = steamcmd_mod._run_streaming
+            steamcmd_mod._run_streaming = fake_run  # type: ignore[assignment]
+            try:
+                env = prepare_steam_env(Path(tmp) / "game")
+                build_id = wait_for_app_info(
+                    steamcmd_dir,
+                    plugin,
+                    env=env,
+                    timeout_seconds=20,
+                    poll_interval_seconds=0.01,
+                )
+            finally:
+                steamcmd_mod._run_streaming = original  # type: ignore[assignment]
+                if old_home is None:
+                    os.environ.pop("STEAM_HOME", None)
+                else:
+                    os.environ["STEAM_HOME"] = old_home
+            self.assertEqual(build_id, "99")
+            self.assertGreaterEqual(calls["n"], 2)
+
+    def test_build_cmd_orders_force_install_before_login(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.steam_platform = "linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            install_dir = Path(tmp) / "game"
+            cmd = _build_app_update_cmd(
+                steamcmd_dir,
+                install_dir,
+                plugin,
+                validate=True,
+                platform="linux",
+            )
+            joined = " ".join(cmd)
+            self.assertIn("+@sSteamCmdForcePlatformType linux", joined)
+            self.assertLess(cmd.index("+force_install_dir"), cmd.index("+login"))
+            self.assertLess(cmd.index("+login"), cmd.index("+app_update"))
+            self.assertIn("validate", cmd)
+            self.assertEqual(cmd[-1], "+quit")
+
+    def test_prepare_steam_env_creates_steamapps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            home = Path(tmp) / "steam-home"
+            old_home = os.environ.get("STEAM_HOME")
+            os.environ["STEAM_HOME"] = str(home)
+            try:
+                env = prepare_steam_env(install_dir)
+            finally:
+                if old_home is None:
+                    os.environ.pop("STEAM_HOME", None)
+                else:
+                    os.environ["STEAM_HOME"] = old_home
+            self.assertEqual(env["HOME"], str(home))
+            self.assertTrue((install_dir / "steamapps").is_dir())
+            self.assertTrue((home / "Steam").is_dir())
+
+    def test_update_check_error_is_not_up_to_date(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = Path(tmp) / "game"
+            install_dir.mkdir()
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            import game_server.steamcmd as steamcmd_mod
+
+            def boom(*_a, **_k):  # noqa: ANN001
+                raise steamcmd_mod.SteamCMDError("steam unavailable")
+
+            original = steamcmd_mod.fetch_remote_build_id
+            steamcmd_mod.fetch_remote_build_id = boom  # type: ignore[assignment]
+            try:
+                result = update_available(steamcmd_dir, install_dir, plugin)
+            finally:
+                steamcmd_mod.fetch_remote_build_id = original  # type: ignore[assignment]
+            self.assertIsInstance(result, UpdateCheckResult)
+            self.assertFalse(result.check_ok)
+            self.assertFalse(result.update_available)
+            self.assertIn("steam unavailable", result.error or "")
 
 
 class LogToolsTests(unittest.TestCase):

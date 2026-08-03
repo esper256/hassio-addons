@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.9
+
+- Fix fresh-install SteamCMD failure `Failed to install app '1169370' (Missing configuration)` by **waiting for Steam app info readiness** (`app_info_print` buildid) before `app_update`, instead of retrying installs as "transient"
+- Use CLI `+force_install_dir`/`+app_update`, persist Steam home under `/data/steam-home`, and only then try an alternate depot platform if install config is still missing
+- Generate `en_US.UTF-8` in the image to silence SteamCMD locale warnings
+- Tighten error handling: handle game crashes and Steam/SteamCMD failures explicitly; do not treat failed Steam checks as “up to date” or failed updates as success; stop broad `except Exception` swallows that hid supervisor bugs
+
 ## 2.1.8
 
 - Align status UI with Home Assistant Ingress defaults (port **8099**, Supervisor-only peers, `X-Ingress-Path` base href)

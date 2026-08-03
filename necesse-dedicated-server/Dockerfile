@@ -8,11 +8,13 @@ ARG BUILD_VERSION=dev
 ARG BUILD_ARCH=amd64
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
     GAME_PLUGIN=/opt/games/game.yaml \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt \
     INSTALL_DIR=/data/game \
+    STEAM_HOME=/data/steam-home \
     APP_VERSION=${BUILD_VERSION} \
     STATUS_HTTP_PORT=8099
 
@@ -23,11 +25,14 @@ RUN dpkg --add-architecture i386 \
       ca-certificates-java \
       curl \
       lib32gcc-s1 \
+      locales \
       openjdk-17-jre-headless \
       python3 \
       python3-yaml \
       procps \
       xz-utils \
+ && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+ && locale-gen en_US.UTF-8 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/steamcmd \
@@ -36,7 +41,7 @@ RUN mkdir -p /opt/steamcmd \
  && /opt/steamcmd/steamcmd.sh +quit || true
 
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
- && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /opt/games \
+ && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /data/steam-home /opt/games \
  && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver
 
 # Shared supervisor (vendored from ../game-server-base via sync script)

@@ -16,7 +16,7 @@ For the same guide on GitHub (including Docker/Portainer), see [README.md](READM
 4. In Necesse, join `your-ha-ip:14159`.
 5. On the Info tab click **OPEN WEB UI** for status, build id, backups, and log tools (optional: **Show in sidebar**).
 
-The first start downloads the dedicated server through Steam and can take several minutes. The **Logs** tab begins with `Home Assistant app version: …`, then `[steamcmd]` / `[game]` output.
+The first start downloads the dedicated server through Steam and can take several minutes. The **Logs** tab begins with `Home Assistant app version: …`, then `[steamcmd]` / `[game]` output. On a cold Steam cache the supervisor first waits until Steam app info is ready, then runs `app_update`.
 
 ### OPEN WEB UI vs the Ingress chip
 

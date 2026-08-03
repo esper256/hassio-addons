@@ -186,10 +186,10 @@ class SteamGate:
 
     def note_failure(self, output: str = "", kind: str = "steamcmd") -> None:
         with self._state_lock:
-            self.consecutive_failures += 1
-            self.last_result = "failure"
             self.last_kind = kind
             now = self._time()
+            self.consecutive_failures += 1
+            self.last_result = "failure"
             if self.looks_rate_limited(output):
                 self.last_rate_limit_at = now
                 self.cooldown_until = now + self.policy.rate_limit_cooldown_seconds
