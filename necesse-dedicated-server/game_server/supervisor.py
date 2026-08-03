@@ -146,6 +146,7 @@ class GameServerSupervisor:
             "starting": not self.process.running and not self._stop.is_set(),
             "supervisor_uptime_seconds": int(time.time() - self.started_at),
             "restart_count": self.process.restart_count,
+            "last_start_reason": self.process.last_start_reason,
             "crash_count": self.process.crash_count,
             "local_build_id": self.local_build_id,
             "remote_build_id": self.remote_build_id,
@@ -357,7 +358,7 @@ class GameServerSupervisor:
             return
         try:
             self.monitor.reset_session()
-            self.process.start()
+            self.process.start(reason="update_failed")
         except OSError:
             LOG.exception("Failed restarting server after update failure")
 
@@ -424,7 +425,7 @@ class GameServerSupervisor:
             self._update_reason = None
             self._update_bypass_window = False
         self.monitor.reset_session()
-        self.process.start()
+        self.process.start(reason="update")
         self.notifier.notify(
             "updated",
             f"{self.plugin.name}: updated",
@@ -521,7 +522,7 @@ class GameServerSupervisor:
         self.ensure_installed()
         self.monitor.start()
         self.backups.start()
-        self.process.start()
+        self.process.start(reason="boot")
         self._publish_status()
 
         self._update_thread = threading.Thread(
@@ -569,7 +570,7 @@ class GameServerSupervisor:
                 if self._stop.is_set():
                     break
                 self.monitor.reset_session()
-                self.process.start()
+                self.process.start(reason="crash")
             else:
                 LOG.error("Not restarting after crash (limit reached or disabled)")
                 self.notifier.notify(

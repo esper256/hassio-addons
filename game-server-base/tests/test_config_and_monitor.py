@@ -20,7 +20,7 @@ from game_server.backup import (  # noqa: E402
     select_generational_keepers,
 )
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
-from game_server.log_bridge import RecentLineDeduper  # noqa: E402
+from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
@@ -105,6 +105,24 @@ class MonitorTests(unittest.TestCase):
             report = mon.pattern_report()
             self.assertGreater(report["dry_run_pattern_count"], 0)
             self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
+
+    def test_dry_run_matches_necesse_style_ready_lines(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "\x1b[39m[2026-08-03 12:59:33] Started server using port 14159 "
+                "with 10 slots on world \"FamilyWorld.zip\", game version 1.3.1."
+            )
+            mon.ingest_stdout_line(
+                "[2026-08-03 12:59:48] Suggesting garbage collection due to empty server..."
+            )
+            highlights = mon.state.highlighted_lines
+            self.assertTrue(highlights)
+            joined = "\n".join(item["line"] for item in highlights)
+            self.assertIn("Started server using port", joined)
+            self.assertNotIn("\x1b[", joined)
+            self.assertIn("empty server", joined.lower())
 
     def test_active_patterns_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -284,6 +302,13 @@ class LogBridgeTests(unittest.TestCase):
         self.assertFalse(deduper.remember_if_new("  Player joined  "))
         self.assertTrue(deduper.remember_if_new("Player left"))
         self.assertFalse(deduper.remember_if_new(""))
+
+    def test_strip_ansi(self) -> None:
+        raw = "\x1b[34m[2026-08-03 12:59:33] Started server using port 14159\x1b[39m"
+        self.assertEqual(
+            strip_ansi(raw),
+            "[2026-08-03 12:59:33] Started server using port 14159",
+        )
 
     def test_steamcmd_streaming_captures_output(self) -> None:
         code, output = _run_streaming(

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .log_bridge import strip_ansi
 from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.log_tools")
@@ -65,19 +66,53 @@ class LogToolbox:
         self.captures_dir.mkdir(parents=True, exist_ok=True)
         self.recent_lines_provider = recent_lines_provider
 
+    def _search_dirs(self) -> list[Path]:
+        dirs = [self.logs_dir]
+        data_dir = Path(self.plugin.data_dir)
+        for candidate in (
+            data_dir,
+            data_dir / "logs",
+            data_dir / "data" / "logs",
+        ):
+            if candidate not in dirs:
+                dirs.append(candidate)
+        return dirs
+
     def pick_log_file(self) -> Path | None:
-        if not self.logs_dir.is_dir():
-            return None
-        for preferred in ("latest.log", "server.log", "console.log"):
-            path = self.logs_dir / preferred
-            if path.is_file():
-                return path
-        candidates = sorted(
-            [p for p in self.logs_dir.iterdir() if p.is_file()],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+        preferred_names = (
+            "latest-server-log.txt",
+            "latest.log",
+            "server.log",
+            "console.log",
         )
-        return candidates[0] if candidates else None
+        for directory in self._search_dirs():
+            if not directory.is_dir():
+                continue
+            for preferred in preferred_names:
+                path = directory / preferred
+                if path.is_file():
+                    return path
+        # Newest .log / .txt under known dirs (non-recursive, then one level).
+        candidates: list[Path] = []
+        for directory in self._search_dirs():
+            if not directory.is_dir():
+                continue
+            try:
+                for path in directory.iterdir():
+                    if path.is_file() and path.suffix.lower() in {".log", ".txt"}:
+                        candidates.append(path)
+                    elif path.is_dir():
+                        for child in path.iterdir():
+                            if child.is_file() and child.suffix.lower() in {
+                                ".log",
+                                ".txt",
+                            }:
+                                candidates.append(child)
+            except OSError:
+                continue
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.stat().st_mtime)
 
     def tail_file(self, path: Path | None = None, lines: int = 400) -> list[str]:
         path = path or self.pick_log_file()
@@ -86,9 +121,22 @@ class LogToolbox:
         try:
             # Efficient-ish tail for moderate log files.
             data = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            return data[-max(1, lines) :]
+            return [strip_ansi(line) for line in data[-max(1, lines) :]]
         except OSError:
             return []
+
+    def raw_tail(self, lines: int = 400) -> dict[str, Any]:
+        """Prefer on-disk game logs; fall back to in-memory recent stdout."""
+
+        path = self.pick_log_file()
+        file_lines = self.tail_file(path=path, lines=lines) if path else []
+        if file_lines:
+            return {"source": str(path), "lines": file_lines}
+        recent = [strip_ansi(line) for line in self.recent_lines_provider()]
+        return {
+            "source": "memory:recent_output",
+            "lines": recent[-max(1, lines) :],
+        }
 
     def analyze_lines(self, lines: Iterable[str]) -> dict[str, Any]:
         patterns = self.plugin.log_patterns

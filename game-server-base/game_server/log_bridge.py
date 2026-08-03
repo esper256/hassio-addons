@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
 from collections import deque
+
+# CSI / OSC color codes emitted by many game consoles.
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\x1b\\|\x07))")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so logs are readable and regex-friendly."""
+
+    return _ANSI_RE.sub("", text or "")
 
 
 class FlushStreamHandler(logging.StreamHandler):
@@ -44,7 +54,7 @@ class RecentLineDeduper:
 
     @staticmethod
     def _normalize(line: str) -> str:
-        return line.strip()
+        return strip_ansi(line).strip()
 
     def remember_if_new(self, line: str) -> bool:
         """Return True if this line is new within the TTL window (and remember it)."""
