@@ -28,9 +28,11 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
+    _format_crashes_hint,
     _format_game_version,
+    _format_highlights,
     _format_install_updated,
-    _format_restart_hint,
+    _format_pattern_rows,
     _format_subtitle,
     _format_update_check_hint,
     _format_uptime,
@@ -257,11 +259,17 @@ class MonitorTests(unittest.TestCase):
             )
             self.assertEqual(mon.state.game_version, "1.3.1")
             self.assertIsNotNone(mon.state.game_version_seen_at)
-            value, hint = _format_game_version(
-                {"game_version": mon.state.game_version, "monitor": mon.state.to_dict()}
+            value, build, installed = _format_game_version(
+                {
+                    "game_version": mon.state.game_version,
+                    "monitor": mon.state.to_dict(),
+                    "local_build_id": "24494683",
+                    "install_last_updated_at": time.time() - 3600,
+                }
             )
             self.assertEqual(value, "1.3.1")
-            self.assertIn("logs", hint.lower())
+            self.assertEqual(build, "Steam build 24494683")
+            self.assertTrue(installed.startswith("Installed "))
 
     def test_active_patterns_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -469,32 +477,91 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("24494683", detail)
         self.assertIn("game server files", detail)
 
-    def test_restart_uptime_and_subtitle(self) -> None:
-        self.assertEqual(
-            _format_restart_hint({"restart_count": 0, "last_start_reason": "boot"}),
-            "First start",
-        )
-        self.assertEqual(
-            _format_restart_hint({"restart_count": 2, "last_start_reason": "crash"}),
-            "Last restart: game crash",
-        )
-        self.assertEqual(
-            _format_restart_hint({"restart_count": 1, "last_start_reason": "update"}),
-            "Last restart: server update",
-        )
+    def test_uptime_crashes_game_version_and_subtitle(self) -> None:
         uptime, hint = _format_uptime(
             {
                 "running": True,
                 "game_uptime_seconds": 125,
-                "supervisor_uptime_seconds": 3600,
+                "last_start_reason": "boot",
             }
         )
         self.assertEqual(uptime, "2m 5s")
-        self.assertEqual(hint, "Supervisor uptime: 1h 0m")
+        self.assertEqual(hint, "Since first start")
         self.assertEqual(
-            _format_subtitle({"app_version": "2.1.10", "steamcmd_version": "1785186678"}),
-            "Dedicated server supervisor v2.1.10 · SteamCMD 1785186678",
+            _format_uptime(
+                {
+                    "running": True,
+                    "game_uptime_seconds": 10,
+                    "last_start_reason": "crash",
+                }
+            )[1],
+            "Since crash restart",
         )
+        self.assertEqual(
+            _format_uptime(
+                {
+                    "running": True,
+                    "game_uptime_seconds": 10,
+                    "last_start_reason": "update",
+                }
+            )[1],
+            "Since server update",
+        )
+        self.assertEqual(
+            _format_crashes_hint({"supervisor_uptime_seconds": 3600}),
+            "Supervisor uptime: 1h 0m",
+        )
+        version, build, installed = _format_game_version({})
+        self.assertEqual(version, "unknown")
+        self.assertEqual(build, "")
+        self.assertEqual(installed, "")
+        self.assertEqual(
+            _format_subtitle({"app_version": "2.1.12", "steamcmd_version": "1785186678"}),
+            "Dedicated server supervisor v2.1.12 · SteamCMD 1785186678",
+        )
+
+    def test_hide_dry_run_when_active_category_exists(self) -> None:
+        patterns = [
+            {
+                "mode": "active",
+                "category": "ready",
+                "pattern": r"Started server",
+                "hits": 2,
+                "last_line": "Started server using port 1",
+            },
+            {
+                "mode": "dry_run",
+                "category": "ready",
+                "pattern": r"\bready\b",
+                "hits": 5,
+                "last_line": "ready",
+            },
+            {
+                "mode": "dry_run",
+                "category": "player_count",
+                "pattern": r"empty server",
+                "hits": 1,
+                "last_line": "empty server",
+            },
+        ]
+        rows = _format_pattern_rows(patterns)
+        self.assertIn("Started server", rows)
+        self.assertIn("player_count", rows)
+        self.assertNotIn(r"\bready\b", rows)
+        highlights = _format_highlights(
+            [
+                {
+                    "line": "Started server using port 1",
+                    "matches": [
+                        {"mode": "active", "category": "ready"},
+                        {"mode": "dry_run", "category": "ready"},
+                    ],
+                }
+            ],
+            active_categories={"ready"},
+        )
+        self.assertIn("active:ready", highlights)
+        self.assertNotIn("dry_run:ready", highlights)
 
 
 class LogBridgeTests(unittest.TestCase):

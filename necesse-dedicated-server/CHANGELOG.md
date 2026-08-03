@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.12
+
+- Reorganize status hero: Server, Number of players, Uptime, Game version, Update pending, Game server crashes
+- Uptime hint shows since first start / crash restart / server update; supervisor uptime moves under crashes
+- Game version card merges human version + Steam build + installed age (removes separate Game files / Restarts cards)
+- Collapse “Game server log watching pattern hits” (table + highlighted lines) once any active pattern exists; hide dry-run rows/tags for categories that already have an active pattern
+- Remove Recent output section (use the Home Assistant app Logs tab instead)
+
 ## 2.1.11
 
 - Status UI polish: dual uptime (game process + supervisor), clearer restart wording (“First start” / “Last restart: game crash” / “Last restart: server update”), “Game server crashes” label, and “Game files installed / XYZ ago”
