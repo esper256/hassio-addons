@@ -1,17 +1,21 @@
 # Changelog
 
+## 2.1.11
+
+- Status UI polish: dual uptime (game process + supervisor), clearer restart wording (“First start” / “Last restart: game crash” / “Last restart: server update”), “Game server crashes” label, and “Game files installed / XYZ ago”
+- Show SteamCMD client version next to the supervisor version line
+- Soft-refresh the Ingress status page via `api/ui` (removes full-page meta refresh flicker)
+- Shared world-save locator: plugin `world_save.paths` for the active artifact (UI size); `backup_paths` for archives; path-guessing quarantined behind explicit heuristic opt-in
+- Capture human-readable game version from logs (e.g. `1.3.1`) and show it on the status page; Necesse activates the proven “game version …” startup pattern
+
 ## 2.1.10
 
 - Status UI cleanup: “Dedicated server supervisor v…”, drop redundant App version / Steam build / Player gating squares
-- Restarts no longer count the first boot; under the count show “First start”, “Last restart: game crash”, or “Last restart: server update”
-- Uptime shows game-server process uptime plus supervisor uptime; crashes labeled as game server crashes
-- Game files installed shows age (“XYZ ago”) with Steam build for the game server files; SteamCMD client version appears next to the supervisor version
-- Soft-refresh status every 20s via `api/ui` (no full-page meta refresh / flicker)
-- Update pending shows last Steam check age; World save shows human-readable save size
-- Shared world-save locator: plugin `world_save.paths` for the active artifact (UI); `backup_paths` for archives; path-guessing quarantined behind explicit heuristic opt-in
-- Capture human-readable game version from logs (e.g. `1.3.1`) and show it on the status page; Necesse activates the proven “game version …” startup pattern
+- Restarts no longer count the first boot; show last start reason (boot / crash / update)
+- Update pending shows last Steam check age; Game files shows when the install was last updated; World save shows human-readable save size
 - Strip ANSI color codes from game logs; broaden dry-run ready/empty-server highlights
 - Log tools: human actions first, captures in a dropdown + download, raw tail falls back to recent output and can render as text
+- Keep SteamCMD Linux-only (remove Windows depot fallback)
 
 ## 2.1.9
 
