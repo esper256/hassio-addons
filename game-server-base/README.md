@@ -58,7 +58,6 @@ Minimum useful fields:
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
 | `stop_stdin_commands` | Optional graceful stop (`save` / `exit`, etc.) |
 | `backup_paths` | What to archive |
-| `path_migrations` | One-time moves from older layouts |
 | `log_patterns` | **Active** regexes (player count / version mismatch). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
 

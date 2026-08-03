@@ -117,12 +117,6 @@ Everything important is under `/data` (the add-on data volume, or your Docker bi
 
 ---
 
-## Migrating from the old 1.x add-on
-
-Keep a Home Assistant backup first. On start, the add-on applies declared path moves (old layouts under `/home/necesse…` or `/opt/game`) into `/data/world` and `/data/game`. If something looks missing after upgrade, restore from your HA backup and ask for help before overwriting worlds.
-
----
-
 ## Optional: Home Assistant sensors
 
 If you expose port `8080` (or call the same APIs through Ingress tooling):
