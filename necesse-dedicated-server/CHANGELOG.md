@@ -4,6 +4,7 @@
 
 - Ask Steam for game updates once daily at local 05:00 by default (was every 30 minutes)
 - Plain-language status copy: schedule restarts for when nobody is online — drop “gating” jargon
+- Ingress: **Update game server now** button (confirms first; stops the server, updates from Steam, restarts — disconnects anyone playing)
 
 ## 2.1.14
 
