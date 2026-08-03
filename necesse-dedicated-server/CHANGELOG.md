@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.10
+
+- Status UI cleanup: “Dedicated server supervisor v…”, drop redundant App version / Steam build / Player gating squares
+- Restarts no longer count the first boot; show last start reason (boot / crash / update)
+- Strip ANSI color codes from game logs; broaden dry-run ready/empty-server highlights
+- Log tools: human actions first, captures in a dropdown + download, raw tail falls back to recent output and can render as text
+
 ## 2.1.9
 
 - Fix fresh-install SteamCMD failure `Failed to install app '1169370' (Missing configuration)` by **waiting for Steam app info readiness** (`app_info_print` buildid) before `app_update`, instead of retrying installs as "transient"

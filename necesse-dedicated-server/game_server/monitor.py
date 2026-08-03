@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .log_bridge import STDOUT_DEDUPER
+from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .patterns import DEFAULT_CANDIDATE_PATTERNS
 from .plugin import GamePlugin
 
@@ -276,6 +276,7 @@ class LogMonitor:
                 handle.close()
 
     def _handle_line(self, line: str, *, source: str = "file") -> None:
+        line = strip_ansi(line)
         if not line.strip():
             return
         # File-only lines never appear on process stdout; mirror them into HA Logs.

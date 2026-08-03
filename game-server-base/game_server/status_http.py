@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from .log_bridge import strip_ansi
 from .version import app_version
 
 LOG = logging.getLogger("game_server.status_http")
@@ -69,6 +70,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }}
     .stat .label {{ color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }}
     .stat .value {{ font-size: 1.35rem; font-weight: 600; }}
+    .stat .hint {{ color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem; }}
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
     .accent {{ color: var(--accent); }}
@@ -82,9 +84,15 @@ HTML_PAGE = """<!DOCTYPE html>
       max-height: 320px;
     }}
     a {{ color: var(--accent); }}
+    .actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 0.5rem 0 0.75rem;
+    }}
     .actions a, .actions button {{
       display: inline-block;
-      margin: 0.25rem 0.5rem 0.25rem 0;
       padding: 0.45rem 0.75rem;
       border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
       background: transparent;
@@ -93,7 +101,28 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       cursor: pointer;
     }}
-    ul {{ padding-left: 1.1rem; color: var(--muted); }}
+    .capture-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      margin: 0.5rem 0 1rem;
+    }}
+    select {{
+      background: rgba(0,0,0,0.28);
+      color: var(--ink);
+      border: 1px solid rgba(155,181,166,0.35);
+      padding: 0.45rem 0.6rem;
+      font: inherit;
+      min-width: min(100%, 28rem);
+    }}
+    details.api {{
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    details.api summary {{ cursor: pointer; color: var(--accent); }}
+    details.api ul {{ padding-left: 1.1rem; }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -124,16 +153,17 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
   <main>
     <h1>{game}</h1>
-    <p class="sub">Dedicated server supervisor · app {app_version} · Steam build {build}</p>
+    <p class="sub">Dedicated server supervisor v{app_version}</p>
     <div class="grid">
-      <div class="stat"><div class="label">App version</div><div class="value accent">{app_version}</div></div>
       <div class="stat"><div class="label">Server</div><div class="value {running_class}">{running}</div></div>
-      <div class="stat"><div class="label">Players</div><div class="value">{players}</div></div>
-      <div class="stat"><div class="label">Player gating</div><div class="value">{player_gating}</div></div>
+      <div class="stat"><div class="label">Players</div><div class="value">{players}</div><div class="hint">{players_hint}</div></div>
       <div class="stat"><div class="label">Uptime</div><div class="value">{uptime}</div></div>
-      <div class="stat"><div class="label">Restarts</div><div class="value">{restarts}</div></div>
+      <div class="stat">
+        <div class="label">Restarts</div>
+        <div class="value">{restarts}</div>
+        <div class="hint">{restart_hint}</div>
+      </div>
       <div class="stat"><div class="label">Crashes</div><div class="value">{crashes}</div></div>
-      <div class="stat"><div class="label">Steam build</div><div class="value accent">{build}</div></div>
       <div class="stat"><div class="label">Update pending</div><div class="value">{update_pending}</div></div>
     </div>
     <p class="sub warn">{gating_note}</p>
@@ -141,9 +171,8 @@ HTML_PAGE = """<!DOCTYPE html>
     <h2>Log pattern hits</h2>
     <p class="sub">
       <span class="tag active">active</span> can trigger updates/player state.
-      <span class="tag dry_run">dry_run</span> only highlights candidates.
+      <span class="tag dry_run">dry_run</span> only highlights candidates for promotion.
       <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
-      JSON: <a href="api/logs/patterns">api/logs/patterns</a>
     </p>
     <table>
       <thead>
@@ -158,15 +187,27 @@ HTML_PAGE = """<!DOCTYPE html>
     <pre>{highlights}</pre>
 
     <h2>Log tools</h2>
+    <p class="sub">Human actions for diagnosing the live server. Prefer these over the JSON API links.</p>
     <div class="actions">
       <a href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
-      <a href="api/logs/suggest">Suggest patterns</a>
-      <a href="api/logs/raw?lines=400">Raw log tail</a>
-      <a href="api/logs/captures">List captures</a>
-      <a href="api/status">Status JSON</a>
+      <a href="api/logs/raw?lines=400&amp;format=text">View raw log tail</a>
     </div>
-    <p class="sub">Captures land under <code>/data/supervisor/captures</code> and are downloadable as tar.gz.</p>
-    <ul>{captures}</ul>
+    <div class="capture-row">
+      <label for="capture-select">Saved captures</label>
+      <select id="capture-select">{capture_options}</select>
+      <a id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
+    </div>
+
+    <details class="api">
+      <summary>JSON API (automation / pattern tuning)</summary>
+      <ul>
+        <li><a href="api/status">Status JSON</a></li>
+        <li><a href="api/logs/patterns">Pattern hit report</a></li>
+        <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
+        <li><a href="api/logs/captures">Captures list JSON</a></li>
+        <li><a href="api/logs/raw?lines=400">Raw log tail JSON</a></li>
+      </ul>
+    </details>
 
     <h2>Recent output</h2>
     <pre>{recent}</pre>
@@ -181,6 +222,16 @@ HTML_PAGE = """<!DOCTYPE html>
       }} else {{
         alert(JSON.stringify(data, null, 2));
       }}
+      return false;
+    }}
+    function downloadCapture(ev) {{
+      ev.preventDefault();
+      const select = document.getElementById('capture-select');
+      if (!select || !select.value) {{
+        alert('No capture selected');
+        return false;
+      }}
+      window.location = select.value;
       return false;
     }}
   </script>
@@ -307,16 +358,28 @@ class StatusServer:
 
                 if path == "/api/logs/raw":
                     lines = int((query.get("lines") or ["400"])[0])
+                    as_text = (query.get("format") or ["json"])[0].lower() == "text"
                     if toolbox is None:
-                        self._json(501, {"error": "log toolbox unavailable"})
+                        if as_text:
+                            self._send(
+                                501,
+                                b"log toolbox unavailable\n",
+                                "text/plain; charset=utf-8",
+                            )
+                        else:
+                            self._json(501, {"error": "log toolbox unavailable"})
                         return
-                    self._json(
-                        200,
-                        {
-                            "source": str(toolbox.pick_log_file() or ""),
-                            "lines": toolbox.tail_file(lines=lines),
-                        },
-                    )
+                    payload = toolbox.raw_tail(lines=lines)
+                    if as_text:
+                        text = "\n".join(payload.get("lines") or [])
+                        header = f"# source: {payload.get('source') or 'unknown'}\n\n"
+                        self._send(
+                            200,
+                            (header + text + ("\n" if text else "")).encode("utf-8"),
+                            "text/plain; charset=utf-8",
+                        )
+                    else:
+                        self._json(200, payload)
                     return
 
                 if path == "/api/logs/suggest":
@@ -327,7 +390,6 @@ class StatusServer:
                     return
 
                 if path == "/api/logs/capture":
-                    # GET convenience for simple Ingress links
                     if capture_cb is None:
                         self._json(501, {"error": "log capture unavailable"})
                         return
@@ -364,36 +426,44 @@ class StatusServer:
                 if path in ("/", "/index.html", "/ingress"):
                     monitor = status.get("monitor") or {}
                     patterns = status.get("log_patterns") or {}
-                    recent = (
-                        "\n".join((monitor.get("recent_lines") or [])[-40:])
-                        or "(no log lines yet)"
+                    recent_lines = [
+                        strip_ansi(line)
+                        for line in (monitor.get("recent_lines") or [])[-40:]
+                    ]
+                    recent = "\n".join(recent_lines) or "(no log lines yet)"
+                    highlights = _format_highlights(
+                        monitor.get("highlighted_lines") or []
                     )
-                    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
                     captures = status.get("log_captures") or []
-                    capture_items = []
-                    for item in captures[:8]:
-                        href = str(item.get("download_path") or "").lstrip("/")
-                        capture_items.append(
-                            f'<li><a href="{href}">{item.get("id")}</a>'
-                            f' · {item.get("reason")}</li>'
-                        )
                     players_known = monitor.get("players_known")
                     player_value = (
                         str(monitor.get("player_count"))
                         if players_known
-                        else "unknown"
+                        else "—"
+                    )
+                    players_hint = (
+                        "from active join/leave patterns"
+                        if players_known
+                        else "unknown until player patterns are promoted"
                     )
                     gating = status.get("player_gating") or "unknown"
                     if gating == "inactive_no_active_patterns":
                         gating_note = (
-                            "Alpha mode: no active player/version regexes. "
-                            "Steam build updates still run; dry-run candidates only highlight logs. "
-                            "Promote proven patterns into the game plugin log_patterns section."
+                            "Empty-server update gating is off until you promote proven "
+                            "player join/leave patterns from dry-run highlights into the "
+                            "game plugin. Steam build checks still run on their own."
                         )
                     else:
                         gating_note = (
-                            "Active player patterns are enabled; empty-server update gating is in effect."
+                            "Active player patterns are enabled; updates can wait for "
+                            "an empty server."
                         )
+                    reason = status.get("last_start_reason") or "boot"
+                    restart_hint = (
+                        f"last start: {reason}"
+                        if status.get("restart_count", 0) or reason != "boot"
+                        else "first start (not counted as a restart)"
+                    )
                     html = HTML_PAGE.format(
                         game=game_name,
                         base_href=_html_escape(self._ingress_base()),
@@ -403,17 +473,17 @@ class StatusServer:
                         running="running" if status.get("running") else "stopped",
                         running_class="good" if status.get("running") else "bad",
                         players=player_value,
-                        player_gating=gating.replace("_", " "),
+                        players_hint=_html_escape(players_hint),
                         gating_note=_html_escape(gating_note),
                         uptime=_fmt_seconds(status.get("supervisor_uptime_seconds", 0)),
                         restarts=status.get("restart_count", 0),
+                        restart_hint=_html_escape(restart_hint),
                         crashes=status.get("crash_count", 0),
-                        build=status.get("local_build_id") or "unknown",
                         update_pending="yes" if status.get("update_pending") else "no",
                         pattern_rows=_format_pattern_rows(patterns.get("patterns") or []),
                         highlights=_html_escape(highlights),
                         recent=_html_escape(recent),
-                        captures="\n".join(capture_items) or "<li>No captures yet</li>",
+                        capture_options=_format_capture_options(captures),
                     ).encode("utf-8")
                     self._send(200, html, "text/html; charset=utf-8")
                     return
@@ -463,7 +533,6 @@ def _html_escape(text: str) -> str:
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     if not patterns:
         return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
-    # Show hits first, then the rest, capped for readability.
     ordered = sorted(
         patterns,
         key=lambda item: (
@@ -486,7 +555,7 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
             f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
             f"<td>{int(item.get('hits') or 0)}</td>"
             f"<td><code>{_html_escape(str(item.get('pattern') or ''))}</code></td>"
-            f"<td>{_html_escape(last)}</td>"
+            f"<td>{_html_escape(strip_ansi(last))}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -494,12 +563,28 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
 
 def _format_highlights(items: list[dict[str, Any]]) -> str:
     if not items:
-        return "(no pattern hits yet — play a session and watch dry_run candidates light up)"
+        return (
+            "(no pattern hits yet — once the server is online, dry_run candidates "
+            "should light up lines like “Started server…” or “empty server”)"
+        )
     lines = []
     for item in items[-30:]:
         matches = item.get("matches") or []
         tags = ", ".join(
             f"{m.get('mode')}:{m.get('category')}" for m in matches[:6]
         )
-        lines.append(f"[{tags}] {item.get('line')}")
+        lines.append(f"[{tags}] {strip_ansi(str(item.get('line') or ''))}")
     return "\n".join(lines)
+
+
+def _format_capture_options(captures: list[dict[str, Any]]) -> str:
+    if not captures:
+        return '<option value="">No captures yet</option>'
+    options = []
+    for item in captures[:40]:
+        href = str(item.get("download_path") or "").lstrip("/")
+        label = f"{item.get('id')} · {item.get('reason')}"
+        options.append(
+            f'<option value="{_html_escape(href)}">{_html_escape(label)}</option>'
+        )
+    return "\n".join(options)
