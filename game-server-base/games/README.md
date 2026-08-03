@@ -1,7 +1,7 @@
-# No plugins here
+# No game plugins here
 
-Game plugins intentionally do **not** live in `game-server-base`.
+Real game plugins live in each game add-on as `games/game.yaml` (see Necesse).
 
-Put each game’s YAML in that game’s add-on/image directory as `games/game.yaml`.
+This directory is only a reminder: keep game identity out of `game-server-base`.
 
-The base image exposes `/opt/games` as a mount point and requires `GAME_PLUGIN`.
+→ Full “build your own game” guide: [../README.md](../README.md)

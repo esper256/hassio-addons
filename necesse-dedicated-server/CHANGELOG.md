@@ -5,6 +5,7 @@
 - Add a process-wide Steam gate: serialize SteamCMD, enforce spacing, exponential retry backoff, and long cooldowns on failure/rate-limit signals
 - Stop the failed-update 30s tight loop that could hammer Steam; pause applies and keep the current build running
 - Floor auto-update polling at 15 minutes; hard-cap SteamCMD retries at 3
+- Rewrite docs around user journeys: repo landing → game install guide; separate guide for building on `game-server-base`
 
 ## 2.1.4
 
