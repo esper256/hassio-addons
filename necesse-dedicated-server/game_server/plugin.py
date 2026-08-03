@@ -39,7 +39,7 @@ class GamePlugin:
     steam_branch: str = "public"
     steam_login: str = "anonymous"
     steam_password: str = ""
-    # Optional SteamCMD platform override: "linux", "windows", or "".
+    # Optional SteamCMD platform pin (e.g. "linux"). Empty = host-native depots.
     steam_platform: str = ""
     validate_on_update: bool = True
     env: dict[str, str] = field(default_factory=dict)

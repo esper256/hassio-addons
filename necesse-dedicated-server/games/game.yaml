@@ -2,7 +2,7 @@ name: Necesse
 steam_app_id: 1169370
 steam_login: anonymous
 steam_branch: public
-# Dedicated server depots are published for Linux; Windows is a SteamCMD fallback.
+# Pin SteamCMD to Linux depots (this add-on is amd64 Linux / HAOS only).
 steam_platform: linux
 validate_on_update: true
 working_dir: /data/game
