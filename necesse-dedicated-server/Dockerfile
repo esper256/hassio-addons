@@ -10,7 +10,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     GAME_PLUGIN=/opt/games/necesse.yaml \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/opt
+    PYTHONPATH=/opt \
+    INSTALL_DIR=/data/game
 
 RUN dpkg --add-architecture i386 \
  && apt-get update \
@@ -32,15 +33,15 @@ RUN mkdir -p /opt/steamcmd \
  && /opt/steamcmd/steamcmd.sh +quit || true
 
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
- && mkdir -p /opt/game /data /opt/games \
- && chown -R gameserver:gameserver /opt/steamcmd /opt/game /data /home/gameserver
+ && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /opt/games \
+ && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver
 
 COPY game_server /opt/game_server
 COPY games /opt/games
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
-WORKDIR /opt/game
+WORKDIR /data/game
 
 LABEL \
   io.hass.name="Necesse Dedicated Server" \

@@ -24,10 +24,15 @@ class ProcessManager:
         plugin: GamePlugin,
         config: SupervisorConfig,
         on_line: Callable[[str], None] | None = None,
+        *,
+        run_uid: int | None = None,
+        run_gid: int | None = None,
     ) -> None:
         self.plugin = plugin
         self.config = config
         self.on_line = on_line
+        self.run_uid = run_uid
+        self.run_gid = run_gid
         self.proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self.restart_count = 0
@@ -45,14 +50,14 @@ class ProcessManager:
 
     def build_command(self) -> list[str]:
         cmd = list(self.plugin.executable)
-        # Expand JAVA_OPTS style tokens before the jar if present
-        java_opts = str(self.config.game_options.get("java_opts") or os.environ.get("JAVA_OPTS") or "")
+        java_opts = str(
+            self.config.game_options.get("java_opts") or os.environ.get("JAVA_OPTS") or ""
+        )
         if java_opts and cmd and cmd[0] == "java":
             opts = [part for part in java_opts.split() if part]
             cmd = [cmd[0], *opts, *cmd[1:]]
 
         options = dict(self.config.game_options)
-        # Allow plugin defaults for data/logs dirs via options override
         if "data_dir" not in options:
             options["data_dir"] = self.plugin.data_dir
         if "logs_dir" not in options:
@@ -77,6 +82,12 @@ class ProcessManager:
                 cmd.extend([flag, rendered])
         return cmd
 
+    def _preexec(self) -> None:
+        if self.run_uid is None or self.run_gid is None:
+            return
+        os.setgid(self.run_gid)
+        os.setuid(self.run_uid)
+
     def start(self) -> None:
         with self._lock:
             if self.running:
@@ -94,15 +105,23 @@ class ProcessManager:
             cmd = self.build_command()
             env = os.environ.copy()
             env.update(self.plugin.env)
-            LOG.info("Starting server: %s (cwd=%s)", " ".join(cmd), workdir)
+            want_stdin = bool(self.plugin.stop_stdin_commands)
+            LOG.info(
+                "Starting server: %s (cwd=%s, uid=%s)",
+                " ".join(cmd),
+                workdir,
+                self.run_uid,
+            )
             self.proc = subprocess.Popen(
                 cmd,
                 cwd=str(workdir),
                 env=env,
+                stdin=subprocess.PIPE if want_stdin else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                preexec_fn=self._preexec if self.run_uid is not None else None,
             )
             self.last_started_at = time.time()
             self.restart_count += 1
@@ -124,14 +143,31 @@ class ProcessManager:
                 except Exception:  # noqa: BLE001
                     LOG.exception("on_line callback failed")
 
-    def stop(self, timeout: float = 30.0) -> None:
+    def stop(self, timeout: float | None = None) -> None:
+        timeout = (
+            float(timeout)
+            if timeout is not None
+            else float(
+                self.config.stop_timeout_seconds or self.plugin.stop_timeout_seconds or 60
+            )
+        )
         with self._lock:
             self.intentional_stop = True
             proc = self.proc
         if proc is None:
             return
         if proc.poll() is None:
-            LOG.info("Stopping server pid=%s", proc.pid)
+            LOG.info("Stopping server pid=%s gracefully", proc.pid)
+            # Optional console save/exit commands before SIGTERM.
+            if proc.stdin and self.plugin.stop_stdin_commands:
+                try:
+                    for command in self.plugin.stop_stdin_commands:
+                        LOG.info("Sending stop command via stdin: %s", command)
+                        proc.stdin.write(command + "\n")
+                        proc.stdin.flush()
+                        time.sleep(1)
+                except Exception:  # noqa: BLE001
+                    LOG.warning("Failed writing stop commands to stdin", exc_info=True)
             try:
                 proc.send_signal(signal.SIGTERM)
                 proc.wait(timeout=timeout)
@@ -183,5 +219,6 @@ class ProcessManager:
             "last_exit_code": self.last_exit_code,
             "last_started_at": self.last_started_at,
             "last_stopped_at": self.last_stopped_at,
+            "run_uid": self.run_uid,
             "command": self.build_command(),
         }

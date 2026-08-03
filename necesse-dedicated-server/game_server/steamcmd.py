@@ -173,7 +173,7 @@ def install_or_update(
             )
             if looks_ok or (
                 result.returncode == 0
-                and server_installed(install_dir, "Server.jar")
+                and server_installed(install_dir, plugin.install_marker)
             ):
                 build_id = read_local_build_id(install_dir, plugin.steam_app_id)
                 LOG.info("SteamCMD succeeded (buildid=%s)", build_id or "unknown")
@@ -198,7 +198,7 @@ def install_or_update(
         if attempt < retries:
             time.sleep(retry_delay_seconds)
 
-    if server_installed(install_dir, "Server.jar") or server_installed(install_dir):
+    if server_installed(install_dir, plugin.install_marker) or server_installed(install_dir):
         LOG.error(
             "SteamCMD failed after retries; keeping existing install. Last error: %s",
             last_error,

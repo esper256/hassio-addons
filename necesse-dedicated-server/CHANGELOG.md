@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.0
+
+- Persist Steam game install under `/data/game` (survives container recreate)
+- Run game process as `gameserver` after fixing volume ownership
+- Graceful stop via stdin `save`/`exit` before SIGTERM, backup, and update
+- Generational backup retention (recent/daily/weekly/monthly/yearly)
+- Skip empty/tiny world backups with exponential backoff on failures
+- Disk free-space guard for backups/updates
+- HA persistent notifications via Core API (no MQTT)
+- Continuously write `/data/supervisor/status.json`
+- Ingress log toolkit: capture, suggest patterns, raw tail, downloadable archives
+- Auto log capture on version mismatch and crash
+
 ## 2.0.0
 
 - Replace the thin wrapper around `andreasgl4ser/necesse-server` with a first-party SteamCMD supervisor shared as `game-server-base`

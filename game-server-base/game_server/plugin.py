@@ -46,6 +46,9 @@ class GamePlugin:
     log_patterns: LogPatterns = field(default_factory=LogPatterns)
     ready_timeout_seconds: int = 180
     java_opts_env: str = "JAVA_OPTS"
+    stop_timeout_seconds: int = 60
+    stop_stdin_commands: list[str] = field(default_factory=list)
+    min_backup_bytes: int = 1024
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
@@ -53,7 +56,7 @@ class GamePlugin:
         return cls(
             name=data["name"],
             steam_app_id=int(data["steam_app_id"]),
-            working_dir=data.get("working_dir", "/opt/game"),
+            working_dir=data.get("working_dir", "/data/game"),
             executable=list(data["executable"]),
             data_dir=data.get("data_dir", "/data/world"),
             logs_dir=data.get("logs_dir", "/data/logs"),
@@ -75,6 +78,9 @@ class GamePlugin:
             ),
             ready_timeout_seconds=int(data.get("ready_timeout_seconds", 180)),
             java_opts_env=data.get("java_opts_env", "JAVA_OPTS"),
+            stop_timeout_seconds=int(data.get("stop_timeout_seconds", 60)),
+            stop_stdin_commands=[str(x) for x in (data.get("stop_stdin_commands") or [])],
+            min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
         )
 
 

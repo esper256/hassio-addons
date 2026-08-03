@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .backup import RetentionPolicy
+
 
 OPTIONS_CANDIDATES = (
     Path("/data/options.json"),
@@ -25,7 +27,7 @@ class SupervisorConfig:
     auto_update_interval_minutes: int = 30
     update_when_empty_only: bool = True
     update_on_version_mismatch: bool = True
-    update_window_start_hour: int | None = None  # local hour 0-23, inclusive
+    update_window_start_hour: int | None = None
     update_window_end_hour: int | None = None
     steamcmd_retries: int = 5
     steamcmd_retry_delay_seconds: int = 30
@@ -34,28 +36,49 @@ class SupervisorConfig:
     restart_on_crash: bool = True
     crash_restart_delay_seconds: int = 5
     max_crash_restarts_per_hour: int = 10
+    stop_timeout_seconds: int = 60
+    run_as_user: str = "gameserver"
+    drop_privileges: bool = True
 
-    # Status HTTP
+    # Status HTTP / notifications
     status_http_enabled: bool = True
     status_http_host: str = "0.0.0.0"
     status_http_port: int = 8080
+    ha_notifications: bool = True
 
     # Backups
     backup_enabled: bool = True
-    backup_interval_minutes: int = 180
-    backup_retain: int = 10
+    backup_interval_minutes: int = 360
     backup_dir: str = "/data/backups"
     backup_on_update: bool = True
+    backup_min_source_bytes: int = 1024
+    backup_keep_recent: int = 5
+    backup_keep_daily: int = 7
+    backup_keep_weekly: int = 5
+    backup_keep_monthly: int = 12
+    backup_keep_yearly: int = 3
+    backup_max_backoff_minutes: int = 1440
 
-    # Paths
+    # Disk
+    min_free_disk_mb: int = 512
+
+    # Paths — game install persists on the data volume by default
     steamcmd_dir: str = "/opt/steamcmd"
-    install_dir: str = "/opt/game"
+    install_dir: str = "/data/game"
     state_dir: str = "/data/supervisor"
 
     # Passthrough game options (everything else from options.json / env)
     game_options: dict[str, Any] = field(default_factory=dict)
-
     raw_options: dict[str, Any] = field(default_factory=dict)
+
+    def retention(self) -> RetentionPolicy:
+        return RetentionPolicy(
+            keep_recent=self.backup_keep_recent,
+            keep_daily=self.backup_keep_daily,
+            keep_weekly=self.backup_keep_weekly,
+            keep_monthly=self.backup_keep_monthly,
+            keep_yearly=self.backup_keep_yearly,
+        )
 
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -112,14 +135,12 @@ def load_options_json(path: Path | None = None) -> dict[str, Any]:
             data = json.load(handle)
         if isinstance(data, dict):
             return data
-    except Exception as exc:  # noqa: BLE001 - surface parse problems clearly
+    except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Failed to parse options JSON at {path}: {exc}") from exc
     return {}
 
 
 def _env_overrides() -> dict[str, Any]:
-    """Allow plain Docker/Portainer env vars to override HA options."""
-
     keys = [
         "UPDATE_ON_START",
         "AUTO_UPDATE_INTERVAL_MINUTES",
@@ -132,18 +153,28 @@ def _env_overrides() -> dict[str, Any]:
         "RESTART_ON_CRASH",
         "CRASH_RESTART_DELAY_SECONDS",
         "MAX_CRASH_RESTARTS_PER_HOUR",
+        "STOP_TIMEOUT_SECONDS",
+        "RUN_AS_USER",
+        "DROP_PRIVILEGES",
         "STATUS_HTTP_ENABLED",
         "STATUS_HTTP_HOST",
         "STATUS_HTTP_PORT",
+        "HA_NOTIFICATIONS",
         "BACKUP_ENABLED",
         "BACKUP_INTERVAL_MINUTES",
-        "BACKUP_RETAIN",
         "BACKUP_DIR",
         "BACKUP_ON_UPDATE",
+        "BACKUP_MIN_SOURCE_BYTES",
+        "BACKUP_KEEP_RECENT",
+        "BACKUP_KEEP_DAILY",
+        "BACKUP_KEEP_WEEKLY",
+        "BACKUP_KEEP_MONTHLY",
+        "BACKUP_KEEP_YEARLY",
+        "BACKUP_MAX_BACKOFF_MINUTES",
+        "MIN_FREE_DISK_MB",
         "STEAMCMD_DIR",
         "INSTALL_DIR",
         "STATE_DIR",
-        # Common game options
         "WORLD_NAME",
         "SERVER_PASSWORD",
         "SERVER_SLOTS",
@@ -171,14 +202,15 @@ def _env_overrides() -> dict[str, Any]:
 
 def load_config() -> SupervisorConfig:
     options = load_options_json()
-    # Normalize keys to snake_case lower
     normalized: dict[str, Any] = {}
     for key, value in options.items():
         norm = re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
         normalized[norm] = value
-
-    # Env wins over options.json for Portainer workflows
     normalized.update(_env_overrides())
+
+    # Compat: old backup_retain maps onto keep_recent if new knobs absent
+    if "backup_keep_recent" not in normalized and "backup_retain" in normalized:
+        normalized["backup_keep_recent"] = normalized["backup_retain"]
 
     supervisor_keys = {
         "update_on_start",
@@ -192,19 +224,30 @@ def load_config() -> SupervisorConfig:
         "restart_on_crash",
         "crash_restart_delay_seconds",
         "max_crash_restarts_per_hour",
+        "stop_timeout_seconds",
+        "run_as_user",
+        "drop_privileges",
         "status_http_enabled",
         "status_http_host",
         "status_http_port",
+        "ha_notifications",
         "backup_enabled",
         "backup_interval_minutes",
-        "backup_retain",
         "backup_dir",
         "backup_on_update",
+        "backup_min_source_bytes",
+        "backup_keep_recent",
+        "backup_keep_daily",
+        "backup_keep_weekly",
+        "backup_keep_monthly",
+        "backup_keep_yearly",
+        "backup_max_backoff_minutes",
+        "backup_retain",
+        "min_free_disk_mb",
         "steamcmd_dir",
         "install_dir",
         "state_dir",
     }
-
     game_options = {k: v for k, v in normalized.items() if k not in supervisor_keys}
 
     return SupervisorConfig(
@@ -235,18 +278,33 @@ def load_config() -> SupervisorConfig:
         max_crash_restarts_per_hour=_as_int(
             normalized.get("max_crash_restarts_per_hour"), 10
         ),
+        stop_timeout_seconds=_as_int(normalized.get("stop_timeout_seconds"), 60),
+        run_as_user=str(normalized.get("run_as_user") or "gameserver"),
+        drop_privileges=_as_bool(normalized.get("drop_privileges"), True),
         status_http_enabled=_as_bool(normalized.get("status_http_enabled"), True),
         status_http_host=str(normalized.get("status_http_host") or "0.0.0.0"),
         status_http_port=_as_int(normalized.get("status_http_port"), 8080),
+        ha_notifications=_as_bool(normalized.get("ha_notifications"), True),
         backup_enabled=_as_bool(normalized.get("backup_enabled"), True),
         backup_interval_minutes=_as_int(
-            normalized.get("backup_interval_minutes"), 180
+            normalized.get("backup_interval_minutes"), 360
         ),
-        backup_retain=_as_int(normalized.get("backup_retain"), 10),
         backup_dir=str(normalized.get("backup_dir") or "/data/backups"),
         backup_on_update=_as_bool(normalized.get("backup_on_update"), True),
+        backup_min_source_bytes=_as_int(
+            normalized.get("backup_min_source_bytes"), 1024
+        ),
+        backup_keep_recent=_as_int(normalized.get("backup_keep_recent"), 5),
+        backup_keep_daily=_as_int(normalized.get("backup_keep_daily"), 7),
+        backup_keep_weekly=_as_int(normalized.get("backup_keep_weekly"), 5),
+        backup_keep_monthly=_as_int(normalized.get("backup_keep_monthly"), 12),
+        backup_keep_yearly=_as_int(normalized.get("backup_keep_yearly"), 3),
+        backup_max_backoff_minutes=_as_int(
+            normalized.get("backup_max_backoff_minutes"), 1440
+        ),
+        min_free_disk_mb=_as_int(normalized.get("min_free_disk_mb"), 512),
         steamcmd_dir=str(normalized.get("steamcmd_dir") or "/opt/steamcmd"),
-        install_dir=str(normalized.get("install_dir") or "/opt/game"),
+        install_dir=str(normalized.get("install_dir") or "/data/game"),
         state_dir=str(normalized.get("state_dir") or "/data/supervisor"),
         game_options=game_options,
         raw_options=normalized,

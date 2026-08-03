@@ -6,14 +6,16 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT.parent))  # repo root? package lives in game-server-base
 sys.path.insert(0, str(ROOT))
 
+from game_server.backup import RetentionPolicy, select_generational_keepers  # noqa: E402
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
+from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import load_plugin  # noqa: E402
 
@@ -30,6 +32,7 @@ class ConfigTests(unittest.TestCase):
                         "server_slots": 8,
                         "auto_update_interval_minutes": 15,
                         "update_on_start": False,
+                        "backup_keep_monthly": 6,
                     }
                 ),
                 encoding="utf-8",
@@ -38,7 +41,6 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(options["world_name"], "TestWorld")
             self.assertTrue(options["pause_when_empty"])
 
-            # Simulate HA path via OPTIONS_FILE
             import os
 
             os.environ["OPTIONS_FILE"] = str(path)
@@ -53,6 +55,8 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg.auto_update_interval_minutes, 15)
             self.assertFalse(cfg.update_on_start)
             self.assertEqual(cfg.game_options["server_password"], "secret")
+            self.assertEqual(cfg.install_dir, "/data/game")
+            self.assertEqual(cfg.backup_keep_monthly, 6)
             self.assertEqual(format_bool(True, "one_zero"), "1")
             self.assertEqual(format_bool(False, "one_zero"), "0")
             self.assertEqual(format_bool("true", "true_false"), "true")
@@ -63,6 +67,8 @@ class PluginTests(unittest.TestCase):
         plugin = load_plugin(ROOT / "games" / "necesse.yaml")
         self.assertEqual(plugin.name, "Necesse")
         self.assertEqual(plugin.steam_app_id, 1169370)
+        self.assertEqual(plugin.working_dir, "/data/game")
+        self.assertIn("save", plugin.stop_stdin_commands)
         self.assertIn("-world", plugin.arg_map.values())
         self.assertTrue(plugin.log_patterns.version_mismatch)
 
@@ -78,6 +84,80 @@ class MonitorTests(unittest.TestCase):
             self.assertNotIn("Alice", mon.state.players)
             mon.ingest_stdout_line("Client rejected: wrong version")
             self.assertEqual(mon.state.version_mismatch_count, 1)
+
+
+class BackupRetentionTests(unittest.TestCase):
+    def test_generational_keepers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Create fake archives spanning years.
+            stamps = [
+                ("2024-01-01", "old-year"),
+                ("2025-06-01", "mid"),
+                ("2026-01-01", "year"),
+                ("2026-02-01", "month-a"),
+                ("2026-03-01", "month-b"),
+                ("2026-03-10", "week"),
+                ("2026-03-15", "day1"),
+                ("2026-03-16", "day2"),
+                ("2026-03-16T12", "recent1"),
+                ("2026-03-16T18", "recent2"),
+            ]
+            archives = []
+            for idx, (label, name) in enumerate(stamps):
+                path = root / f"backup-{name}.tar.gz"
+                path.write_bytes(b"x" * 100)
+                # Approximate mtimes from labels
+                if "T" in label:
+                    day, hour = label.split("T")
+                    y, m, d = map(int, day.split("-"))
+                    ts = time.mktime((y, m, d, int(hour), 0, 0, 0, 0, -1))
+                else:
+                    y, m, d = map(int, label.split("-"))
+                    ts = time.mktime((y, m, d, 12, 0, 0, 0, 0, -1))
+                # Ensure strict ordering
+                ts += idx
+                import os
+
+                os.utime(path, (ts, ts))
+                archives.append(path)
+
+            archives = sorted(archives, key=lambda p: p.stat().st_mtime, reverse=True)
+            keep = select_generational_keepers(
+                archives,
+                RetentionPolicy(
+                    keep_recent=2,
+                    keep_daily=2,
+                    keep_weekly=2,
+                    keep_monthly=2,
+                    keep_yearly=2,
+                ),
+            )
+            self.assertGreaterEqual(len(keep), 2)
+            # Newest two recent always kept
+            self.assertIn(archives[0], keep)
+            self.assertIn(archives[1], keep)
+
+
+class LogToolsTests(unittest.TestCase):
+    def test_capture_and_suggest(self) -> None:
+        plugin = load_plugin(ROOT / "games" / "necesse.yaml")
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text(
+                "Server started\nBob connected\nClient rejected: wrong version\n",
+                encoding="utf-8",
+            )
+            recent = ["extra line with outdated client"]
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: recent)
+            report = box.suggest(lines=50)
+            self.assertIn("matches", report)
+            self.assertTrue(report["matches"]["version_mismatch"] or report["suggestions"]["version_mismatch"])
+            capture = box.capture(reason="test", status={"ok": True})
+            self.assertTrue((state / "captures" / capture["id"] / "capture.tar.gz").is_file())
 
 
 if __name__ == "__main__":

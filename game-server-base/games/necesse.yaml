@@ -3,10 +3,16 @@ steam_app_id: 1169370
 steam_login: anonymous
 steam_branch: public
 validate_on_update: true
-working_dir: /opt/game
+working_dir: /data/game
 data_dir: /data/world
 logs_dir: /data/logs
 install_marker: Server.jar
+min_backup_bytes: 1024
+stop_timeout_seconds: 60
+# Necesse accepts console commands on stdin in dedicated mode.
+stop_stdin_commands:
+  - save
+  - exit
 backup_paths:
   - /data/world
 executable:
@@ -34,7 +40,7 @@ arg_map:
   data_dir: -datadir
   logs_dir: -logs
 log_patterns:
-  # Tunable: Necesse log wording can change between patches.
+  # Tunable via Ingress log capture + /api/logs/suggest — no SSH required.
   ready:
     - "Server started"
     - "Listening on"

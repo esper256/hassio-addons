@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
-description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, world backups, and a status page."
-version: "2.0.0"
+description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
+version: "2.1.0"
 slug: "necesse_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
 arch:
@@ -9,7 +9,8 @@ startup: application
 boot: auto
 init: false
 host_network: false
-hassio_api: false
+hassio_api: true
+homeassistant_api: true
 ingress: true
 ingress_port: 8080
 ingress_entry: /
@@ -43,10 +44,16 @@ options:
   update_on_version_mismatch: true
   restart_on_crash: true
   status_http_enabled: true
+  ha_notifications: true
   backup_enabled: true
-  backup_interval_minutes: 180
-  backup_retain: 10
+  backup_interval_minutes: 360
   backup_on_update: true
+  backup_keep_recent: 5
+  backup_keep_daily: 7
+  backup_keep_weekly: 5
+  backup_keep_monthly: 12
+  backup_keep_yearly: 3
+  min_free_disk_mb: 512
 schema:
   world_name: str
   server_password: password
@@ -68,13 +75,20 @@ schema:
   update_window_end_hour: int(0,23)?
   restart_on_crash: bool
   status_http_enabled: bool
+  ha_notifications: bool
   backup_enabled: bool
   backup_interval_minutes: int(0,)
-  backup_retain: int(1,100)
   backup_on_update: bool
+  backup_keep_recent: int(1,50)
+  backup_keep_daily: int(0,60)
+  backup_keep_weekly: int(0,52)
+  backup_keep_monthly: int(0,36)
+  backup_keep_yearly: int(0,10)
+  min_free_disk_mb: int(0,)
 backup_exclude:
   - "**/steamapps/**"
   - "**/steamcmd/**"
+  - "game/**"
 watchdog: http://[HOST]:[PORT:8080]/healthz
 # First boot runs SteamCMD and can take several minutes on a cold cache.
 timeout: 600

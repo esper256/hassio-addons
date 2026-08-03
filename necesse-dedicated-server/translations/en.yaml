@@ -58,19 +58,37 @@ configuration:
     description: Automatically relaunch the server process after an unexpected exit.
   status_http_enabled:
     name: Status page
-    description: Serve the supervisor status HTTP UI used by Ingress and /healthz.
+    description: Serve the supervisor status/log HTTP UI used by Ingress and /healthz.
+  ha_notifications:
+    name: Home Assistant notifications
+    description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
   backup_enabled:
     name: Enable backups
-    description: Periodically archive /data/world into /data/backups.
+    description: Periodically archive /data/world into /data/backups with generational retention.
   backup_interval_minutes:
     name: Backup interval (minutes)
-    description: How often to create a world backup. 0 disables the schedule (pre-update backups can still run).
-  backup_retain:
-    name: Backups to keep
-    description: Number of newest backup archives to retain.
+    description: Base schedule for backups. Failures/empty worlds use exponential backoff from this interval.
   backup_on_update:
     name: Backup before update
     description: Create a world backup immediately before applying a Steam update.
+  backup_keep_recent:
+    name: Keep recent backups
+    description: Always keep this many newest backups.
+  backup_keep_daily:
+    name: Keep daily backups
+    description: Keep one backup per day for this many days.
+  backup_keep_weekly:
+    name: Keep weekly backups
+    description: Keep one backup per week for this many weeks.
+  backup_keep_monthly:
+    name: Keep monthly backups
+    description: Keep one backup per month for this many months.
+  backup_keep_yearly:
+    name: Keep yearly backups
+    description: Keep one backup per year for this many years.
+  min_free_disk_mb:
+    name: Minimum free disk (MiB)
+    description: Skip backups/updates when free space under /data falls below this threshold.
 network:
   14159/udp: Necesse game traffic
   8080/tcp: Status dashboard (optional host mapping; Ingress preferred)

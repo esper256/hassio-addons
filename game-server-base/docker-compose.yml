@@ -11,6 +11,7 @@ services:
       - "8080:8080"
     environment:
       GAME_PLUGIN: /opt/games/necesse.yaml
+      INSTALL_DIR: /data/game
       WORLD_NAME: FamilyWorld
       SERVER_PASSWORD: changeme
       SERVER_SLOTS: "10"
@@ -21,14 +22,17 @@ services:
       AUTO_UPDATE_INTERVAL_MINUTES: "30"
       UPDATE_WHEN_EMPTY_ONLY: "true"
       UPDATE_ON_VERSION_MISMATCH: "true"
-      # Quiet overnight window (local container time). Comment out to allow any hour.
-      # UPDATE_WINDOW_START_HOUR: "1"
-      # UPDATE_WINDOW_END_HOUR: "6"
       STATUS_HTTP_ENABLED: "true"
       STATUS_HTTP_PORT: "8080"
+      HA_NOTIFICATIONS: "false"
       BACKUP_ENABLED: "true"
-      BACKUP_INTERVAL_MINUTES: "180"
-      BACKUP_RETAIN: "10"
+      BACKUP_INTERVAL_MINUTES: "360"
+      BACKUP_KEEP_RECENT: "5"
+      BACKUP_KEEP_DAILY: "7"
+      BACKUP_KEEP_WEEKLY: "5"
+      BACKUP_KEEP_MONTHLY: "12"
+      BACKUP_KEEP_YEARLY: "3"
+      MIN_FREE_DISK_MB: "512"
       JAVA_OPTS: "-Xms512M -Xmx2G"
     volumes:
       - ./data:/data
