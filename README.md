@@ -1,36 +1,34 @@
 # esper256 Home Assistant add-ons
 
-Custom Home Assistant OS add-ons.
+Steam-powered dedicated game servers for **Home Assistant OS** (and plain Docker/Portainer).  
+Each game add-on keeps itself updated through SteamCMD, backs up worlds, and restarts after crashes — so a family server does not go stale after a client patch.
 
-## Add-ons
+## I want to run a game
 
-| Add-on | Description |
+Pick the game and follow that guide. Everything you need to install and run it is there.
+
+| Game | Start here |
 | --- | --- |
-| [necesse-dedicated-server](necesse-dedicated-server/) | Necesse dedicated server with SteamCMD auto-updates |
+| **Necesse** | [necesse-dedicated-server/README.md](necesse-dedicated-server/README.md) |
 
-## Shared platform
+### Home Assistant in one line
 
-[`game-server-base`](game-server-base/) is a **game-agnostic** SteamCMD supervisor. It must not contain game names, ports, or runtimes.
+**Settings → Add-ons → Add-on store → ⋮ → Repositories** → add:
 
-Each game add-on is a thin layer:
+`https://github.com/esper256/hassio-addons`
 
-- vendored `game_server/` package (via sync script)
-- one plugin YAML (`games/game.yaml`)
-- runtime packages the game needs (e.g. OpenJDK for Necesse)
-- HA `config.yaml` / docs / ports
+Then install the game add-on from that repository and continue in the game’s README.
 
-### Portainer / Docker (Necesse)
+## I want to package a different Steam game
 
-```bash
-docker compose -f necesse-dedicated-server/docker-compose.yml up -d --build
-```
+This repo’s shared supervisor (`game-server-base`) is game-agnostic. Use it when you want another dedicated server on the same update/backup/status machinery.
 
-### Home Assistant
+→ [How to build on game-server-base](game-server-base/README.md)
 
-Add this repository URL in **Settings → Add-ons → Add-on store → Repositories**, then install **Necesse Dedicated Server**.
+## Repository layout (optional reading)
 
-After changing the generic supervisor:
-
-```bash
-./scripts/sync-game-server-base.sh
-```
+| Path | What it is |
+| --- | --- |
+| `necesse-dedicated-server/` | Necesse HA add-on + Docker image (what most people install) |
+| `game-server-base/` | Shared SteamCMD supervisor (no game identity) |
+| `scripts/sync-game-server-base.sh` | Copies the supervisor into game add-ons after base changes |
