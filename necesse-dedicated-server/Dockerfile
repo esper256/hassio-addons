@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/opt \
     INSTALL_DIR=/data/game \
     STEAM_HOME=/data/steam-home \
+    HOME=/data/steam-home \
     APP_VERSION=${BUILD_VERSION} \
     STATUS_HTTP_PORT=8099
 

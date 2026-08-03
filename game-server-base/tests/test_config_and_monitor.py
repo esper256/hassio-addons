@@ -48,14 +48,17 @@ from game_server.world_save import (  # noqa: E402
 from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
+    _app_info_cmd,
     _build_app_update_cmd,
     _run_streaming,
     configure_steamcmd_version_path,
     looks_missing_configuration,
+    looks_missing_file_permissions,
     parse_app_info_build_id,
     prepare_steam_env,
     read_local_install_meta,
     remember_steamcmd_version,
+    server_installed,
     steamcmd_client_version,
     update_available,
     wait_for_app_info,
@@ -710,6 +713,32 @@ class SteamCMDHelperTests(unittest.TestCase):
             )
         )
         self.assertFalse(looks_missing_configuration("Success! App '1' fully installed"))
+        self.assertTrue(
+            looks_missing_file_permissions(
+                "ERROR! Failed to install app '1169370' (Missing file permissions)"
+            )
+        )
+
+    def test_server_installed_ignores_steamapps_scaffolding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "game"
+            (root / "steamapps").mkdir(parents=True)
+            self.assertFalse(server_installed(root, "Server.jar"))
+            self.assertFalse(server_installed(root))
+            (root / "Server.jar").write_bytes(b"x")
+            self.assertTrue(server_installed(root, "Server.jar"))
+
+    def test_app_info_cmd_pins_platform(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.steam_platform = "linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            steamcmd_dir = Path(tmp) / "steamcmd"
+            steamcmd_dir.mkdir()
+            (steamcmd_dir / "steamcmd.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            cmd = _app_info_cmd(steamcmd_dir, plugin)
+            joined = " ".join(cmd)
+            self.assertIn("+@sSteamCmdForcePlatformType linux", joined)
+            self.assertIn("+app_info_print", joined)
 
     def test_parse_app_info_build_id(self) -> None:
         sample = (
@@ -729,7 +758,15 @@ class SteamCMDHelperTests(unittest.TestCase):
             '      "buildid"\t\t"99"\n    }\n  }\n}\n',
         ]
 
-        def fake_run(cmd, *, timeout, prefix="[steamcmd]", env=None):  # noqa: ANN001
+        def fake_run(  # noqa: ANN001
+            cmd,
+            *,
+            timeout,
+            prefix="[steamcmd]",
+            env=None,
+            run_uid=None,
+            run_gid=None,
+        ):
             idx = min(calls["n"], len(outputs) - 1)
             calls["n"] += 1
             return 0, outputs[idx]
