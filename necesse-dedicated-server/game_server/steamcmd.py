@@ -243,39 +243,6 @@ def prepare_steam_env(
     return env
 
 
-def clear_steam_appcache(env: dict[str, str] | None = None) -> None:
-    """Drop local Steam appinfo cache when it appears corrupt/unusable."""
-
-    homes: list[Path] = []
-    if env and env.get("HOME"):
-        homes.append(Path(env["HOME"]))
-    homes.append(steam_home_dir())
-    homes.append(Path("/root"))
-    homes.append(Path.home())
-
-    seen: set[Path] = set()
-    removed = 0
-    for home in homes:
-        for relative in (
-            Path("Steam/appcache/appinfo.vdf"),
-            Path(".steam/appcache/appinfo.vdf"),
-            Path("Steam/appcache/packageinfo.vdf"),
-        ):
-            path = (home / relative).resolve()
-            if path in seen:
-                continue
-            seen.add(path)
-            if path.is_file():
-                try:
-                    path.unlink()
-                    removed += 1
-                    LOG.info("Cleared Steam appcache file %s", path)
-                except OSError:
-                    LOG.warning("Could not remove %s", path, exc_info=True)
-    if removed == 0:
-        LOG.info("No Steam appcache files to clear")
-
-
 def manifest_path(install_dir: str | Path, app_id: int) -> Path | None:
     candidates = [
         Path(install_dir) / "steamapps" / f"appmanifest_{app_id}.acf",
@@ -441,7 +408,6 @@ def wait_for_app_info(
     stop_event: threading.Event | None = None,
     timeout_seconds: float = APP_INFO_READY_TIMEOUT_SECONDS,
     poll_interval_seconds: float = APP_INFO_POLL_INTERVAL_SECONDS,
-    clear_cache_once: bool = False,
     run_uid: int | None = None,
     run_gid: int | None = None,
 ) -> str:
@@ -449,11 +415,13 @@ def wait_for_app_info(
 
     This is a readiness wait, not an install retry. "Not ready yet" does not
     count as a Steam failure and does not start cooldowns.
+
+    Do not clear the local Steam appcache here: that only forces another
+    anonymous appinfo fetch and is not a reliable fix for readiness lag.
     """
 
     deadline = time.time() + timeout_seconds
     probe = 0
-    cleared_cache = False
     cmd = _app_info_cmd(steamcmd_dir, plugin)
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -489,21 +457,6 @@ def wait_for_app_info(
                 build_id,
             )
             return build_id
-
-        # Mid-wait: one cache reset if Steam keeps returning empty/unusable info.
-        if (
-            clear_cache_once
-            and not cleared_cache
-            and probe >= 2
-            and time.time() + poll_interval_seconds < deadline
-        ):
-            LOG.warning(
-                "Steam app info still unavailable for app %s; clearing local "
-                "appcache once before continuing to wait",
-                plugin.steam_app_id,
-            )
-            clear_steam_appcache(env)
-            cleared_cache = True
 
         if time.time() + poll_interval_seconds >= deadline:
             break
@@ -614,7 +567,6 @@ def install_or_update(
         )
 
     last_error: Exception | None = None
-    cleared_config_cache = False
     repaired_permissions = False
     for attempt in range(1, retries + 1):
         if stop_event is not None and stop_event.is_set():
@@ -641,7 +593,6 @@ def install_or_update(
                     plugin,
                     env=env,
                     stop_event=stop_event,
-                    clear_cache_once=True,
                     run_uid=run_uid,
                     run_gid=run_gid,
                 )
@@ -700,18 +651,14 @@ def install_or_update(
                     )
                     repaired_permissions = True
             if looks_missing_configuration(combined):
+                # Keep the normal retry/backoff budget. Do not clear appcache:
+                # that forces another anonymous Steam appinfo fetch and is not
+                # a reliable fix for this SteamCMD quirk.
                 last_error = SteamCMDError(
                     f"SteamCMD still reports missing configuration for app "
                     f"{plugin.steam_app_id} after app info readiness "
                     f"(platform={platform or 'native'})"
                 )
-                if not cleared_config_cache:
-                    LOG.warning(
-                        "Clearing Steam appcache after post-readiness missing "
-                        "configuration; will re-wait on next attempt"
-                    )
-                    clear_steam_appcache(env)
-                    cleared_config_cache = True
             gate.note_failure(combined, kind="app_update")
         except InterruptedError as exc:
             raise SteamCMDError("Stopped while waiting for Steam gate") from exc
