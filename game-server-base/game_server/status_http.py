@@ -668,10 +668,16 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     label = str(info.get("label") or "").strip()
     scope = str(info.get("scope") or "")
     if size <= 0 and scope == "missing":
+        if label:
+            return "—", f"Waiting for {label}"
         return "—", "No world save found yet"
     value = format_bytes(size)
-    if label and scope == "world_file":
+    if scope == "named_path" and label:
         return value, label
+    if scope == "heuristic" and label:
+        return value, f"{label} (heuristic)"
+    if scope == "backup_sources":
+        return value, label or "World data directory"
     if label:
         return value, label
     return value, "World data"

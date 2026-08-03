@@ -14,7 +14,7 @@ from typing import Any
 from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
-from .disk import ensure_free_mb, world_save_size
+from .disk import ensure_free_mb
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
@@ -26,6 +26,7 @@ from .status_http import StatusServer
 from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
 from .version import app_version
+from .world_save import backup_sources_for, locate_active_world
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -113,7 +114,9 @@ class GameServerSupervisor:
             run_uid=self.run_ids[0] if self.run_ids else None,
             run_gid=self.run_ids[1] if self.run_ids else None,
         )
-        backup_sources = list(plugin.backup_paths) or [data_dir]
+        # Backups archive explicit plugin roots (usually the whole data dir).
+        # Active-world size for the UI is resolved separately via world_save.
+        backup_sources = backup_sources_for(plugin, data_dir)
         self.backups = BackupManager(
             config.backup_dir,
             backup_sources,
@@ -146,11 +149,11 @@ class GameServerSupervisor:
         )
         if install_meta.get("build_id") and not self.local_build_id:
             self.local_build_id = str(install_meta["build_id"])
-        world_size = world_save_size(
-            self.plugin.data_dir,
-            str(self.config.game_options.get("world_name") or ""),
-            fallback_paths=list(self.backups.sources),
-        )
+        world_size = locate_active_world(
+            self.plugin,
+            self.config.game_options,
+            data_dir=self.plugin.data_dir,
+        ).to_dict()
         return {
             "game": self.plugin.name,
             "app_version": app_version(),

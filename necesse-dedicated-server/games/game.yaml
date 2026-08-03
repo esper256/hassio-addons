@@ -16,6 +16,12 @@ stop_stdin_commands:
   - exit
 backup_paths:
   - /data/world
+# Active world artifact for status UI (backups still use backup_paths above).
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/saves/worlds/{world_name}.zip"
+    - "{data_dir}/saves/worlds/{world_name}"
 executable:
   - java
   - -jar

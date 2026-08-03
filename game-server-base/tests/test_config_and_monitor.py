@@ -19,7 +19,7 @@ from game_server.backup import (  # noqa: E402
     retention_from_profile,
     select_generational_keepers,
 )
-from game_server.disk import format_bytes, world_save_size  # noqa: E402
+from game_server.disk import format_bytes  # noqa: E402
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
@@ -33,7 +33,14 @@ from game_server.status_http import (  # noqa: E402
     _format_subtitle,
     _format_update_check_hint,
     _format_uptime,
+    _format_world_save,
 )
+from game_server.world_save import (  # noqa: E402
+    WorldSaveSpec,
+    backup_sources_for,
+    locate_active_world,
+)
+from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _build_app_update_cmd,
@@ -98,6 +105,97 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(plugin.steam_app_id, 1)
         self.assertEqual(plugin.install_marker, "server.bin")
         self.assertEqual(plugin.log_patterns.player_join, [])
+        self.assertIsNotNone(plugin.world_save)
+        assert plugin.world_save is not None
+        self.assertEqual(plugin.world_save.strategy, "named_path")
+        self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+
+class WorldSaveLocatorTests(unittest.TestCase):
+    def test_named_path_prefers_plugin_template(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"x" * 2048)
+            (root / "noise.log").write_text("ignore me", encoding="utf-8")
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "named_path")
+            self.assertEqual(located.bytes, 2048)
+            self.assertEqual(located.label, "FamilyWorld.zip")
+            self.assertEqual(backup_sources_for(plugin, str(root)), ["/data/world"])
+
+    def test_named_path_missing_does_not_sum_data_dir(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "noise.bin").write_bytes(b"y" * 4096)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "missing")
+            self.assertEqual(located.bytes, 0)
+            self.assertTrue(str(located.path or "").endswith("FamilyWorld.zip"))
+            value, hint = _format_world_save({"world_save": located.to_dict()})
+            self.assertEqual(value, "—")
+            self.assertIn("FamilyWorld.zip", hint)
+
+    def test_no_world_save_spec_uses_backup_sources_only(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.world_save = None
+        plugin.backup_paths = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cfg.txt").write_bytes(b"z" * 100)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "backup_sources")
+            self.assertEqual(located.bytes, 100)
+            self.assertEqual(located.label, "world data")
+
+    def test_heuristic_is_opt_in_only(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        # Default named_path must not consult the heuristic module when templates miss
+        # a non-template layout.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            odd = root / "worlds" / "FamilyWorld.zip"
+            odd.parent.mkdir(parents=True)
+            odd.write_bytes(b"x" * 50)
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "missing")
+
+            plugin.world_save = WorldSaveSpec(
+                strategy="named_path",
+                paths=["{data_dir}/saves/worlds/{world_name}.zip"],
+                allow_heuristic_fallback=True,
+            )
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertEqual(located.scope, "heuristic")
+            self.assertEqual(located.label, "FamilyWorld.zip")
+
+            direct = heuristic_locate_world(root, "FamilyWorld")
+            self.assertIsNotNone(direct)
+            assert direct is not None
+            self.assertEqual(direct.scope, "heuristic")
 
 
 class MonitorTests(unittest.TestCase):
@@ -321,18 +419,6 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(format_bytes(12 * 1024), "12 KB")
         self.assertEqual(format_bytes(int(1.5 * 1024 * 1024)), "1.5 MB")
         self.assertEqual(format_bytes(int(2.4 * 1024**3)), "2.4 GB")
-
-    def test_world_save_size_prefers_named_world_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            world = root / "saves" / "worlds" / "FamilyWorld.zip"
-            world.parent.mkdir(parents=True)
-            world.write_bytes(b"x" * 2048)
-            (root / "noise.log").write_text("ignore me", encoding="utf-8")
-            info = world_save_size(root, "FamilyWorld", fallback_paths=[root])
-            self.assertEqual(info["scope"], "world_file")
-            self.assertEqual(info["bytes"], 2048)
-            self.assertEqual(info["label"], "FamilyWorld.zip")
 
     def test_update_check_and_install_hints(self) -> None:
         now = time.time()

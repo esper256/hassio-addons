@@ -12,6 +12,11 @@ stop_stdin_commands:
   - quit
 backup_paths:
   - /data/world
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/saves/worlds/{world_name}.zip"
+    - "{data_dir}/saves/worlds/{world_name}"
 executable:
   - /bin/true
 bool_style: one_zero

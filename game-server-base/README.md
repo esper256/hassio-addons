@@ -59,7 +59,8 @@ Minimum useful fields:
 | `arg_map` | Map HA/options keys → CLI flags |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
 | `stop_stdin_commands` | Optional graceful stop (`save` / `exit`, etc.) |
-| `backup_paths` | What to archive |
+| `backup_paths` | What to archive (usually the whole data dir) |
+| `world_save` | Active world artifact for status UI (`strategy: named_path` + `paths` templates). Separate from backups. |
 | `log_patterns` | **Active** regexes (player count / version mismatch). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
 

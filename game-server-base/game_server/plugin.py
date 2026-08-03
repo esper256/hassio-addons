@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .world_save import WorldSaveSpec
+
 
 @dataclass
 class LogPatterns:
@@ -55,6 +57,8 @@ class GamePlugin:
     min_backup_bytes: int = 1024
     # Optional runtime packages hint for image authors (documentation only).
     runtime_notes: str = ""
+    # How to find the active world artifact for status UI (not backup roots).
+    world_save: WorldSaveSpec | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
@@ -102,6 +106,7 @@ class GamePlugin:
             ],
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
             runtime_notes=str(data.get("runtime_notes") or ""),
+            world_save=WorldSaveSpec.from_dict(data.get("world_save")),
         )
 
 
