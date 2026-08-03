@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.2
+
+- Alpha-safe log watching: no active Necesse regexes by default
+- Generic candidate regexes run dry-run only and highlight hits in Ingress
+- Pattern hit table + stale detection via `/api/logs/patterns`
+- When player patterns are inactive, Steam updates still run; mismatch/player gating stays off
+
 ## 2.1.1
 
 - Enforce clean separation: generic supervisor has no game identity; Necesse is plugin YAML + Java + HA metadata only

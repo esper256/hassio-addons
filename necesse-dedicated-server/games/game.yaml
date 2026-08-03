@@ -46,29 +46,7 @@ arg_map:
   max_client_latency: -maxlatency
   data_dir: -datadir
   logs_dir: -logs
-log_patterns:
-  # Tune via Ingress /api/logs/capture and /api/logs/suggest.
-  ready:
-    - "Server started"
-    - "Listening on"
-    - "Done$"
-    - "world loaded"
-  player_join:
-    - "(?P<player>[\\w .-]+) connected"
-    - "Player (?P<player>[\\w .-]+) joined"
-    - "(?P<player>[\\w .-]+) has joined"
-  player_leave:
-    - "(?P<player>[\\w .-]+) disconnected"
-    - "Player (?P<player>[\\w .-]+) left"
-    - "(?P<player>[\\w .-]+) has left"
-  player_count:
-    - "(?P<count>\\d+)\\s*/\\s*\\d+\\s+players"
-    - "Players online:\\s*(?P<count>\\d+)"
-  version_mismatch:
-    - "wrong version"
-    - "outdated (client|server)"
-    - "version mismatch"
-    - "incompatible (client|version)"
-    - "client version"
-    - "update (your|the) (client|server)"
-    - "newer version"
+# Alpha: no active regexes (they would trigger updates/player gating).
+# Generic dry-run candidates in game-server-base highlight likely lines in Ingress.
+# Promote proven patterns here after watching /api/logs/patterns.
+log_patterns: {}

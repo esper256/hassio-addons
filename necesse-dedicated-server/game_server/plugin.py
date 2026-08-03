@@ -61,6 +61,8 @@ class GamePlugin:
     arg_map: dict[str, str] = field(default_factory=dict)
     bool_style: str = "true_false"  # or "one_zero"
     log_patterns: LogPatterns = field(default_factory=LogPatterns)
+    # Optional extra dry-run candidates merged with generic defaults.
+    log_pattern_candidates: dict[str, list[str]] = field(default_factory=dict)
     ready_timeout_seconds: int = 180
     java_opts_env: str = "JAVA_OPTS"
     stop_timeout_seconds: int = 60
@@ -73,6 +75,11 @@ class GamePlugin:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
         patterns = data.get("log_patterns") or {}
+        raw_candidates = data.get("log_pattern_candidates") or {}
+        candidates: dict[str, list[str]] = {}
+        if isinstance(raw_candidates, dict):
+            for key, values in raw_candidates.items():
+                candidates[str(key)] = [str(v) for v in (values or [])]
         migrations = [
             PathMigration.from_dict(item)
             for item in (data.get("path_migrations") or [])
@@ -106,6 +113,7 @@ class GamePlugin:
                 player_count=list(patterns.get("player_count") or []),
                 ready=list(patterns.get("ready") or []),
             ),
+            log_pattern_candidates=candidates,
             ready_timeout_seconds=int(data.get("ready_timeout_seconds", 180)),
             java_opts_env=data.get("java_opts_env", "JAVA_OPTS"),
             stop_timeout_seconds=int(data.get("stop_timeout_seconds", 60)),

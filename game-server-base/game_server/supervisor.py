@@ -127,7 +127,13 @@ class GameServerSupervisor:
     def status(self) -> dict[str, Any]:
         monitor = self.monitor.state.to_dict()
         monitor["recent_lines"] = list(self.monitor.state.recent_lines)
+        pattern_report = self.monitor.pattern_report()
         disk_ok, free = ensure_free_mb(self.config.backup_dir, self.config.min_free_disk_mb)
+        player_gating = (
+            "active"
+            if self.monitor.player_tracking_enabled
+            else "inactive_no_active_patterns"
+        )
         return {
             "game": self.plugin.name,
             "steam_app_id": self.plugin.steam_app_id,
@@ -146,12 +152,14 @@ class GameServerSupervisor:
             "update_check_count": self.update_check_count,
             "update_apply_count": self.update_apply_count,
             "install_dir": self.config.install_dir,
+            "player_gating": player_gating,
             "disk": {
                 "ok": disk_ok,
                 "free_mb": free,
                 "min_free_disk_mb": self.config.min_free_disk_mb,
             },
             "monitor": monitor,
+            "log_patterns": pattern_report,
             "process": self.process.to_dict(),
             "backups": self.backups.to_dict(),
             "log_captures": self.log_tools.list_captures(),
@@ -169,6 +177,7 @@ class GameServerSupervisor:
                 LOG.exception("Failed writing status.json")
 
     def _on_version_mismatch(self, line: str) -> None:
+        # Only invoked for active patterns (dry-run candidates never call this).
         try:
             self.capture_logs("version_mismatch")
         except Exception:  # noqa: BLE001
@@ -204,17 +213,34 @@ class GameServerSupervisor:
             return start <= hour < end
         return hour >= start or hour < end
 
-    def _players_online(self) -> int:
+    def _players_online(self) -> int | None:
+        """Return player count when known; None when log tracking cannot tell."""
+        if not self.monitor.player_tracking_enabled:
+            return None
         state = self.monitor.state
+        if not state.players_known and not state.players:
+            # Active patterns exist but nothing observed yet — treat as unknown
+            # until we see a join/leave/count signal (safer than assuming 0).
+            return None
         if state.players:
             return len(state.players)
-        return state.player_count
+        if state.player_count is None:
+            return None
+        return int(state.player_count)
 
     def _can_apply_update(self) -> bool:
         if not self._update_bypass_window and not self._within_update_window():
             return False
-        if self.config.update_when_empty_only and self._players_online() > 0:
-            return False
+        if self.config.update_when_empty_only:
+            online = self._players_online()
+            if online is None:
+                # Desirable alpha failure mode: do not block Steam updates forever
+                # when player regexes are absent/unproven. Status shows gating inactive.
+                LOG.debug(
+                    "Player gating unavailable; allowing update without empty check"
+                )
+            elif online > 0:
+                return False
         ok, _free = ensure_free_mb(self.config.install_dir, self.config.min_free_disk_mb)
         return ok
 

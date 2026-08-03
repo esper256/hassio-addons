@@ -87,6 +87,31 @@ HTML_PAGE = """<!DOCTYPE html>
       cursor: pointer;
     }}
     ul {{ padding-left: 1.1rem; color: var(--muted); }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin-top: 0.5rem;
+    }}
+    th, td {{
+      text-align: left;
+      padding: 0.4rem 0.45rem;
+      border-bottom: 1px solid rgba(155,181,166,0.18);
+      vertical-align: top;
+    }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    .tag {{
+      display: inline-block;
+      padding: 0.1rem 0.35rem;
+      border: 1px solid rgba(155,181,166,0.35);
+      margin-right: 0.25rem;
+      font-size: 0.72rem;
+    }}
+    .tag.active {{ border-color: var(--good); color: var(--good); }}
+    .tag.dry_run {{ border-color: var(--accent); color: var(--accent); }}
+    .tag.stale {{ border-color: var(--bad); color: var(--bad); }}
+    .warn {{ color: var(--accent); }}
+    code {{ color: var(--ink); }}
   </style>
 </head>
 <body>
@@ -96,13 +121,33 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}">{running}</div></div>
       <div class="stat"><div class="label">Players</div><div class="value">{players}</div></div>
+      <div class="stat"><div class="label">Player gating</div><div class="value">{player_gating}</div></div>
       <div class="stat"><div class="label">Uptime</div><div class="value">{uptime}</div></div>
       <div class="stat"><div class="label">Restarts</div><div class="value">{restarts}</div></div>
       <div class="stat"><div class="label">Crashes</div><div class="value">{crashes}</div></div>
       <div class="stat"><div class="label">Build</div><div class="value accent">{build}</div></div>
       <div class="stat"><div class="label">Update pending</div><div class="value">{update_pending}</div></div>
-      <div class="stat"><div class="label">Version mismatches</div><div class="value">{mismatches}</div></div>
     </div>
+    <p class="sub warn">{gating_note}</p>
+
+    <h2>Log pattern hits</h2>
+    <p class="sub">
+      <span class="tag active">active</span> can trigger updates/player state.
+      <span class="tag dry_run">dry_run</span> only highlights candidates.
+      <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
+      JSON: <a href="/api/logs/patterns">/api/logs/patterns</a>
+    </p>
+    <table>
+      <thead>
+        <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Pattern</th><th>Last line</th></tr>
+      </thead>
+      <tbody>
+        {pattern_rows}
+      </tbody>
+    </table>
+
+    <h2>Highlighted lines</h2>
+    <pre>{highlights}</pre>
 
     <h2>Log tools</h2>
     <div class="actions">
@@ -219,9 +264,15 @@ class StatusServer:
                         200,
                         {
                             "recent_lines": monitor.get("recent_lines") or [],
+                            "highlighted_lines": monitor.get("highlighted_lines") or [],
                             "captures": status.get("log_captures") or [],
+                            "log_patterns": status.get("log_patterns") or {},
                         },
                     )
+                    return
+
+                if path == "/api/logs/patterns":
+                    self._json(200, status.get("log_patterns") or {})
                     return
 
                 if path == "/api/logs/raw":
@@ -282,10 +333,12 @@ class StatusServer:
 
                 if path in ("/", "/index.html", "/ingress"):
                     monitor = status.get("monitor") or {}
+                    patterns = status.get("log_patterns") or {}
                     recent = (
                         "\n".join((monitor.get("recent_lines") or [])[-40:])
                         or "(no log lines yet)"
                     )
+                    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
                     captures = status.get("log_captures") or []
                     capture_items = []
                     for item in captures[:8]:
@@ -293,17 +346,37 @@ class StatusServer:
                             f'<li><a href="{item.get("download_path")}">{item.get("id")}</a>'
                             f' · {item.get("reason")}</li>'
                         )
+                    players_known = monitor.get("players_known")
+                    player_value = (
+                        str(monitor.get("player_count"))
+                        if players_known
+                        else "unknown"
+                    )
+                    gating = status.get("player_gating") or "unknown"
+                    if gating == "inactive_no_active_patterns":
+                        gating_note = (
+                            "Alpha mode: no active player/version regexes. "
+                            "Steam build updates still run; dry-run candidates only highlight logs. "
+                            "Promote proven patterns into the game plugin log_patterns section."
+                        )
+                    else:
+                        gating_note = (
+                            "Active player patterns are enabled; empty-server update gating is in effect."
+                        )
                     html = HTML_PAGE.format(
                         game=game_name,
                         running="running" if status.get("running") else "stopped",
                         running_class="good" if status.get("running") else "bad",
-                        players=monitor.get("player_count", 0),
+                        players=player_value,
+                        player_gating=gating.replace("_", " "),
+                        gating_note=_html_escape(gating_note),
                         uptime=_fmt_seconds(status.get("supervisor_uptime_seconds", 0)),
                         restarts=status.get("restart_count", 0),
                         crashes=status.get("crash_count", 0),
                         build=status.get("local_build_id") or "unknown",
                         update_pending="yes" if status.get("update_pending") else "no",
-                        mismatches=monitor.get("version_mismatch_count", 0),
+                        pattern_rows=_format_pattern_rows(patterns.get("patterns") or []),
+                        highlights=_html_escape(highlights),
                         recent=_html_escape(recent),
                         captures="\n".join(capture_items) or "<li>No captures yet</li>",
                     ).encode("utf-8")
@@ -350,3 +423,48 @@ def _html_escape(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
+    if not patterns:
+        return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
+    # Show hits first, then the rest, capped for readability.
+    ordered = sorted(
+        patterns,
+        key=lambda item: (
+            0 if item.get("hits") else 1,
+            0 if item.get("mode") == "active" else 1,
+            str(item.get("category") or ""),
+            -int(item.get("hits") or 0),
+        ),
+    )
+    rows = []
+    for item in ordered[:60]:
+        mode = item.get("mode") or "dry_run"
+        stale = " <span class='tag stale'>stale</span>" if item.get("stale") else ""
+        last = item.get("last_line") or ""
+        if len(last) > 140:
+            last = last[:140] + "…"
+        rows.append(
+            "<tr>"
+            f"<td><span class='tag {mode}'>{mode}</span>{stale}</td>"
+            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
+            f"<td>{int(item.get('hits') or 0)}</td>"
+            f"<td><code>{_html_escape(str(item.get('pattern') or ''))}</code></td>"
+            f"<td>{_html_escape(last)}</td>"
+            "</tr>"
+        )
+    return "\n".join(rows)
+
+
+def _format_highlights(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "(no pattern hits yet — play a session and watch dry_run candidates light up)"
+    lines = []
+    for item in items[-30:]:
+        matches = item.get("matches") or []
+        tags = ", ".join(
+            f"{m.get('mode')}:{m.get('category')}" for m in matches[:6]
+        )
+        lines.append(f"[{tags}] {item.get('line')}")
+    return "\n".join(lines)

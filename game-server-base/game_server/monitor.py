@@ -1,4 +1,4 @@
-"""Tail game logs and track players / version-mismatch signals."""
+"""Tail game logs; active patterns trigger events, candidates stay dry-run."""
 
 from __future__ import annotations
 
@@ -9,36 +9,92 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from .plugin import GamePlugin, LogPatterns
+from .patterns import DEFAULT_CANDIDATE_PATTERNS
+from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.monitor")
 
 
 @dataclass
+class PatternStat:
+    category: str
+    pattern: str
+    mode: str  # "active" | "dry_run"
+    hits: int = 0
+    first_hit_at: float | None = None
+    last_hit_at: float | None = None
+    last_line: str | None = None
+
+    def note(self, line: str) -> None:
+        now = time.time()
+        self.hits += 1
+        if self.first_hit_at is None:
+            self.first_hit_at = now
+        self.last_hit_at = now
+        self.last_line = line
+
+    def to_dict(self) -> dict[str, Any]:
+        stale = False
+        if self.hits > 0 and self.last_hit_at is not None:
+            # Previously useful pattern with no hits for 6h while server runs.
+            stale = (time.time() - self.last_hit_at) > 6 * 3600
+        return {
+            "category": self.category,
+            "pattern": self.pattern,
+            "mode": self.mode,
+            "hits": self.hits,
+            "first_hit_at": self.first_hit_at,
+            "last_hit_at": self.last_hit_at,
+            "last_line": self.last_line,
+            "stale": stale,
+        }
+
+
+@dataclass
 class MonitorState:
     players: set[str] = field(default_factory=set)
-    player_count: int = 0
+    player_count: int | None = None
+    players_known: bool = False
     ready: bool = False
     version_mismatch_count: int = 0
     last_version_mismatch_at: float | None = None
     last_version_mismatch_line: str | None = None
     last_log_line: str | None = None
     recent_lines: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    # Recent lines that matched any pattern (active or dry-run), newest last.
+    highlighted_lines: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=80)
+    )
     started_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "players": sorted(self.players),
-            "player_count": self.player_count if self.player_count or not self.players else len(self.players),
+            "player_count": (
+                len(self.players)
+                if self.players
+                else self.player_count
+            ),
+            "players_known": self.players_known,
             "ready": self.ready,
             "version_mismatch_count": self.version_mismatch_count,
             "last_version_mismatch_at": self.last_version_mismatch_at,
             "last_version_mismatch_line": self.last_version_mismatch_line,
             "last_log_line": self.last_log_line,
+            "highlighted_lines": list(self.highlighted_lines),
             "uptime_seconds": int(time.time() - self.started_at),
         }
+
+
+@dataclass
+class _CompiledPattern:
+    category: str
+    pattern: str
+    mode: str
+    regex: re.Pattern[str]
+    stat: PatternStat
 
 
 class LogMonitor:
@@ -54,15 +110,99 @@ class LogMonitor:
         self.state = MonitorState()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._patterns = plugin.log_patterns
-        self._join = [re.compile(p, re.I) for p in self._patterns.player_join]
-        self._leave = [re.compile(p, re.I) for p in self._patterns.player_leave]
-        self._mismatch = [re.compile(p, re.I) for p in self._patterns.version_mismatch]
-        self._count = [re.compile(p, re.I) for p in self._patterns.player_count]
-        self._ready = [re.compile(p, re.I) for p in self._patterns.ready]
+        self._compiled: list[_CompiledPattern] = []
+        self._stats: dict[tuple[str, str, str], PatternStat] = {}
+        self._build_patterns()
+
+    def _build_patterns(self) -> None:
+        active = plugin_patterns_as_dict(self.plugin)
+        candidates = merge_candidates(
+            DEFAULT_CANDIDATE_PATTERNS,
+            self.plugin.log_pattern_candidates,
+        )
+
+        for category, patterns in active.items():
+            for pattern in patterns:
+                self._add_compiled(category, pattern, "active")
+
+        for category, patterns in candidates.items():
+            for pattern in patterns:
+                # Don't duplicate an identical active pattern as dry-run.
+                if pattern in active.get(category, []):
+                    continue
+                self._add_compiled(category, pattern, "dry_run")
+
+        if not self.player_tracking_enabled:
+            LOG.warning(
+                "No active player log patterns configured; player-count gating "
+                "is inactive. Dry-run candidates will only highlight lines."
+            )
+        if not self.version_mismatch_enabled:
+            LOG.info(
+                "No active version-mismatch patterns; mismatch will not trigger updates."
+            )
+
+    def _add_compiled(self, category: str, pattern: str, mode: str) -> None:
+        key = (mode, category, pattern)
+        if key in self._stats:
+            return
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            LOG.error("Invalid %s pattern for %s (%s): %s", mode, category, pattern, exc)
+            return
+        stat = PatternStat(category=category, pattern=pattern, mode=mode)
+        self._stats[key] = stat
+        self._compiled.append(
+            _CompiledPattern(
+                category=category,
+                pattern=pattern,
+                mode=mode,
+                regex=regex,
+                stat=stat,
+            )
+        )
+
+    @property
+    def player_tracking_enabled(self) -> bool:
+        active = plugin_patterns_as_dict(self.plugin)
+        return bool(
+            active.get("player_join")
+            or active.get("player_leave")
+            or active.get("player_count")
+        )
+
+    @property
+    def version_mismatch_enabled(self) -> bool:
+        return bool(plugin_patterns_as_dict(self.plugin).get("version_mismatch"))
 
     def reset_session(self) -> None:
+        """Reset per-session player/ready state; keep cumulative pattern stats."""
+        highlighted = self.state.highlighted_lines
+        recent = self.state.recent_lines
         self.state = MonitorState()
+        # Keep a little continuity in the UI across restarts.
+        self.state.highlighted_lines = highlighted
+        self.state.recent_lines = recent
+
+    def pattern_report(self) -> dict[str, Any]:
+        stats = [stat.to_dict() for stat in self._stats.values()]
+        stats.sort(
+            key=lambda item: (
+                0 if item["mode"] == "active" else 1,
+                item["category"],
+                -(item["hits"] or 0),
+                item["pattern"],
+            )
+        )
+        return {
+            "player_tracking_enabled": self.player_tracking_enabled,
+            "version_mismatch_enabled": self.version_mismatch_enabled,
+            "active_pattern_count": sum(1 for s in stats if s["mode"] == "active"),
+            "dry_run_pattern_count": sum(1 for s in stats if s["mode"] == "dry_run"),
+            "patterns": stats,
+            "recent_highlights": list(self.state.highlighted_lines)[-40:],
+        }
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -89,7 +229,6 @@ class LogMonitor:
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        # Prefer names that look like latest/current
         for preferred in ("latest.log", "server.log", "console.log"):
             path = self.logs_dir / preferred
             if path.is_file():
@@ -117,11 +256,7 @@ class LogMonitor:
                         handle.close()
                     try:
                         handle = path.open("r", encoding="utf-8", errors="replace")
-                        # Follow from end for existing file; from start for brand-new
-                        if current == path:
-                            handle.seek(0, 2)
-                        else:
-                            handle.seek(0, 2)
+                        handle.seek(0, 2)
                         current = path
                         inode = stat.st_ino
                         LOG.info("Monitoring log file %s", path)
@@ -145,59 +280,107 @@ class LogMonitor:
         self.state.last_log_line = line
         self.state.recent_lines.append(line)
 
-        for pattern in self._ready:
-            if pattern.search(line):
-                self.state.ready = True
-                break
+        matched_meta: list[dict[str, str]] = []
+        active_hits: dict[str, re.Match[str]] = {}
 
-        for pattern in self._join:
-            match = pattern.search(line)
-            if match:
-                name = match.groupdict().get("player") or (
-                    match.group(1) if match.lastindex else None
-                )
-                if name:
-                    self.state.players.add(name)
-                    self.state.player_count = len(self.state.players)
-                break
+        for item in self._compiled:
+            match = item.regex.search(line)
+            if not match:
+                continue
+            item.stat.note(line)
+            matched_meta.append(
+                {
+                    "mode": item.mode,
+                    "category": item.category,
+                    "pattern": item.pattern,
+                }
+            )
+            if item.mode == "active" and item.category not in active_hits:
+                active_hits[item.category] = match
 
-        for pattern in self._leave:
-            match = pattern.search(line)
-            if match:
-                name = match.groupdict().get("player") or (
-                    match.group(1) if match.lastindex else None
-                )
-                if name and name in self.state.players:
-                    self.state.players.discard(name)
-                self.state.player_count = len(self.state.players)
-                break
+        if matched_meta:
+            self.state.highlighted_lines.append(
+                {
+                    "ts": time.time(),
+                    "line": line,
+                    "matches": matched_meta,
+                }
+            )
 
-        for pattern in self._count:
-            match = pattern.search(line)
-            if match:
-                raw = match.groupdict().get("count") or (
-                    match.group(1) if match.lastindex else None
-                )
-                if raw is not None:
-                    try:
-                        self.state.player_count = int(raw)
-                    except ValueError:
-                        pass
-                break
+        # Only active patterns mutate runtime state / fire callbacks.
+        if "ready" in active_hits:
+            self.state.ready = True
 
-        for pattern in self._mismatch:
-            if pattern.search(line):
-                self.state.version_mismatch_count += 1
-                self.state.last_version_mismatch_at = time.time()
-                self.state.last_version_mismatch_line = line
-                LOG.warning("Version mismatch signal: %s", line)
-                if self.on_version_mismatch:
-                    try:
-                        self.on_version_mismatch(line)
-                    except Exception:  # noqa: BLE001
-                        LOG.exception("version mismatch callback failed")
-                break
+        if "player_join" in active_hits:
+            match = active_hits["player_join"]
+            name = match.groupdict().get("player") or (
+                match.group(1) if match.lastindex else None
+            )
+            if name:
+                self.state.players.add(name)
+            self.state.players_known = True
+            self.state.player_count = len(self.state.players)
+
+        if "player_leave" in active_hits:
+            match = active_hits["player_leave"]
+            name = match.groupdict().get("player") or (
+                match.group(1) if match.lastindex else None
+            )
+            if name and name in self.state.players:
+                self.state.players.discard(name)
+            self.state.players_known = True
+            self.state.player_count = len(self.state.players)
+
+        if "player_count" in active_hits:
+            match = active_hits["player_count"]
+            raw = match.groupdict().get("count") or (
+                match.group(1) if match.lastindex else None
+            )
+            if raw is not None:
+                try:
+                    self.state.player_count = int(raw)
+                    self.state.players_known = True
+                except ValueError:
+                    pass
+
+        if "version_mismatch" in active_hits:
+            self.state.version_mismatch_count += 1
+            self.state.last_version_mismatch_at = time.time()
+            self.state.last_version_mismatch_line = line
+            LOG.warning("Active version-mismatch pattern hit: %s", line)
+            if self.on_version_mismatch:
+                try:
+                    self.on_version_mismatch(line)
+                except Exception:  # noqa: BLE001
+                    LOG.exception("version mismatch callback failed")
 
     def ingest_stdout_line(self, line: str) -> None:
-        """Also allow the process manager to feed stdout into the monitor."""
         self._handle_line(line)
+
+
+def plugin_patterns_as_dict(plugin: GamePlugin) -> dict[str, list[str]]:
+    patterns = plugin.log_patterns
+    return {
+        "ready": list(patterns.ready or []),
+        "player_join": list(patterns.player_join or []),
+        "player_leave": list(patterns.player_leave or []),
+        "player_count": list(patterns.player_count or []),
+        "version_mismatch": list(patterns.version_mismatch or []),
+    }
+
+
+def merge_candidates(
+    defaults: dict[str, list[str]],
+    overrides: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {
+        key: list(values) for key, values in defaults.items()
+    }
+    if not overrides:
+        return merged
+    for key, values in overrides.items():
+        bucket = merged.setdefault(key, [])
+        for value in values:
+            if value not in bucket:
+                bucket.append(value)
+    return merged

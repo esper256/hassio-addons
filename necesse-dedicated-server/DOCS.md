@@ -77,16 +77,36 @@ rest:
         value_template: "{{ value_json.local_build_id }}"
 ```
 
-## Log toolkit (no SSH / Portainer exec)
+## Log patterns (alpha-safe)
 
-From Ingress:
+`games/game.yaml` ships with **empty active `log_patterns`**. Broad generic regexes run only in **dry-run** mode:
 
-- **Capture logs now** → packages recent stdout, log tail, analysis, status into a downloadable `.tar.gz`
-- **Suggest patterns** → `/api/logs/suggest` finds unmatched lines that look like joins/leaves/version errors and proposes starter regexes
+- they highlight likely join/leave/version lines in Ingress
+- they do **not** change player state or trigger updates
+
+Desirable failure mode while patterns are unproven:
+
+- Steam `buildid` auto-updates still work
+- empty-server gating is inactive (`player_gating: inactive_no_active_patterns`)
+- version-mismatch auto-update stays off until you promote an active pattern
+
+### Promoting a pattern
+
+1. Play a session / attempt a mismatched join
+2. Open Ingress → **Log pattern hits** (or `/api/logs/patterns`)
+3. Copy a dry-run pattern that cleanly matches the real event
+4. Paste it under `log_patterns:` in `games/game.yaml` (optionally tighten the regex)
+5. Rebuild/restart the add-on
+
+Patterns that used to hit but go quiet after a game update are marked **stale** in the UI.
+
+### Log toolkit (no SSH / Portainer exec)
+
+- **Capture logs now** → downloadable `.tar.gz`
+- **Suggest patterns** → `/api/logs/suggest`
+- **Pattern hits** → `/api/logs/patterns`
 - **Raw log tail** → `/api/logs/raw`
-- Auto-captures also happen on version mismatch and crashes
-
-Use those captures to harden `games/game.yaml` log patterns without entering the container.
+- Auto-captures still happen on *active* version-mismatch hits and crashes
 
 ## First patch weekend checklist
 

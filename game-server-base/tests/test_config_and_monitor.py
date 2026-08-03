@@ -19,7 +19,7 @@ from game_server.config import format_bool, load_config, load_options_json  # no
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.migrate import apply_path_migrations  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
-from game_server.plugin import load_plugin  # noqa: E402
+from game_server.plugin import LogPatterns, PathMigration, load_plugin  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 
@@ -67,20 +67,51 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(plugin.name, "ExampleGame")
         self.assertEqual(plugin.steam_app_id, 1)
         self.assertEqual(plugin.install_marker, "server.bin")
-        self.assertIn("quit", plugin.stop_stdin_commands)
+        self.assertEqual(plugin.log_patterns.player_join, [])
 
 
 class MonitorTests(unittest.TestCase):
-    def test_player_and_mismatch_patterns(self) -> None:
+    def test_dry_run_candidates_do_not_trigger_events(self) -> None:
         plugin = load_plugin(FIXTURE)
+        triggered = []
         with tempfile.TemporaryDirectory() as tmp:
-            mon = LogMonitor(plugin, tmp)
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            self.assertFalse(mon.player_tracking_enabled)
+            self.assertFalse(mon.version_mismatch_enabled)
+            mon.ingest_stdout_line("Alice connected")
+            mon.ingest_stdout_line("Client rejected: wrong version")
+            # Dry-run may highlight, but must not mutate player/mismatch state.
+            self.assertEqual(mon.state.players, set())
+            self.assertFalse(mon.state.players_known)
+            self.assertEqual(mon.state.version_mismatch_count, 0)
+            self.assertEqual(triggered, [])
+            report = mon.pattern_report()
+            self.assertGreater(report["dry_run_pattern_count"], 0)
+            self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
+
+    def test_active_patterns_trigger_events(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>[\w .-]+) connected"],
+            player_leave=[r"(?P<player>[\w .-]+) disconnected"],
+            version_mismatch=[r"wrong version"],
+        )
+        triggered = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            self.assertTrue(mon.player_tracking_enabled)
             mon.ingest_stdout_line("Alice connected")
             self.assertIn("Alice", mon.state.players)
+            self.assertTrue(mon.state.players_known)
             mon.ingest_stdout_line("Alice disconnected")
             self.assertNotIn("Alice", mon.state.players)
             mon.ingest_stdout_line("Client rejected: wrong version")
             self.assertEqual(mon.state.version_mismatch_count, 1)
+            self.assertEqual(len(triggered), 1)
+            active_hits = [
+                p for p in mon.pattern_report()["patterns"] if p["mode"] == "active"
+            ]
+            self.assertTrue(any(p["hits"] > 0 for p in active_hits))
 
 
 class BackupRetentionTests(unittest.TestCase):
@@ -161,8 +192,6 @@ class MigrationTests(unittest.TestCase):
             dst = Path(tmp) / "new"
             (src / "saves").mkdir(parents=True)
             (src / "saves" / "world.zip").write_text("data", encoding="utf-8")
-            from game_server.plugin import PathMigration
-
             plugin = load_plugin(FIXTURE)
             plugin.path_migrations = [
                 PathMigration(source=str(src), destination=str(dst), marker="saves")
@@ -170,7 +199,6 @@ class MigrationTests(unittest.TestCase):
             applied = apply_path_migrations(plugin)
             self.assertEqual(len(applied), 1)
             self.assertTrue((dst / "saves" / "world.zip").is_file())
-            # Second run is a no-op
             self.assertEqual(apply_path_migrations(plugin), [])
 
 

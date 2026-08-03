@@ -20,13 +20,6 @@ arg_map:
   server_slots: -slots
   data_dir: -datadir
   logs_dir: -logs
-log_patterns:
-  ready:
-    - "ready"
-  player_join:
-    - "(?P<player>[\\w .-]+) connected"
-  player_leave:
-    - "(?P<player>[\\w .-]+) disconnected"
-  version_mismatch:
-    - "wrong version"
-    - "version mismatch"
+# Empty active patterns by default (alpha-safe). Tests that need active
+# patterns mutate the loaded plugin in memory.
+log_patterns: {}
