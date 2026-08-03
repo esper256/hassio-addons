@@ -14,6 +14,7 @@ from . import steamcmd
 from .backup import BackupManager
 from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
+from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .migrate import apply_path_migrations
 from .monitor import LogMonitor
@@ -22,6 +23,7 @@ from .plugin import GamePlugin, load_plugin, resolve_plugin_path
 from .privileges import prepare_drop
 from .process_manager import ProcessManager
 from .status_http import StatusServer
+from .steam_gate import configure_gate
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -39,6 +41,8 @@ class GameServerSupervisor:
         self._update_pending = False
         self._update_reason: str | None = None
         self._update_bypass_window = False
+        self._update_not_before = 0.0
+        self._apply_failures = 0
         self._update_lock = threading.Lock()
         self.local_build_id: str | None = None
         self.remote_build_id: str | None = None
@@ -47,6 +51,7 @@ class GameServerSupervisor:
         self.last_update_error: str | None = None
         self.update_check_count = 0
         self.update_apply_count = 0
+        self.steam_gate = configure_gate(config.state_dir)
 
         data_dir = str(config.game_options.get("data_dir") or plugin.data_dir)
         logs_dir = str(config.game_options.get("logs_dir") or plugin.logs_dir)
@@ -151,8 +156,11 @@ class GameServerSupervisor:
             "last_update_error": self.last_update_error,
             "update_check_count": self.update_check_count,
             "update_apply_count": self.update_apply_count,
+            "update_apply_failures": self._apply_failures,
+            "update_not_before": self._update_not_before or None,
             "install_dir": self.config.install_dir,
             "player_gating": player_gating,
+            "steam_gate": self.steam_gate.to_dict(),
             "disk": {
                 "ok": disk_ok,
                 "free_mb": free,
@@ -229,6 +237,10 @@ class GameServerSupervisor:
         return int(state.player_count)
 
     def _can_apply_update(self) -> bool:
+        if time.time() < self._update_not_before:
+            return False
+        if self.steam_gate.seconds_until_next_call() > 0:
+            return False
         if not self._update_bypass_window and not self._within_update_window():
             return False
         if self.config.update_when_empty_only:
@@ -264,10 +276,12 @@ class GameServerSupervisor:
                     self.plugin,
                     retries=self.config.steamcmd_retries,
                     retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
+                    stop_event=self._stop,
                 )
                 self.last_update_applied_at = time.time()
                 self.update_apply_count += 1
                 self.last_update_error = None
+                self._apply_failures = 0
             except Exception as exc:  # noqa: BLE001
                 self.last_update_error = str(exc)
                 self.notifier.notify(
@@ -285,6 +299,29 @@ class GameServerSupervisor:
         else:
             self.local_build_id = steamcmd.read_local_build_id(
                 self.config.install_dir, self.plugin.steam_app_id
+            )
+
+    def _schedule_update_retry(self, exc: Exception) -> None:
+        self._apply_failures += 1
+        delay = self.steam_gate.apply_failure_delay_seconds(self._apply_failures)
+        delay = max(delay, self.steam_gate.cooldown_remaining())
+        self._update_not_before = time.time() + delay
+        self.last_update_error = str(exc)
+        LOG.warning(
+            "Update apply failure #%s; next attempt not before %.0fs (error=%s)",
+            self._apply_failures,
+            delay,
+            exc,
+        )
+        if self._apply_failures >= self.steam_gate.policy.max_apply_failures:
+            self.notifier.notify(
+                "update_failed",
+                f"{self.plugin.name}: update paused (Steam backoff)",
+                (
+                    f"Failed {self._apply_failures} times. Cooling down "
+                    f"{int(delay)}s before trying Steam again.\n{exc}"
+                ),
+                force=True,
             )
 
     def _apply_update(self) -> None:
@@ -309,6 +346,7 @@ class GameServerSupervisor:
                 self.plugin,
                 retries=self.config.steamcmd_retries,
                 retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
+                stop_event=self._stop,
             )
             if self.config.drop_privileges:
                 prepare_drop(
@@ -318,15 +356,18 @@ class GameServerSupervisor:
             self.last_update_applied_at = time.time()
             self.update_apply_count += 1
             self.last_update_error = None
+            self._apply_failures = 0
+            self._update_not_before = 0.0
         except Exception as exc:  # noqa: BLE001
-            self.last_update_error = str(exc)
             self.capture_logs("update_failed")
-            self.notifier.notify(
-                "update_failed",
-                f"{self.plugin.name}: update failed",
-                str(exc),
-                force=True,
-            )
+            self._schedule_update_retry(exc)
+            # Restart existing install so the kids can keep playing on current build.
+            if not self.process.running and not self._stop.is_set():
+                try:
+                    self.monitor.reset_session()
+                    self.process.start()
+                except Exception:  # noqa: BLE001
+                    LOG.exception("Failed restarting server after update failure")
             raise
 
         with self._update_lock:
@@ -343,12 +384,28 @@ class GameServerSupervisor:
         )
 
     def _update_checker_loop(self) -> None:
-        interval = max(0, self.config.auto_update_interval_minutes) * 60
+        minutes = self.steam_gate.clamp_check_interval_minutes(
+            self.config.auto_update_interval_minutes
+        )
+        interval = max(0, minutes) * 60
         if interval <= 0:
             LOG.info("Periodic Steam update checks disabled")
             return
-        LOG.info("Checking Steam for updates every %s minutes", interval // 60)
+        LOG.info(
+            "Checking Steam for updates every %s minutes "
+            "(Steam gate min interval %.0fs, max retries %s)",
+            interval // 60,
+            self.steam_gate.policy.min_interval_seconds,
+            self.steam_gate.policy.max_retries,
+        )
         while not self._stop.wait(interval):
+            wait_for = self.steam_gate.seconds_until_next_call()
+            if wait_for > 0:
+                LOG.info(
+                    "Skipping Steam update check; gate requires %.0fs more cooldown",
+                    wait_for,
+                )
+                continue
             try:
                 self.update_check_count += 1
                 self.last_update_check_at = time.time()
@@ -356,6 +413,7 @@ class GameServerSupervisor:
                     self.config.steamcmd_dir,
                     self.config.install_dir,
                     self.plugin,
+                    stop_event=self._stop,
                 )
                 self.local_build_id = local or self.local_build_id
                 self.remote_build_id = remote
@@ -420,8 +478,9 @@ class GameServerSupervisor:
                 try:
                     self._apply_update()
                 except Exception:  # noqa: BLE001
-                    LOG.exception("Failed to apply update")
-                    time.sleep(30)
+                    LOG.exception("Failed to apply update; backing off")
+                    # Backoff is scheduled inside _schedule_update_retry; never
+                    # tight-loop SteamCMD on a 30s timer again.
 
             code = self.process.wait(timeout=2)
             if code is None:
@@ -471,7 +530,6 @@ class GameServerSupervisor:
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    import sys
 
     parser = argparse.ArgumentParser(description="Generic Steam game server supervisor")
     parser.add_argument(
@@ -489,11 +547,7 @@ def main(argv: list[str] | None = None) -> int:
     level_name = (
         args.log_level or __import__("os").environ.get("LOG_LEVEL") or "INFO"
     ).upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
+    configure_logging(getattr(logging, level_name, logging.INFO))
 
     plugin_path = resolve_plugin_path(args.plugin)
     LOG.info("Loading game plugin from %s", plugin_path)
@@ -502,6 +556,10 @@ def main(argv: list[str] | None = None) -> int:
     if not config.install_dir:
         config.install_dir = "/data/game"
 
+    LOG.info(
+        "Home Assistant Logs tab = this container's stdout: supervisor events, "
+        "[game] process output, [game-log] file-only lines, [steamcmd] updates"
+    )
     LOG.info(
         "Starting supervisor for %s (appid=%s, install_dir=%s)",
         plugin.name,

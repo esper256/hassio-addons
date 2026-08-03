@@ -20,10 +20,13 @@ from game_server.backup import (  # noqa: E402
     select_generational_keepers,
 )
 from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
+from game_server.log_bridge import RecentLineDeduper  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.migrate import apply_path_migrations  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, PathMigration, load_plugin  # noqa: E402
+from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
+from game_server.steamcmd import _run_streaming  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 
@@ -40,7 +43,7 @@ class ConfigTests(unittest.TestCase):
                         "server_slots": 8,
                         "auto_update_interval_minutes": 15,
                         "update_on_start": False,
-                        "backup_keep_monthly": 6,
+                        "backup_retention": "extended",
                     }
                 ),
                 encoding="utf-8",
@@ -61,7 +64,8 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(cfg.update_on_start)
             self.assertEqual(cfg.game_options["server_password"], "secret")
             self.assertEqual(cfg.install_dir, "/data/game")
-            self.assertEqual(cfg.backup_keep_monthly, 6)
+            self.assertEqual(cfg.backup_retention, "extended")
+            self.assertEqual(cfg.retention().keep_monthly, 24)
             self.assertEqual(format_bool(True, "one_zero"), "1")
 
 
@@ -119,6 +123,13 @@ class MonitorTests(unittest.TestCase):
 
 
 class BackupRetentionTests(unittest.TestCase):
+    def test_profiles(self) -> None:
+        standard = retention_from_profile("standard")
+        self.assertEqual(standard.keep_daily, 7)
+        self.assertEqual(standard.keep_weekly, 4)
+        self.assertEqual(standard.keep_monthly, 12)
+        self.assertEqual(retention_from_profile("nope").profile, "standard")
+
     def test_generational_keepers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -162,6 +173,105 @@ class BackupRetentionTests(unittest.TestCase):
             )
             self.assertIn(archives[0], keep)
             self.assertIn(archives[1], keep)
+
+
+class SteamGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        reset_gate_for_tests()
+        self.now = 1_000_000.0
+        self.sleeps: list[float] = []
+
+    def tearDown(self) -> None:
+        reset_gate_for_tests()
+
+    def _gate(self, tmp: str) -> SteamGate:
+        policy = SteamPolicy(
+            min_interval_seconds=90,
+            max_retries=3,
+            retry_base_seconds=60,
+            retry_max_seconds=900,
+            retry_jitter_ratio=0.0,
+            failure_backoff_base_seconds=120,
+            failure_backoff_max_seconds=3600,
+            rate_limit_cooldown_seconds=21600,
+            min_check_interval_minutes=15,
+        )
+        return SteamGate(
+            Path(tmp) / "steam_gate.json",
+            policy,
+            time_fn=lambda: self.now,
+            sleep_fn=self.sleeps.append,
+        )
+
+    def test_retry_and_check_clamps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self._gate(tmp)
+            self.assertEqual(gate.clamp_retries(99), 3)
+            self.assertEqual(gate.clamp_check_interval_minutes(5), 15)
+            self.assertEqual(gate.clamp_check_interval_minutes(0), 0)
+            self.assertEqual(gate.retry_delay_seconds(1), 60)
+            self.assertEqual(gate.retry_delay_seconds(2), 120)
+            self.assertEqual(gate.retry_delay_seconds(5), 900)
+
+    def test_rate_limit_forces_long_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self._gate(tmp)
+            gate.note_failure("ERROR! Rate Limit Exceeded", kind="app_update")
+            self.assertGreaterEqual(gate.cooldown_remaining(), 21599)
+            self.assertTrue(gate.looks_rate_limited("Login Rate Limited"))
+
+    def test_failure_backoff_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self._gate(tmp)
+            gate.note_failure("network blip", kind="app_info")
+            self.assertGreaterEqual(gate.cooldown_remaining(), 119)
+            path = Path(tmp) / "steam_gate.json"
+            self.assertTrue(path.is_file())
+            restored = SteamGate(
+                path,
+                gate.policy,
+                time_fn=lambda: self.now,
+                sleep_fn=self.sleeps.append,
+            )
+            self.assertEqual(restored.consecutive_failures, 1)
+            self.assertGreater(restored.cooldown_remaining(), 0)
+
+    def test_session_enforces_spacing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self._gate(tmp)
+            with gate.session("app_info"):
+                pass
+            # Next session should wait remaining min interval via sleep_fn chunks.
+            original_sleep = gate._sleep
+
+            def advance_sleep(seconds: float) -> None:
+                self.sleeps.append(seconds)
+                self.now += seconds
+
+            gate._sleep = advance_sleep  # type: ignore[method-assign]
+            with gate.session("app_update"):
+                pass
+            self.assertGreaterEqual(sum(self.sleeps), 89)
+            gate._sleep = original_sleep  # type: ignore[method-assign]
+
+
+class LogBridgeTests(unittest.TestCase):
+    def test_recent_line_deduper(self) -> None:
+        deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
+        self.assertTrue(deduper.remember_if_new("Player joined"))
+        self.assertFalse(deduper.remember_if_new("  Player joined  "))
+        self.assertTrue(deduper.remember_if_new("Player left"))
+        self.assertFalse(deduper.remember_if_new(""))
+
+    def test_steamcmd_streaming_captures_output(self) -> None:
+        code, output = _run_streaming(
+            [sys.executable, "-c", "print('steam-line-one'); print('steam-line-two')"],
+            timeout=10,
+            prefix="[steamcmd-test]",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("steam-line-one", output)
+        self.assertIn("steam-line-two", output)
 
 
 class LogToolsTests(unittest.TestCase):

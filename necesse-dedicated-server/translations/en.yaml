@@ -40,7 +40,7 @@ configuration:
     description: Run SteamCMD before launching the server.
   auto_update_interval_minutes:
     name: Auto-update interval (minutes)
-    description: How often to ask Steam whether a newer dedicated-server build exists. 0 disables polling.
+    description: How often to ask Steam whether a newer dedicated-server build exists. 0 disables polling. Values below 15 are raised to 15 to avoid hammering Steam.
   update_when_empty_only:
     name: Update only when empty
     description: Delay update restarts until the monitored player count is zero.
