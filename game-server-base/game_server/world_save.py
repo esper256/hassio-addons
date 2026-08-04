@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import re
+import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -313,3 +315,97 @@ def _try_heuristic(
         world_name,
         fallback_paths=backup_sources,
     )
+
+
+@dataclass(frozen=True)
+class WorldDownload:
+    """On-disk artifact ready to stream as an Ingress attachment."""
+
+    path: Path
+    filename: str
+    content_type: str
+    # Temporary zip (directory worlds); unlink after the response is sent.
+    cleanup_path: Path | None = None
+
+
+def confined_world_path(
+    raw_path: str | None,
+    *,
+    data_dir: str | Path,
+) -> Path | None:
+    """Return ``raw_path`` only when it resolves under ``data_dir``."""
+
+    if not raw_path:
+        return None
+    try:
+        root = Path(data_dir).resolve()
+        path = Path(raw_path).resolve()
+        path.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return path
+
+
+def world_save_is_downloadable(
+    active: ActiveWorld,
+    *,
+    data_dir: str | Path,
+) -> bool:
+    """True when the active world is a real file/dir under the data volume."""
+
+    if active.scope == SCOPE_MISSING or int(active.bytes or 0) <= 0:
+        return False
+    path = confined_world_path(active.path, data_dir=data_dir)
+    if path is None:
+        return False
+    return path.is_file() or path.is_dir()
+
+
+def prepare_world_download(
+    active: ActiveWorld,
+    *,
+    data_dir: str | Path,
+) -> WorldDownload | None:
+    """Prepare a file (as-is) or directory (stdlib zip) for download."""
+
+    path = confined_world_path(active.path, data_dir=data_dir)
+    if path is None or not path.exists():
+        return None
+    if path.is_file():
+        name = path.name or "world-save"
+        content_type = (
+            "application/zip"
+            if name.lower().endswith(".zip")
+            else "application/octet-stream"
+        )
+        return WorldDownload(path=path, filename=name, content_type=content_type)
+    if path.is_dir():
+        label = (active.label or path.name or "world").strip() or "world"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("._") or "world"
+        if not safe.lower().endswith(".zip"):
+            safe = f"{safe}.zip"
+        tmp = tempfile.NamedTemporaryFile(
+            prefix="world-download-",
+            suffix=".zip",
+            delete=False,
+        )
+        tmp_path = Path(tmp.name)
+        try:
+            with tmp, zipfile.ZipFile(
+                tmp, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
+                for child in sorted(path.rglob("*")):
+                    if not child.is_file():
+                        continue
+                    arcname = child.relative_to(path).as_posix()
+                    zf.write(child, arcname)
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return WorldDownload(
+            path=tmp_path,
+            filename=safe,
+            content_type="application/zip",
+            cleanup_path=tmp_path,
+        )
+    return None

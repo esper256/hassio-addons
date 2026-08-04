@@ -61,6 +61,8 @@ from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
     backup_sources_for,
     locate_active_world,
+    prepare_world_download,
+    world_save_is_downloadable,
 )
 from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
@@ -250,6 +252,66 @@ class WorldSaveLocatorTests(unittest.TestCase):
             value, hint = _format_world_save({"world_save": located.to_dict()})
             self.assertEqual(value, "—")
             self.assertIn("FamilyWorld.zip", hint)
+
+    def test_world_save_download_file_and_directory_zip(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"SAVE-BYTES")
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertTrue(
+                world_save_is_downloadable(located, data_dir=str(root))
+            )
+            prepared = prepare_world_download(located, data_dir=str(root))
+            self.assertIsNotNone(prepared)
+            assert prepared is not None
+            self.assertEqual(prepared.path, world.resolve())
+            self.assertEqual(prepared.filename, "FamilyWorld.zip")
+            self.assertIsNone(prepared.cleanup_path)
+
+            folder = root / "saves" / "worlds" / "FolderWorld"
+            folder.mkdir()
+            (folder / "chunk.bin").write_bytes(b"CHUNK")
+            from game_server.world_save import ActiveWorld
+
+            dir_world = ActiveWorld(
+                bytes=5,
+                path=str(folder),
+                label="FolderWorld",
+                scope="named_path",
+            )
+            zipped = prepare_world_download(dir_world, data_dir=str(root))
+            self.assertIsNotNone(zipped)
+            assert zipped is not None
+            self.assertEqual(zipped.filename, "FolderWorld.zip")
+            self.assertEqual(zipped.content_type, "application/zip")
+            self.assertTrue(zipped.path.is_file())
+            self.assertEqual(zipped.cleanup_path, zipped.path)
+            import zipfile
+
+            with zipfile.ZipFile(zipped.path) as zf:
+                self.assertIn("chunk.bin", zf.namelist())
+            zipped.path.unlink(missing_ok=True)
+
+            # Path outside data_dir must be rejected.
+            outside = root.parent / "escape.bin"
+            outside.write_bytes(b"nope")
+            bad = ActiveWorld(
+                bytes=4,
+                path=str(outside),
+                label="escape.bin",
+                scope="named_path",
+            )
+            self.assertFalse(
+                world_save_is_downloadable(bad, data_dir=str(root))
+            )
+            self.assertIsNone(prepare_world_download(bad, data_dir=str(root)))
 
     def test_no_world_save_spec_uses_backup_sources_only(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -762,6 +824,7 @@ class StatusFormatTests(unittest.TestCase):
                     "bytes": 2 * 1024 * 1024,
                     "label": "FamilyWorld.zip",
                     "scope": "named_path",
+                    "downloadable": True,
                 },
                 "disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512},
                 "backups": {
@@ -809,6 +872,14 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
         self.assertIn('href="/api/hassio_ingress/token/"', html)
         self.assertIn(f"--accent: {DEFAULT_UI_THEME['accent']}", html)
+        self.assertIn('href="api/world/download"', html)
+        self.assertIn("FamilyWorld.zip", html)
+        # Hero order: World save → Backups → Free disk
+        world_i = html.index(">World save<")
+        backups_i = html.index(">Backups<")
+        disk_i = html.index(">Free disk<")
+        self.assertLess(world_i, backups_i)
+        self.assertLess(backups_i, disk_i)
 
     def test_status_http_get_index_returns_200(self) -> None:
         """Live HTTP GET / — same path Ingress hits on OPEN WEB UI."""
@@ -846,12 +917,74 @@ class StatusFormatTests(unittest.TestCase):
             self.assertIn("Necesse", body)
             self.assertIn("NEW WORLD", body)
             self.assertNotIn("Start new empty world", body)
+            world_i = body.index(">World save<")
+            backups_i = body.index(">Backups<")
+            disk_i = body.index(">Free disk<")
+            self.assertLess(world_i, backups_i)
+            self.assertLess(backups_i, disk_i)
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
         finally:
             server.stop()
             if old is not None:
                 os.environ["SUPERVISOR_TOKEN"] = old
+
+    def test_status_http_world_download_streams_file(self) -> None:
+        import urllib.error
+        import urllib.request
+
+        from game_server.status_http import StatusServer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            world = Path(tmp) / "FamilyWorld.zip"
+            payload = b"LIVE-WORLD-BYTES"
+            world.write_bytes(payload)
+
+            def download() -> dict:
+                return {
+                    "path": str(world),
+                    "filename": "FamilyWorld.zip",
+                    "content_type": "application/zip",
+                    "cleanup_path": None,
+                }
+
+            old = os.environ.pop("SUPERVISOR_TOKEN", None)
+            server = StatusServer(
+                "127.0.0.1",
+                0,
+                lambda: {
+                    "running": True,
+                    "lifecycle": "running",
+                    "monitor": {},
+                    "log_patterns": {"patterns": []},
+                    "log_captures": [],
+                    "backups": {"archive_count": 0, "restorable": []},
+                },
+                game_name="Necesse",
+                world_download_callback=download,
+            )
+            try:
+                server.start()
+                assert server._httpd is not None
+                port = server._httpd.server_address[1]
+                with urllib.request.urlopen(  # noqa: S310 - local test server
+                    f"http://127.0.0.1:{port}/api/world/download", timeout=5
+                ) as resp:
+                    self.assertEqual(resp.status, 200)
+                    self.assertEqual(resp.read(), payload)
+                    self.assertIn(
+                        "FamilyWorld.zip",
+                        resp.headers.get("Content-Disposition", ""),
+                    )
+            except urllib.error.HTTPError as exc:
+                self.fail(
+                    f"GET /api/world/download failed with HTTP {exc.code}: "
+                    f"{exc.read()!r}"
+                )
+            finally:
+                server.stop()
+                if old is not None:
+                    os.environ["SUPERVISOR_TOKEN"] = old
 
     def test_world_save_and_disk_cards_in_ui_view(self) -> None:
         view = _ui_view(
@@ -885,6 +1018,23 @@ class StatusFormatTests(unittest.TestCase):
         # plus NEW WORLD; disk hero shows free space without min-threshold noise.
         self.assertRegex(view["world_save"], r"\d")
         self.assertIn("FamilyWorld", view["world_save_hint"])
+        self.assertNotIn("api/world/download", view["world_save_hint"])
+        linked = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "world_save": {
+                    "bytes": 2048,
+                    "label": "FamilyWorld.zip",
+                    "scope": "named_path",
+                    "downloadable": True,
+                },
+                "monitor": {},
+            },
+            "Necesse",
+        )
+        self.assertIn('href="api/world/download"', linked["world_save_hint"])
+        self.assertIn("FamilyWorld.zip", linked["world_save_hint"])
         self.assertEqual(view["disk_class"], "bad")
         self.assertEqual(view["disk_hint"], "")
         self.assertEqual(view["uptime_hint"], "Since world restore")

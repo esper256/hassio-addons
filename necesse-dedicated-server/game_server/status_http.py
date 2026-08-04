@@ -7,9 +7,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -254,12 +256,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-update">{update_check_hint}</div>
       </div>
       <div class="stat">
-        <div class="label">Backups</div>
-        <div class="value" id="v-backups">{backups}</div>
-        <div class="hint" id="h-backups-oldest">{backups_oldest}</div>
-        <div class="hint" id="h-backups-newest">{backups_newest}</div>
-      </div>
-      <div class="stat">
         <div class="label">Game server crashes</div>
         <div class="value" id="v-crashes">{crashes}</div>
         <div class="hint" id="h-crashes">{crashes_hint}</div>
@@ -268,6 +264,12 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="label">World save</div>
         <div class="value" id="v-world">{world_save}</div>
         <div class="hint" id="h-world">{world_save_hint}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Backups</div>
+        <div class="value" id="v-backups">{backups}</div>
+        <div class="hint" id="h-backups-oldest">{backups_oldest}</div>
+        <div class="hint" id="h-backups-newest">{backups_newest}</div>
       </div>
       <div class="stat">
         <div class="label">Free disk</div>
@@ -335,6 +337,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
+        <li><a href="api/world/download">Download active world save</a></li>
         <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
@@ -477,7 +480,7 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('v-crashes', u.crashes);
         setText('h-crashes', u.crashes_hint);
         setText('v-world', u.world_save);
-        setText('h-world', u.world_save_hint);
+        setHtml('h-world', u.world_save_hint);
         const disk = document.getElementById('v-disk');
         if (disk) {{
           disk.textContent = u.disk;
@@ -523,6 +526,7 @@ class StatusServer:
         update_callback: Callable[[], dict[str, Any]] | None = None,
         restore_callback: Callable[[str], dict[str, Any]] | None = None,
         backups_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        world_download_callback: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -535,6 +539,7 @@ class StatusServer:
         self.update_callback = update_callback
         self.restore_callback = restore_callback
         self.backups_provider = backups_provider
+        self.world_download_callback = world_download_callback
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -548,6 +553,7 @@ class StatusServer:
         update_cb = self.update_callback
         restore_cb = self.restore_callback
         backups_cb = self.backups_provider
+        world_dl_cb = self.world_download_callback
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
@@ -589,6 +595,28 @@ class StatusServer:
             def _json(self, code: int, payload: Any) -> None:
                 body = json.dumps(payload, indent=2, default=str).encode("utf-8")
                 self._send(code, body, "application/json; charset=utf-8")
+
+            def _send_file(
+                self,
+                path: Path,
+                *,
+                filename: str,
+                content_type: str,
+            ) -> None:
+                data_path = Path(path)
+                size = data_path.stat().st_size
+                safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "download"
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{safe_name}"',
+                )
+                self.end_headers()
+                with data_path.open("rb") as fh:
+                    shutil.copyfileobj(fh, self.wfile, length=1024 * 1024)
 
             def do_POST(self) -> None:  # noqa: N802
                 if not self._peer_allowed():
@@ -701,6 +729,33 @@ class StatusServer:
                     else:
                         archives = (status.get("backups") or {}).get("restorable") or []
                     self._json(200, {"archives": archives})
+                    return
+
+                if path == "/api/world/download":
+                    if world_dl_cb is None:
+                        self._json(
+                            501, {"error": "world save download unavailable"}
+                        )
+                        return
+                    info = world_dl_cb()
+                    if not info:
+                        self._json(
+                            404, {"error": "world save not available for download"}
+                        )
+                        return
+                    file_path = Path(str(info["path"]))
+                    cleanup = info.get("cleanup_path")
+                    try:
+                        self._send_file(
+                            file_path,
+                            filename=str(info.get("filename") or file_path.name),
+                            content_type=str(
+                                info.get("content_type") or "application/octet-stream"
+                            ),
+                        )
+                    finally:
+                        if cleanup:
+                            Path(str(cleanup)).unlink(missing_ok=True)
                     return
 
                 if path == "/api/logs":
@@ -1015,6 +1070,8 @@ def _format_backup_options(status: dict[str, Any]) -> str:
 
 
 def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
+    """Return (size value, hint HTML). Hint may be a download link."""
+
     info = status.get("world_save") or {}
     raw_bytes = info.get("bytes")
     try:
@@ -1025,18 +1082,25 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     scope = str(info.get("scope") or "")
     if size <= 0 and scope == "missing":
         if label:
-            return "—", f"Waiting for {label}"
+            return "—", _html_escape(f"Waiting for {label}")
         return "—", "No world save found yet"
     value = format_bytes(size)
     if scope == "named_path" and label:
-        return value, label
-    if scope == "heuristic" and label:
-        return value, f"{label} (heuristic)"
-    if scope == "backup_sources":
-        return value, label or "World data directory"
-    if label:
-        return value, label
-    return value, "World data"
+        hint_text = label
+    elif scope == "heuristic" and label:
+        hint_text = f"{label} (heuristic)"
+    elif scope == "backup_sources":
+        hint_text = label or "World data directory"
+    elif label:
+        hint_text = label
+    else:
+        hint_text = "World data"
+    if bool(info.get("downloadable")) and size > 0:
+        return (
+            value,
+            f'<a href="api/world/download">{_html_escape(hint_text)}</a>',
+        )
+    return value, _html_escape(hint_text)
 
 
 def _format_running(status: dict[str, Any]) -> tuple[str, str]:
@@ -1208,7 +1272,8 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         crashes=_html_escape(str(view["crashes"])),
         crashes_hint=_html_escape(view["crashes_hint"]),
         world_save=_html_escape(view["world_save"]),
-        world_save_hint=_html_escape(view["world_save_hint"]),
+        # Hint may include a download <a>; _format_world_save already escapes text.
+        world_save_hint=view["world_save_hint"],
         disk=_html_escape(view["disk"]),
         disk_class=_html_escape(view["disk_class"]),
         disk_hint=_html_escape(view["disk_hint"]),

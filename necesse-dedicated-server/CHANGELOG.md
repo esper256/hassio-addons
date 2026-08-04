@@ -6,6 +6,7 @@
 - Ingress theme colors come from per-game `ui_theme` in `games/game.yaml` (Necesse keeps green/amber)
 - World restore UI: style restore like other action buttons; drop separate empty-world button; add **NEW WORLD** at the bottom of the backup selector
 - Free disk hero no longer shows the “Min 512 MiB” hint (threshold still enforced for backups/updates)
+- Ingress hero order: World save → Backups → Free disk; world save name links to download (file as-is, folder as stdlib zip)
 
 ## 2.1.20
 

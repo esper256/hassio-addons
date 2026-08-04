@@ -26,7 +26,12 @@ from .status_http import StatusServer
 from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
 from .version import app_version
-from .world_save import backup_sources_for, locate_active_world
+from .world_save import (
+    backup_sources_for,
+    locate_active_world,
+    prepare_world_download,
+    world_save_is_downloadable,
+)
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -159,6 +164,26 @@ class GameServerSupervisor:
                 "The next attempt backs off automatically."
             ),
         )
+
+    def world_save_download(self) -> dict[str, Any] | None:
+        """Prepare the active world save for Ingress download (file or zip)."""
+
+        active = locate_active_world(
+            self.plugin,
+            self.config.game_options,
+            data_dir=self.plugin.data_dir,
+        )
+        prepared = prepare_world_download(active, data_dir=self.plugin.data_dir)
+        if prepared is None:
+            return None
+        return {
+            "path": str(prepared.path),
+            "filename": prepared.filename,
+            "content_type": prepared.content_type,
+            "cleanup_path": (
+                str(prepared.cleanup_path) if prepared.cleanup_path else None
+            ),
+        }
 
     def request_restore(self, archive_name: str) -> dict[str, Any]:
         """Schedule a world restore or empty-world reset from Ingress."""
@@ -361,11 +386,15 @@ class GameServerSupervisor:
         )
         # Prefer on-disk build id for display; do not mutate self on a status read.
         local_build = install_meta.get("build_id") or self.local_build_id
-        world_size = locate_active_world(
+        active_world = locate_active_world(
             self.plugin,
             self.config.game_options,
             data_dir=self.plugin.data_dir,
-        ).to_dict()
+        )
+        world_size = active_world.to_dict()
+        world_size["downloadable"] = world_save_is_downloadable(
+            active_world, data_dir=self.plugin.data_dir
+        )
         phase = self.lifecycle()
         return {
             "game": self.plugin.name,
@@ -899,6 +928,7 @@ class GameServerSupervisor:
                 update_callback=self.force_update_now,
                 restore_callback=self.request_restore,
                 backups_provider=lambda: self.backups.list_restorable_archives(),
+                world_download_callback=self.world_save_download,
             )
             self.status_server.start()
 
