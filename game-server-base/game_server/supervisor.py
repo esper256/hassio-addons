@@ -220,12 +220,6 @@ class GameServerSupervisor:
             LOG.warning("Empty-world reset scheduled (wipe live world)")
             return {
                 "ok": True,
-                "message": (
-                    "Empty-world reset scheduled. The server will stop, save the "
-                    "current world as a pre-restore safety copy when there is data "
-                    "to keep, clear the world files, and restart so the game can "
-                    "create a fresh world."
-                ),
                 "archive": None,
                 "empty": True,
                 "restore_pending": True,
@@ -234,12 +228,6 @@ class GameServerSupervisor:
         LOG.warning("World restore scheduled from archive %s", archive_path.name)
         return {
             "ok": True,
-            "message": (
-                f"Restore of {archive_path.name} scheduled. The server will stop, "
-                "save the current world as a pre-restore safety copy (kept outside "
-                "normal backup rotation), replace the world from the archive, "
-                "and restart."
-            ),
             "archive": archive_path.name,
             "empty": False,
             "restore_pending": True,
@@ -276,11 +264,6 @@ class GameServerSupervisor:
         )
         return {
             "ok": True,
-            "message": (
-                "World upload scheduled. The server will stop, save a pre-restore "
-                "safety copy when there is data to keep, replace the active world "
-                "save from your upload, and restart."
-            ),
             "kind": meta["kind"],
             "mode": meta["mode"],
             "restore_pending": True,

@@ -531,7 +531,6 @@ HTML_PAGE = """<!DOCTYPE html>
         }});
         const data = await res.json();
         if (data.ok) {{
-          alert(data.message || (emptyWorld ? 'Empty-world reset scheduled.' : 'Restore scheduled.'));
           softRefresh();
         }} else {{
           alert(data.error || (emptyWorld ? 'Could not schedule empty-world reset.' : 'Could not schedule restore.'));
@@ -585,7 +584,6 @@ HTML_PAGE = """<!DOCTYPE html>
         );
         const data = await res.json();
         if (data.ok) {{
-          alert(data.message || 'World upload scheduled.');
           softRefresh();
         }} else {{
           alert(data.error || 'Could not schedule world upload.');
