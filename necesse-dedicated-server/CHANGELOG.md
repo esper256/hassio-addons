@@ -8,6 +8,7 @@
   - Upload controls styled like other action buttons and placed with backup restore
 - Generic `world_save` locator exposes `kind` / upload hints for any game plugin
 - Remove the Ingress update “waits until nobody is online” note (and related copy) entirely
+- After confirming NEW WORLD / restore / upload, skip the second OK-only “scheduled” alert; errors still alert
 
 ## 2.1.26
 
