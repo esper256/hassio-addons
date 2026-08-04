@@ -52,7 +52,9 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `steam_app_id` | SteamCMD app id |
 | `executable` | argv to launch the server |
 | `install_marker` | File that means “install looks present” |
-| `arg_map` | HA/options keys → CLI flags |
+| `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
+| `argv_prefix` | Ordered tokens after the executable; `{option}` templates; empty → omitted |
+| `settings_flag` / `settings_map` / `fixed_settings` | Optional `-settings Key Value …` style block (Unity servers, etc.) |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
 | `stop_stdin_commands` | Optional graceful stop |
 | `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). |

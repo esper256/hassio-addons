@@ -8,6 +8,7 @@ Each game app updates through SteamCMD, backs up the world, and can restart afte
 | Game | Guide |
 | --- | --- |
 | **Necesse** | [necesse-dedicated-server/README.md](necesse-dedicated-server/README.md) |
+| **Stationeers** | [stationeers-dedicated-server/README.md](stationeers-dedicated-server/README.md) |
 
 ### Add this repository in Home Assistant
 
@@ -33,6 +34,7 @@ The shared supervisor is game-agnostic. Copy an existing game add-on, point `gam
 
 | Path | Role |
 | --- | --- |
-| `necesse-dedicated-server/` | Necesse app (what most people install) |
+| `necesse-dedicated-server/` | Necesse app |
+| `stationeers-dedicated-server/` | Stationeers app (Unity / Linux Steam dedicated server) |
 | `game-server-base/` | Shared SteamCMD supervisor; sync into game apps with `sync-into-addons.sh` |
 | `tests/` | Repo checks for HA app `config.yaml` rules |

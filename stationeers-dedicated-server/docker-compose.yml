@@ -1,0 +1,59 @@
+# Portainer / plain Docker example for Stationeers.
+# Builds the thin Stationeers add-on image (generic supervisor + Unity binary + game.yaml).
+#
+# Security note: the status UI on :8099 is passwordless. Outside Home Assistant
+# there is no Ingress auth and no peer allowlist. Bind it to localhost only
+# (below), or put it behind your own reverse-proxy auth. Do not publish 8099 on
+# a public interface.
+services:
+  stationeers:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stationeers-dedicated-server:local
+    container_name: stationeers
+    restart: unless-stopped
+    ports:
+      - "27016:27016/udp"
+      - "27015:27015/udp"
+      - "127.0.0.1:8099:8099"
+    environment:
+      GAME_PLUGIN: /opt/games/game.yaml
+      INSTALL_DIR: /data/game
+      WORLD_NAME: FamilyStation
+      WORLD_TYPE: Lunar
+      SERVER_NAME: Family Stationeers
+      SERVER_PASSWORD: changeme
+      SERVER_SLOTS: "10"
+      SERVER_VISIBLE: "true"
+      AUTO_SAVE: "true"
+      SAVE_INTERVAL: "300"
+      AUTO_PAUSE: "true"
+      UPNP_ENABLED: "false"
+      USE_STEAM_P2P: "false"
+      UPDATE_ON_START: "true"
+      AUTO_UPDATE_CHECK_HOUR: "5"
+      AUTO_UPDATE_INTERVAL_MINUTES: "1440"
+      UPDATE_WHEN_EMPTY_ONLY: "true"
+      UPDATE_ON_VERSION_MISMATCH: "true"
+      STATUS_HTTP_ENABLED: "true"
+      STATUS_HTTP_PORT: "8099"
+      HA_NOTIFICATIONS: "false"
+      SERVER_PORT: "27016"
+      UPDATE_PORT: "27015"
+      BACKUP_ENABLED: "true"
+      BACKUP_INTERVAL_MINUTES: "1440"
+      BACKUP_ON_UPDATE: "true"
+      BACKUP_RETENTION: standard
+      MIN_FREE_DISK_MB: "1024"
+      TZ: America/Los_Angeles
+    volumes:
+      - ./data:/data
+    # Match HA add-on timeout (300s): give quit room before SIGKILL.
+    stop_grace_period: 300s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s

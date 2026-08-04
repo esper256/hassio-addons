@@ -47,7 +47,18 @@ class GamePlugin:
     steam_platform: str = ""
     validate_on_update: bool = True
     env: dict[str, str] = field(default_factory=dict)
+    # Simple option_key → CLI flag pairs (``-flag value`` or ``-flag=value``).
     arg_map: dict[str, str] = field(default_factory=dict)
+    # Ordered argv tokens after the executable. Supports ``{option_key}``
+    # templates; empty renderings are omitted (handy for optional tokens).
+    argv_prefix: list[str] = field(default_factory=list)
+    # Optional ``-settings Key Value Key Value …`` style block (Unity / etc.).
+    # When settings_flag is set, fixed_settings then settings_map are appended.
+    settings_flag: str = ""
+    # SettingName → literal/template value (always attempted).
+    fixed_settings: dict[str, str] = field(default_factory=dict)
+    # option_key → SettingName (skip when the option is empty).
+    settings_map: dict[str, str] = field(default_factory=dict)
     bool_style: str = "true_false"  # or "one_zero"
     log_patterns: LogPatterns = field(default_factory=LogPatterns)
     # Optional extra dry-run candidates merged with generic defaults.
@@ -93,6 +104,15 @@ class GamePlugin:
             validate_on_update=bool(data.get("validate_on_update", True)),
             env={str(k): str(v) for k, v in (data.get("env") or {}).items()},
             arg_map={str(k): str(v) for k, v in (data.get("arg_map") or {}).items()},
+            argv_prefix=[str(x) for x in (data.get("argv_prefix") or [])],
+            settings_flag=str(data.get("settings_flag") or "").strip(),
+            fixed_settings={
+                str(k): str(v)
+                for k, v in (data.get("fixed_settings") or {}).items()
+            },
+            settings_map={
+                str(k): str(v) for k, v in (data.get("settings_map") or {}).items()
+            },
             bool_style=data.get("bool_style", "true_false"),
             log_patterns=LogPatterns(
                 player_join=list(patterns.get("player_join") or []),

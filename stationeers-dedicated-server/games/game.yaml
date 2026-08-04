@@ -1,0 +1,91 @@
+name: Stationeers
+steam_app_id: 600760
+steam_login: anonymous
+steam_branch: public
+# Pin SteamCMD to Linux depots (this add-on is amd64 Linux / HAOS only).
+steam_platform: linux
+validate_on_update: true
+working_dir: /data/game
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: rocketstation_DedicatedServer.x86_64
+min_backup_bytes: 1024
+stop_timeout_seconds: 90
+# Unity console may ignore stdin when -logFile is set; SIGTERM still escalates.
+stop_stdin_commands:
+  - save
+  - quit
+# Fallback roots when no named world exists yet; also used to restore legacy
+# *.tar.gz snapshots. New backups zip the active save folder.
+backup_paths:
+  - /data/world
+# Active world is a folder: SavePath/saves/<world_name>/
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/saves/{world_name}"
+executable:
+  - ./rocketstation_DedicatedServer.x86_64
+# Steamworks client app id (game), not the dedicated-server app id.
+env:
+  SteamAppId: "544550"
+  SteamGameId: "544550"
+  LD_LIBRARY_PATH: "/data/game/linux64:/data/game"
+bool_style: true_false
+ready_timeout_seconds: 300
+# Modern Stationeers launch: -file start <save> <world> [difficulty …]
+# Optional difficulty / start_condition / start_location omit when empty.
+argv_prefix:
+  - -file
+  - start
+  - "{world_name}"
+  - "{world_type}"
+  - "{difficulty}"
+  - "{start_condition}"
+  - "{start_location}"
+  - -noclear
+  - -logFile
+  - "-"
+  - -settingspath
+  - "{data_dir}/settings.xml"
+fixed_settings:
+  StartLocalHost: "true"
+  LocalIpAddress: "0.0.0.0"
+  SavePath: "{data_dir}"
+settings_flag: -settings
+# server_port / update_port are forced by run.sh to match HA Network mapping.
+settings_map:
+  server_name: ServerName
+  server_port: GamePort
+  update_port: UpdatePort
+  server_password: ServerPassword
+  server_slots: ServerMaxPlayers
+  server_visible: ServerVisible
+  auto_save: AutoSave
+  save_interval: SaveInterval
+  auto_pause: AutoPauseServer
+  upnp_enabled: UPNPEnabled
+  use_steam_p2p: UseSteamP2P
+  server_auth_secret: ServerAuthSecret
+# High-tech light blue on darker blue.
+ui_theme:
+  bg: "#0b1c2c"
+  panel: "#122a3f"
+  ink: "#e6f4ff"
+  muted: "#7fa8c4"
+  accent: "#5ec8ff"
+  good: "#4fd4a2"
+  bad: "#ff7b7b"
+  glow: "#1a3a55"
+  wash: "#071420"
+  depth: "#0e2436"
+# Empty until proven against real logs. Dry-run candidates only highlight in Ingress.
+log_patterns: {}
+log_pattern_candidates:
+  ready:
+    - '\bstarted Server\s+\d+'
+    - '\bregistered with session #\d+'
+  player_join:
+    - 'Client (?P<player>.+?) \([^)]+\) is ready'
+  player_leave:
+    - 'Client disconnected:.*\|\s*(?P<player>\S+)'

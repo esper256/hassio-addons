@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.30
+
+- Sync shared supervisor: generic `argv_prefix` / `settings_map` CLI building for non-Java Steam servers (no Necesse behavior change)
+
 ## 2.1.29
 
 - Documentation cleanup: concise get-started guides (repo README, Necesse README/DOCS, packaging guide)
