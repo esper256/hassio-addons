@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.16
+
+- Ingress: restore a world backup with confirm → stop server → save current world as a pre-restore safety copy (outside normal rotation) → replace world → restart
+- Status hero again shows **World save** and **Free disk** cards, grouped at the end
+- Home Assistant notification when backups fail (interval unchanged)
+
 ## 2.1.15
 
 - Ask Steam for game updates once daily at local 05:00 by default (was every 30 minutes)

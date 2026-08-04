@@ -87,12 +87,14 @@ Retention is one dropdown:
 | `standard` (default) | 7 daily → 4 weekly → 12 monthly |
 | `extended` | 7 daily → 8 weekly → 24 monthly → 2 yearly |
 
-Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low.
+Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low. Backup failures create a Home Assistant notification.
+
+**Restore from Ingress:** pick a backup → **Restore selected backup** → confirm. The server stops, the current world is saved as a pre-restore safety copy (kept outside normal rotation), the selected archive replaces the world, then the server restarts.
 
 ### Logs
 
 - **Home Assistant → app Logs tab** — starts with a version banner, then supervisor + game + SteamCMD (`[game]`, `[game-log]`, `[steamcmd]`)
-- **OPEN WEB UI** — status, pattern hits, raw tail, downloadable log captures (no SSH / no host port)
+- **OPEN WEB UI** — status (including world save size and free disk), pattern hits, world restore, raw tail, downloadable log captures (no SSH / no host port)
 
 ---
 

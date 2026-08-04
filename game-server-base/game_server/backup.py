@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 import tarfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .disk import ensure_free_mb, path_total_bytes
 
 LOG = logging.getLogger("game_server.backup")
+
+# Rotation set (pruned). Pre-restore safety copies use a different prefix so they
+# are never deleted by generational retention.
+ROTATION_GLOB = "backup-*.tar.gz"
+PRE_RESTORE_GLOB = "pre-restore-*.tar.gz"
+PRE_RESTORE_KEEP = 5
+_ARCHIVE_NAME_RE = re.compile(r"^(backup|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$")
 
 
 @dataclass
@@ -103,6 +114,13 @@ class BackupManager:
         self.backup_count = 0
         self.consecutive_failures = 0
         self.next_eligible_at: float = 0.0
+        self._on_failure: Callable[[str], None] | None = None
+        self._lock = threading.Lock()
+
+    def set_failure_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Optional hook for HA notifications / status when backups fail."""
+
+        self._on_failure = callback
 
     def start(self) -> None:
         if not self.enabled or self.interval_seconds <= 0:
@@ -161,6 +179,11 @@ class BackupManager:
             reason,
             self.consecutive_failures,
         )
+        if self._on_failure is not None:
+            try:
+                self._on_failure(reason)
+            except Exception:  # noqa: BLE001
+                LOG.exception("Backup failure callback failed")
 
     def source_bytes(self) -> int:
         return sum(path_total_bytes(source) for source in self.sources)
@@ -177,8 +200,8 @@ class BackupManager:
             )
         return True, None
 
-    def create_backup(self, reason: str = "manual") -> Path | None:
-        if not self.enabled:
+    def create_backup(self, reason: str = "manual", *, pinned: bool = False) -> Path | None:
+        if not self.enabled and not pinned:
             return None
         self.last_skip_reason = None
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -201,7 +224,12 @@ class BackupManager:
 
         existing = [s for s in self.sources if s.exists()]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        archive = self.backup_dir / f"backup-{stamp}-{reason}.tar.gz"
+        safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
+        if pinned:
+            # Outside normal rotation: never matched by backup-*.tar.gz prune.
+            archive = self.backup_dir / f"pre-restore-{stamp}-{safe_reason}.tar.gz"
+        else:
+            archive = self.backup_dir / f"backup-{stamp}-{safe_reason}.tar.gz"
         LOG.info("Creating backup %s from %s", archive.name, existing)
         with tarfile.open(archive, "w:gz") as tar:
             for source in existing:
@@ -219,12 +247,15 @@ class BackupManager:
         self.backup_count += 1
         self.last_error = None
         self.last_skip_reason = None
-        self._prune()
+        if pinned:
+            self._prune_pre_restore()
+        else:
+            self._prune()
         return archive
 
     def _prune(self) -> None:
         archives = sorted(
-            self.backup_dir.glob("backup-*.tar.gz"),
+            self.backup_dir.glob(ROTATION_GLOB),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -238,18 +269,141 @@ class BackupManager:
             except OSError:
                 LOG.warning("Failed to prune %s", stale)
 
+    def _prune_pre_restore(self) -> None:
+        """Keep only the newest pre-restore safety copies (not in rotation)."""
+
+        archives = sorted(
+            self.backup_dir.glob(PRE_RESTORE_GLOB),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in archives[PRE_RESTORE_KEEP:]:
+            try:
+                stale.unlink()
+                LOG.info("Pruned old pre-restore backup %s", stale.name)
+            except OSError:
+                LOG.warning("Failed to prune pre-restore %s", stale)
+
     def list_archives(self) -> list[Path]:
-        """Return on-disk backup archives oldest → newest."""
+        """Return rotatable backup archives oldest → newest."""
 
         if not self.backup_dir.exists():
             return []
         return sorted(
-            self.backup_dir.glob("backup-*.tar.gz"),
+            self.backup_dir.glob(ROTATION_GLOB),
             key=lambda p: p.stat().st_mtime,
         )
 
+    def list_pre_restore_archives(self) -> list[Path]:
+        if not self.backup_dir.exists():
+            return []
+        return sorted(
+            self.backup_dir.glob(PRE_RESTORE_GLOB),
+            key=lambda p: p.stat().st_mtime,
+        )
+
+    def list_restorable_archives(self) -> list[dict[str, Any]]:
+        """Archives the UI may offer for restore (rotation + recent pre-restore)."""
+
+        items: list[dict[str, Any]] = []
+        for path in list(self.list_archives()) + list(self.list_pre_restore_archives()):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            kind = "pre-restore" if path.name.startswith("pre-restore-") else "backup"
+            items.append(
+                {
+                    "name": path.name,
+                    "kind": kind,
+                    "bytes": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+            )
+        items.sort(key=lambda item: float(item["mtime"]), reverse=True)
+        return items
+
+    def resolve_archive(self, name: str) -> Path | None:
+        """Resolve a backup basename under backup_dir; reject traversal."""
+
+        raw = str(name or "").strip()
+        if not raw or not _ARCHIVE_NAME_RE.fullmatch(raw):
+            return None
+        root = self.backup_dir.resolve()
+        path = (self.backup_dir / raw).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            return None
+        return path if path.is_file() else None
+
+    def restore_archive(self, archive: str | Path) -> dict[str, Any]:
+        """Extract a backup over configured world sources.
+
+        Does not stop/start the game process — caller owns lifecycle.
+        """
+
+        path = self.resolve_archive(str(archive)) if not isinstance(archive, Path) else archive
+        if path is None or not path.is_file():
+            raise FileNotFoundError(f"backup archive not found: {archive}")
+        path = path.resolve()
+        root = self.backup_dir.resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"archive outside backup dir: {archive}") from exc
+
+        # Archives store each source under arcname=source.name (e.g. "world/...").
+        # Extract into each source's parent so "world/" lands on the real world root.
+        parents = {source.parent.resolve() for source in self.sources}
+        if len(parents) != 1:
+            raise RuntimeError(
+                f"restore requires a single parent for backup sources; got {parents}"
+            )
+        extract_root = next(iter(parents))
+
+        with self._lock:
+            for source in self.sources:
+                if source.exists():
+                    LOG.info("Removing current world data before restore: %s", source)
+                    if source.is_dir():
+                        shutil.rmtree(source)
+                    else:
+                        source.unlink()
+
+            LOG.info("Restoring %s into %s", path.name, extract_root)
+            with tarfile.open(path, "r:gz") as tar:
+                # Python 3.12+: filter='data' blocks unsafe paths when available.
+                try:
+                    tar.extractall(extract_root, filter="data")  # type: ignore[call-arg]
+                except TypeError:
+                    self._extract_safe(tar, extract_root)
+
+        return {
+            "ok": True,
+            "archive": path.name,
+            "extract_root": str(extract_root),
+            "sources": [str(s) for s in self.sources],
+        }
+
+    @staticmethod
+    def _extract_safe(tar: tarfile.TarFile, extract_root: Path) -> None:
+        """Fallback extractor that rejects path traversal members."""
+
+        root = extract_root.resolve()
+        for member in tar.getmembers():
+            name = member.name
+            if name.startswith("/") or ".." in Path(name).parts:
+                raise ValueError(f"refusing unsafe tar member: {name}")
+            target = (extract_root / name).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"refusing tar member outside root: {name}") from exc
+            tar.extract(member, extract_root)
+
     def archive_summary(self) -> dict[str, object]:
-        """Count + oldest/newest timestamps for status UI."""
+        """Count + oldest/newest timestamps for status UI (rotation set only)."""
 
         archives = self.list_archives()
         if not archives:
@@ -302,6 +456,7 @@ class BackupManager:
             "source_bytes": self.source_bytes(),
             "sources": [str(s) for s in self.sources],
             "archives": [p.name for p in archives],
+            "restorable": self.list_restorable_archives(),
         }
 
 
