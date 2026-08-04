@@ -20,7 +20,7 @@ from .log_tools import LogToolbox
 from .monitor import LogMonitor
 from .notify import Notifier
 from .plugin import GamePlugin, load_plugin, resolve_plugin_path
-from .privileges import prepare_drop
+from .privileges import prepare_owned_paths
 from .process_manager import ProcessManager
 from .status_http import StatusServer
 from .steam_gate import configure_gate
@@ -29,6 +29,12 @@ from .version import app_version
 from .world_save import backup_sources_for, locate_active_world
 
 LOG = logging.getLogger("game_server.supervisor")
+
+# Explicit supervisor/game phases for status + HA watchdog (/healthz).
+# Prefer this over the old boolean "starting" (= anything not stopped).
+LIFECYCLE_HEALTHY = frozenset(
+    {"running", "installing", "updating", "restoring", "starting", "waiting"}
+)
 
 
 class GameServerSupervisor:
@@ -53,6 +59,8 @@ class GameServerSupervisor:
         self._restore_lock = threading.Lock()
         self.last_restore_error: str | None = None
         self.last_restore_at: float | None = None
+        # Short-lived activity while a long operation holds the main loop.
+        self._activity: str | None = None
         self.local_build_id: str | None = None
         self.remote_build_id: str | None = None
         self.last_update_check_at: float | None = None
@@ -84,7 +92,7 @@ class GameServerSupervisor:
 
         self.run_ids = None
         if config.drop_privileges:
-            self.run_ids = prepare_drop(
+            self.run_ids = prepare_owned_paths(
                 config.run_as_user,
                 [
                     config.install_dir,
@@ -192,51 +200,94 @@ class GameServerSupervisor:
             raise FileNotFoundError(f"backup archive not found: {archive_name}")
 
         LOG.info("Applying world restore from %s", archive.name)
-        if self.process.running:
-            self.process.stop()
-
+        self._activity = "restoring"
         try:
-            safety = self.backups.create_backup(reason="safety", pinned=True)
-            if safety is None:
-                raise RuntimeError(
-                    self.backups.last_error
-                    or self.backups.last_skip_reason
-                    or "could not create pre-restore safety backup"
+            if self.process.running:
+                self.process.stop()
+
+            try:
+                safety = self.backups.create_backup(
+                    reason="safety", outside_rotation=True
                 )
-            LOG.info("Pre-restore safety copy saved as %s", safety.name)
-            result = self.backups.restore_archive(archive)
-            self.last_restore_at = time.time()
-            self.last_restore_error = None
-        except Exception as exc:
-            self.last_restore_error = str(exc)
-            LOG.exception("World restore failed")
+                if safety is None:
+                    raise RuntimeError(
+                        self.backups.last_error
+                        or self.backups.last_skip_reason
+                        or "could not create pre-restore safety backup"
+                    )
+                LOG.info("Pre-restore safety copy saved as %s", safety.name)
+                result = self.backups.restore_archive(archive)
+                self.last_restore_at = time.time()
+                self.last_restore_error = None
+            except Exception as exc:
+                self.last_restore_error = str(exc)
+                LOG.exception("World restore failed")
+                self.notifier.notify(
+                    "restore_failed",
+                    f"{self.plugin.name}: world restore failed",
+                    str(exc),
+                    force=True,
+                )
+                if not self.process.running and not self._stop.is_set():
+                    try:
+                        self.monitor.reset_session()
+                        self.process.start(reason="restore_failed")
+                    except OSError:
+                        LOG.exception("Failed restarting server after restore failure")
+                raise
+
+            self.monitor.reset_session()
+            self.process.start(reason="restore")
             self.notifier.notify(
-                "restore_failed",
-                f"{self.plugin.name}: world restore failed",
-                str(exc),
+                "restored",
+                f"{self.plugin.name}: world restored",
+                (
+                    f"Restored {archive.name}. "
+                    "Previous world kept as a pre-restore safety copy outside "
+                    "normal rotation."
+                ),
                 force=True,
             )
-            if not self.process.running and not self._stop.is_set():
-                try:
-                    self.monitor.reset_session()
-                    self.process.start(reason="restore_failed")
-                except OSError:
-                    LOG.exception("Failed restarting server after restore failure")
-            raise
+            LOG.info("World restore complete: %s", result)
+        finally:
+            self._activity = None
 
-        self.monitor.reset_session()
-        self.process.start(reason="restore")
-        self.notifier.notify(
-            "restored",
-            f"{self.plugin.name}: world restored",
-            (
-                f"Restored {archive.name}. "
-                "Previous world kept as a pre-restore safety copy outside "
-                "normal rotation."
-            ),
-            force=True,
-        )
-        LOG.info("World restore complete: %s", result)
+    def lifecycle(self) -> str:
+        """Return a single phase a person can reason about.
+
+        Values: stopping, stopped, restoring, installing, updating, running,
+        waiting (update queued), failed (crash loop / left down), starting.
+        """
+
+        if self._stop.is_set():
+            return "stopping" if self.process.running else "stopped"
+        if self._activity in ("installing", "updating", "restoring"):
+            return self._activity
+        if self._restore_pending:
+            return "restoring"
+        if self.process.running:
+            return "running"
+        if self._update_pending:
+            return "waiting"
+        if (
+            self.process.start_count > 0
+            and not self.process.intentional_stop
+            and not self.process.can_restart_after_crash()
+        ):
+            return "failed"
+        if self.process.intentional_stop and self.process.start_count > 0:
+            return "stopped"
+        return "starting"
+
+    def health(self) -> dict[str, Any]:
+        """Cheap snapshot for /healthz (no disk/manifest scans)."""
+
+        phase = self.lifecycle()
+        return {
+            "lifecycle": phase,
+            "running": self.process.running,
+            "ok": phase in LIFECYCLE_HEALTHY,
+        }
 
     def status(self) -> dict[str, Any]:
         monitor = self.monitor.state.to_dict()
@@ -251,19 +302,22 @@ class GameServerSupervisor:
         install_meta = steamcmd.read_local_install_meta(
             self.config.install_dir, self.plugin.steam_app_id
         )
-        if install_meta.get("build_id") and not self.local_build_id:
-            self.local_build_id = str(install_meta["build_id"])
+        # Prefer on-disk build id for display; do not mutate self on a status read.
+        local_build = install_meta.get("build_id") or self.local_build_id
         world_size = locate_active_world(
             self.plugin,
             self.config.game_options,
             data_dir=self.plugin.data_dir,
         ).to_dict()
+        phase = self.lifecycle()
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
             "steam_app_id": self.plugin.steam_app_id,
             "running": self.process.running,
-            "starting": not self.process.running and not self._stop.is_set(),
+            "lifecycle": phase,
+            # Narrower than the old "not stopped" meaning; prefer ``lifecycle``.
+            "starting": phase == "starting",
             "supervisor_uptime_seconds": int(time.time() - self.started_at),
             "game_uptime_seconds": (
                 int(time.time() - self.process.last_started_at)
@@ -273,7 +327,7 @@ class GameServerSupervisor:
             "restart_count": self.process.restart_count,
             "last_start_reason": self.process.last_start_reason,
             "crash_count": self.process.crash_count,
-            "local_build_id": self.local_build_id,
+            "local_build_id": str(local_build) if local_build else None,
             "steamcmd_version": steamcmd.steamcmd_client_version(),
             "game_version": self.monitor.state.game_version,
             "remote_build_id": self.remote_build_id,
@@ -296,12 +350,8 @@ class GameServerSupervisor:
             "last_restore_error": self.last_restore_error,
             # Plain-language status for the UI (avoid "gating" jargon).
             "waits_for_empty_server": waits_for_empty_server,
-            # Backward-compatible alias for older status consumers.
-            "player_gating": (
-                "active"
-                if waits_for_empty_server == "yes"
-                else "inactive_no_active_patterns"
-            ),
+            # Same values as waits_for_empty_server (legacy field name).
+            "player_gating": waits_for_empty_server,
             "steam_gate": self.steam_gate.to_dict(),
             "disk": {
                 "ok": disk_ok,
@@ -458,7 +508,7 @@ class GameServerSupervisor:
         steamcmd.ensure_steamcmd(self.config.steamcmd_dir)
         # Re-apply ownership after SteamCMD bootstrap files appear.
         if self.config.drop_privileges:
-            self.run_ids = prepare_drop(
+            self.run_ids = prepare_owned_paths(
                 self.config.run_as_user,
                 [
                     self.config.steamcmd_dir,
@@ -474,6 +524,7 @@ class GameServerSupervisor:
                 "Installing/updating game server via SteamCMD into %s",
                 self.config.install_dir,
             )
+            self._activity = "installing"
             run_uid, run_gid = self._steamcmd_identity()
             try:
                 self.local_build_id = steamcmd.install_or_update(
@@ -514,8 +565,10 @@ class GameServerSupervisor:
                     )
                 else:
                     raise
+            finally:
+                self._activity = None
             if self.config.drop_privileges:
-                prepare_drop(
+                prepare_owned_paths(
                     self.config.run_as_user,
                     [
                         self.config.install_dir,
@@ -565,83 +618,87 @@ class GameServerSupervisor:
     def _apply_update(self) -> None:
         reason = self._update_reason or "requested"
         LOG.info("Applying update (%s)", reason)
-        if self.config.backup_on_update:
-            # Graceful stop first so the world flush happens before backup.
+        self._activity = "updating"
+        try:
+            if self.config.backup_on_update:
+                # Graceful stop first so the world flush happens before backup.
+                if self.process.running:
+                    self.process.stop()
+                try:
+                    self.backups.create_backup(reason="pre-update")
+                except (OSError, tarfile.TarError) as exc:
+                    # Do not mutate the install when we could not snapshot the world.
+                    LOG.exception("Pre-update backup failed; aborting update")
+                    self.notifier.notify(
+                        "backup_failed",
+                        f"{self.plugin.name}: pre-update backup failed",
+                        f"Update aborted until a world backup succeeds.\n{exc}",
+                        force=True,
+                    )
+                    self._schedule_update_retry(exc)
+                    self._restart_existing_after_update_failure()
+                    raise
+
             if self.process.running:
                 self.process.stop()
+
+            run_uid, run_gid = self._steamcmd_identity()
             try:
-                self.backups.create_backup(reason="pre-update")
-            except (OSError, tarfile.TarError) as exc:
-                # Do not mutate the install when we could not snapshot the world.
-                LOG.exception("Pre-update backup failed; aborting update")
-                self.notifier.notify(
-                    "backup_failed",
-                    f"{self.plugin.name}: pre-update backup failed",
-                    f"Update aborted until a world backup succeeds.\n{exc}",
-                    force=True,
+                self.local_build_id = steamcmd.install_or_update(
+                    self.config.steamcmd_dir,
+                    self.config.install_dir,
+                    self.plugin,
+                    retries=self.config.steamcmd_retries,
+                    retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
+                    stop_event=self._stop,
+                    run_uid=run_uid,
+                    run_gid=run_gid,
                 )
+                if self.config.drop_privileges:
+                    self.run_ids = prepare_owned_paths(
+                        self.config.run_as_user,
+                        [
+                            self.config.install_dir,
+                            self.config.steamcmd_dir,
+                            steamcmd.steam_home_dir(),
+                        ],
+                    ) or self.run_ids
+                self.last_update_applied_at = time.time()
+                self.update_apply_count += 1
+                self.last_update_error = None
+                self._apply_failures = 0
+                self._update_not_before = 0.0
+            except SteamCMDError as exc:
+                try:
+                    self.capture_logs("update_failed")
+                except OSError:
+                    LOG.exception("Failed capturing logs after update failure")
+                self._schedule_update_retry(exc)
+                self._restart_existing_after_update_failure()
+                raise
+            except Exception as exc:
+                # Unexpected supervisor bug after stopping the game: still try to
+                # recover the server, schedule backoff so we don't tight-loop, then
+                # propagate so the failure is visible.
                 self._schedule_update_retry(exc)
                 self._restart_existing_after_update_failure()
                 raise
 
-        if self.process.running:
-            self.process.stop()
-
-        run_uid, run_gid = self._steamcmd_identity()
-        try:
-            self.local_build_id = steamcmd.install_or_update(
-                self.config.steamcmd_dir,
-                self.config.install_dir,
-                self.plugin,
-                retries=self.config.steamcmd_retries,
-                retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
-                stop_event=self._stop,
-                run_uid=run_uid,
-                run_gid=run_gid,
+            with self._update_lock:
+                self._update_pending = False
+                self._update_reason = None
+                self._update_bypass_window = False
+                self._update_ignore_players = False
+            self.monitor.reset_session()
+            self.process.start(reason="update")
+            self.notifier.notify(
+                "updated",
+                f"{self.plugin.name}: updated",
+                f"Now running build {self.local_build_id or 'unknown'} (reason: {reason})",
+                force=True,
             )
-            if self.config.drop_privileges:
-                self.run_ids = prepare_drop(
-                    self.config.run_as_user,
-                    [
-                        self.config.install_dir,
-                        self.config.steamcmd_dir,
-                        steamcmd.steam_home_dir(),
-                    ],
-                ) or self.run_ids
-            self.last_update_applied_at = time.time()
-            self.update_apply_count += 1
-            self.last_update_error = None
-            self._apply_failures = 0
-            self._update_not_before = 0.0
-        except SteamCMDError as exc:
-            try:
-                self.capture_logs("update_failed")
-            except OSError:
-                LOG.exception("Failed capturing logs after update failure")
-            self._schedule_update_retry(exc)
-            self._restart_existing_after_update_failure()
-            raise
-        except Exception as exc:
-            # Unexpected supervisor bug after stopping the game: still try to
-            # recover the server, schedule backoff so we don't tight-loop, then
-            # propagate so the failure is visible.
-            self._schedule_update_retry(exc)
-            self._restart_existing_after_update_failure()
-            raise
-
-        with self._update_lock:
-            self._update_pending = False
-            self._update_reason = None
-            self._update_bypass_window = False
-            self._update_ignore_players = False
-        self.monitor.reset_session()
-        self.process.start(reason="update")
-        self.notifier.notify(
-            "updated",
-            f"{self.plugin.name}: updated",
-            f"Now running build {self.local_build_id or 'unknown'} (reason: {reason})",
-            force=True,
-        )
+        finally:
+            self._activity = None
 
     @staticmethod
     def _seconds_until_local_hour(hour: int, *, now: datetime | None = None) -> float:
@@ -767,6 +824,7 @@ class GameServerSupervisor:
                 self.config.status_http_host,
                 self.config.status_http_port,
                 self.status,
+                health_provider=self.health,
                 game_name=self.plugin.name,
                 log_toolbox=self.log_tools,
                 capture_callback=self.capture_logs,

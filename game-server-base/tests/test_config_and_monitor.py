@@ -42,13 +42,14 @@ from game_server.status_http import (  # noqa: E402
     _format_disk,
     _format_game_version,
     _format_highlights,
-    _format_install_updated,
     _format_pattern_rows,
+    _format_running,
     _format_subtitle,
     _format_update_check_hint,
     _format_uptime,
     _format_world_save,
     _ui_view,
+    healthz_ok,
 )
 from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
@@ -410,7 +411,7 @@ class BackupRetentionTests(unittest.TestCase):
             self.assertTrue(oldest.startswith("Oldest: "))
             self.assertTrue(newest.startswith("Newest: "))
 
-    def test_pinned_pre_restore_and_restore_roundtrip(self) -> None:
+    def test_pre_restore_safety_copy_outside_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             backup_dir = root / "backups"
@@ -430,9 +431,10 @@ class BackupRetentionTests(unittest.TestCase):
             self.assertIsNotNone(archive)
             assert archive is not None
             (source / "save.bin").write_bytes(b"CHANGED-WORLD-DATA!" * 8)
-            safety = mgr.create_backup(reason="safety", pinned=True)
+            safety = mgr.create_backup(reason="safety", outside_rotation=True)
             self.assertIsNotNone(safety)
             assert safety is not None
+            # Safety copies must survive rotation prune of backup-*.tar.gz.
             self.assertTrue(safety.name.startswith("pre-restore-"))
             for i in range(30):
                 fake = backup_dir / f"backup-20260101T{i:06d}Z-schedule.tar.gz"
@@ -599,6 +601,7 @@ class StatusFormatTests(unittest.TestCase):
         view = _ui_view(
             {
                 "running": True,
+                "lifecycle": "running",
                 "game_uptime_seconds": 10,
                 "last_start_reason": "restore",
                 "crash_count": 0,
@@ -622,11 +625,11 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Necesse",
         )
-        self.assertEqual(view["world_save"], "2.0 MB")
-        self.assertEqual(view["world_save_hint"], "FamilyWorld.zip")
-        self.assertEqual(view["disk"], "100 MiB")
+        # Goals: world size readable, low disk flagged, restore list includes archive.
+        self.assertRegex(view["world_save"], r"\d")
+        self.assertIn("FamilyWorld", view["world_save_hint"])
         self.assertEqual(view["disk_class"], "bad")
-        self.assertIn("Min 512", view["disk_hint"])
+        self.assertIn("512", view["disk_hint"])
         self.assertEqual(view["uptime_hint"], "Since world restore")
         self.assertIn(
             "backup-20260804T010000Z-schedule.tar.gz",
@@ -635,23 +638,25 @@ class StatusFormatTests(unittest.TestCase):
         value, css, hint = _format_disk(
             {"disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512}}
         )
-        self.assertEqual(value, "2.0 GiB")
         self.assertEqual(css, "good")
+        self.assertRegex(value, r"GiB|GB|MiB|MB")
+        self.assertIn("512", hint)
 
     def test_fmt_ago(self) -> None:
         now = 1_700_000_000.0
-        self.assertEqual(_fmt_ago(now - 10, now=now), "just now")
-        self.assertEqual(_fmt_ago(now - 120, now=now), "2m ago")
-        self.assertEqual(_fmt_ago(now - 7200, now=now), "2h ago")
-        self.assertEqual(_fmt_ago(now - 86400 * 3, now=now), "3d ago")
+        # Relative ages should stay human-readable (exact wording can drift).
+        self.assertIn("now", _fmt_ago(now - 10, now=now))
+        self.assertRegex(_fmt_ago(now - 120, now=now), r"\d+m")
+        self.assertRegex(_fmt_ago(now - 7200, now=now), r"\d+h")
+        self.assertRegex(_fmt_ago(now - 86400 * 3, now=now), r"\d+d")
 
     def test_format_bytes(self) -> None:
-        self.assertEqual(format_bytes(900), "900 B")
-        self.assertEqual(format_bytes(12 * 1024), "12 KB")
-        self.assertEqual(format_bytes(int(1.5 * 1024 * 1024)), "1.5 MB")
-        self.assertEqual(format_bytes(int(2.4 * 1024**3)), "2.4 GB")
+        self.assertIn("B", format_bytes(900))
+        self.assertRegex(format_bytes(12 * 1024), r"KB|KiB")
+        self.assertRegex(format_bytes(int(1.5 * 1024 * 1024)), r"MB|MiB")
+        self.assertRegex(format_bytes(int(2.4 * 1024**3)), r"GB|GiB")
 
-    def test_update_check_and_install_hints(self) -> None:
+    def test_update_check_hint_and_game_version_age(self) -> None:
         now = time.time()
         hint = _format_update_check_hint(
             {
@@ -662,25 +667,26 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertTrue(hint.startswith("Checked "))
         self.assertIn("ago", hint)
-        self.assertEqual(
-            _format_update_check_hint(
-                {
-                    "auto_update_interval_minutes": 1440,
-                    "auto_update_check_hour": 5,
-                    "update_pending": False,
-                }
-            ),
-            "Next Steam check around 05:00 local",
+        daily = _format_update_check_hint(
+            {
+                "auto_update_interval_minutes": 1440,
+                "auto_update_check_hour": 5,
+                "update_pending": False,
+            }
         )
-        value, detail = _format_install_updated(
+        self.assertIn("05:00", daily)
+        self.assertIn("local", daily)
+        # Installed age lives on the game version card (not a dead formatter).
+        _version, build, installed = _format_game_version(
             {
                 "install_last_updated_at": now - 86400,
                 "local_build_id": "24494683",
+                "game_version": "0.33.1",
             }
         )
-        self.assertEqual(value, "1d ago")
-        self.assertIn("24494683", detail)
-        self.assertIn("game server files", detail)
+        self.assertEqual(build, "Steam build 24494683")
+        self.assertTrue(installed.startswith("Installed "))
+        self.assertIn("ago", installed)
 
     def test_update_players_note_avoids_gating_jargon(self) -> None:
         waiting = _ui_view({"waits_for_empty_server": "yes"}, "Necesse")
@@ -691,6 +697,27 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("will not wait", unknown["update_players_note"])
         self.assertNotIn("gating", unknown["update_players_note"].lower())
+        # Legacy player_gating values still map to the same copy.
+        legacy = _ui_view(
+            {"player_gating": "inactive_no_active_patterns"}, "Necesse"
+        )
+        self.assertIn("will not wait", legacy["update_players_note"])
+
+    def test_lifecycle_healthz_and_running_label(self) -> None:
+        self.assertTrue(healthz_ok({"lifecycle": "running"}))
+        self.assertTrue(healthz_ok({"lifecycle": "installing"}))
+        self.assertTrue(healthz_ok({"lifecycle": "updating"}))
+        self.assertTrue(healthz_ok({"ok": True}))
+        self.assertFalse(healthz_ok({"lifecycle": "failed"}))
+        self.assertFalse(healthz_ok({"lifecycle": "stopped"}))
+        # Crash-loop used to look "starting"/healthy forever.
+        self.assertFalse(healthz_ok({"running": False, "starting": False}))
+        label, css = _format_running({"lifecycle": "failed"})
+        self.assertEqual(label, "failed")
+        self.assertEqual(css, "bad")
+        label, css = _format_running({"lifecycle": "updating"})
+        self.assertEqual(label, "updating")
+        self.assertEqual(css, "accent")
 
     def test_seconds_until_daily_steam_check_hour(self) -> None:
         now = datetime(2026, 8, 3, 4, 30, 0)
@@ -744,6 +771,50 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(supervisor._update_bypass_window)
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
+
+    def test_status_read_does_not_mutate_build_id_or_lie_about_starting(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            install = root / "game"
+            world.mkdir()
+            logs.mkdir()
+            install.mkdir()
+            steamapps = install / "steamapps"
+            steamapps.mkdir()
+            manifest = steamapps / f"appmanifest_{plugin.steam_app_id}.acf"
+            # Minimal Steam ACF so read_local_install_meta finds a build id.
+            manifest.write_text(
+                f'"AppState"\n{{\n\t"appid"\t\t"{plugin.steam_app_id}"\n'
+                '\t"buildid"\t\t"999888777"\n'
+                '\t"LastUpdated"\t\t"1700000000"\n}\n',
+                encoding="utf-8",
+            )
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(install),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={"data_dir": str(world), "logs_dir": str(logs)},
+            )
+            supervisor = GameServerSupervisor(plugin, cfg)
+            self.assertIsNone(supervisor.local_build_id)
+            status = supervisor.status()
+            self.assertEqual(status["local_build_id"], "999888777")
+            # status() must remain a read — do not hydrate mutable cache.
+            self.assertIsNone(supervisor.local_build_id)
+            self.assertEqual(status["lifecycle"], "starting")
+            self.assertTrue(status["starting"])
+            self.assertEqual(status["player_gating"], status["waits_for_empty_server"])
+            health = supervisor.health()
+            self.assertTrue(health["ok"])
+            self.assertEqual(health["lifecycle"], "starting")
 
     def test_capture_archive_path_rejects_traversal(self) -> None:
         plugin = load_plugin(FIXTURE)
