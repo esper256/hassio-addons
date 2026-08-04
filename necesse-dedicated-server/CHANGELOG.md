@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.22
+
+- Version bump so Home Assistant refreshes the Configuration schema (2.1.21 follow-ups were invisible to already-installed apps)
+- **Debug mode** toggle moved next to update settings; when off, Number of players hero stays hidden unless an *active* `player_count` log pattern exists (join/leave still used for empty-server updates)
+
 ## 2.1.21
 
 - Activate Necesse `version_mismatch` log pattern for `Client "…" had wrong version (…)` — probes Steam for a newer build first; only then schedules stop/apply (bypass quiet hours, wait for empty, orderly `save`/`exit` with 240s budget, SteamCMD)
@@ -7,7 +12,7 @@
 - World restore UI: style restore like other action buttons; drop separate empty-world button; add **NEW WORLD** at the bottom of the backup selector
 - Free disk hero no longer shows the “Min 512 MiB” hint (threshold still enforced for backups/updates)
 - Ingress hero order: Uptime → Crashes … World save → Backups → Free disk; world save name links to download (file as-is, folder as stdlib zip)
-- HA option **Debug mode** (default off): when off, hide Ingress log-watch pattern tooling; also hide Number of players until active join/leave/count patterns exist
+- HA option **Debug mode** (default off): when off, hide Ingress log-watch pattern tooling; also hide Number of players until an active `player_count` pattern exists
 - Log-watch table: one row per category, “Recent possible matches” (up to 3 lines per regex), Pattern column removed
 - Base dry-run candidate regexes made cross-game (dropped Necesse-specific ready/player_count phrasing)
 

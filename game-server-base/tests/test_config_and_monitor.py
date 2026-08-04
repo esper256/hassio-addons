@@ -1561,7 +1561,8 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(debug["log_watch_class"], "")
         self.assertEqual(debug["players_card_class"], "")
 
-        tracked = _ui_view(
+        # Active join/leave alone is not enough — need active player_count (or debug).
+        join_leave_only = _ui_view(
             {
                 "running": True,
                 "lifecycle": "running",
@@ -1576,16 +1577,54 @@ class StatusFormatTests(unittest.TestCase):
                             "pattern": r"joined",
                             "hits": 1,
                             "recent_lines": ["Alice joined"],
-                        }
+                        },
+                        {
+                            "mode": "active",
+                            "category": "player_leave",
+                            "pattern": r"left",
+                            "hits": 1,
+                            "recent_lines": ["Alice left"],
+                        },
+                        {
+                            "mode": "dry_run",
+                            "category": "player_count",
+                            "pattern": r"players online",
+                            "hits": 0,
+                        },
                     ],
                 },
                 "monitor": {"players_known": True, "player_count": 1},
             },
             "Necesse",
         )
-        self.assertTrue(tracked["log_watch_hidden"])
-        self.assertFalse(tracked["players_card_hidden"])
-        self.assertEqual(tracked["players"], "1")
+        self.assertTrue(join_leave_only["log_watch_hidden"])
+        self.assertTrue(join_leave_only["players_card_hidden"])
+
+        counted = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "yes",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_count",
+                            "pattern": r"Players online:\s*(?P<count>\d+)",
+                            "hits": 1,
+                            "recent_lines": ["Players online: 1"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": True, "player_count": 1},
+            },
+            "ExampleGame",
+        )
+        self.assertTrue(counted["log_watch_hidden"])
+        self.assertFalse(counted["players_card_hidden"])
+        self.assertEqual(counted["players"], "1")
 
 
 class ProcessStopTests(unittest.TestCase):
