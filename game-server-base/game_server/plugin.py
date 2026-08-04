@@ -61,6 +61,8 @@ class GamePlugin:
     runtime_notes: str = ""
     # How to find the active world artifact for status UI (not backup roots).
     world_save: WorldSaveSpec | None = None
+    # Optional Ingress status page CSS color overrides (see status_http.DEFAULT_UI_THEME).
+    ui_theme: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
@@ -110,7 +112,24 @@ class GamePlugin:
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
             runtime_notes=str(data.get("runtime_notes") or ""),
             world_save=WorldSaveSpec.from_dict(data.get("world_save")),
+            ui_theme=_coerce_ui_theme(data.get("ui_theme")),
         )
+
+
+def _coerce_ui_theme(raw: Any) -> dict[str, str]:
+    """Keep only non-empty string color values from game.yaml ``ui_theme``."""
+
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key).strip().lower()
+        if not name or not isinstance(value, str):
+            continue
+        color = value.strip()
+        if color:
+            out[name] = color
+    return out
 
 
 def _parse_plugin_text(text: str, suffix: str) -> dict[str, Any]:

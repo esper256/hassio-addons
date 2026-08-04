@@ -36,6 +36,7 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
+    DEFAULT_UI_THEME,
     HTML_PAGE,
     _STATUS_HTML_KEYS,
     _fmt_ago,
@@ -54,6 +55,7 @@ from game_server.status_http import (  # noqa: E402
     _ui_view,
     healthz_ok,
     render_status_html,
+    resolve_ui_theme,
 )
 from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
@@ -193,6 +195,24 @@ class NecessePatternPromotionTests(unittest.TestCase):
             self.assertIn(("player_join", "active"), active)
             self.assertIn(("player_leave", "active"), active)
             self.assertIn(("ready", "active"), active)
+            self.assertIn(("version_mismatch", "active"), active)
+
+    def test_wrong_version_line_triggers_active_mismatch(self) -> None:
+        plugin = load_plugin(NECESSE_PLUGIN)
+        self.assertEqual(plugin.ui_theme.get("accent"), "#d4a25a")
+        self.assertEqual(plugin.stop_timeout_seconds, 240)
+        self.assertEqual(plugin.stop_stdin_commands, ["save", "exit"])
+        triggered: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            self.assertTrue(mon.version_mismatch_enabled)
+            line = (
+                '[2026-08-04 08:45:04] Client "76561197968471340" '
+                "had wrong version (1.3.0)."
+            )
+            mon.ingest_stdout_line(line)
+            self.assertEqual(mon.state.version_mismatch_count, 1)
+            self.assertEqual(triggered, [line])
 
 
 class WorldSaveLocatorTests(unittest.TestCase):
@@ -778,13 +798,17 @@ class StatusFormatTests(unittest.TestCase):
         html = render_status_html(view, base_href="/api/hassio_ingress/token/")
         self.assertIn("<!DOCTYPE html>", html)
         self.assertIn("Necesse", html)
-        self.assertIn("Start new empty world", html)
+        self.assertNotIn("Start new empty world", html)
+        self.assertIn("NEW WORLD", html)
+        self.assertIn(f'value="{EMPTY_WORLD}"', html)
         self.assertIn("Restore selected backup", html)
+        self.assertIn("capture-row > button", html)
         # Docs examples must survive format() as literal JSON text.
         self.assertIn('{"archive":"…","confirm":true}', html)
         self.assertIn('{"empty":true,"confirm":true}', html)
         self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
         self.assertIn('href="/api/hassio_ingress/token/"', html)
+        self.assertIn(f"--accent: {DEFAULT_UI_THEME['accent']}", html)
 
     def test_status_http_get_index_returns_200(self) -> None:
         """Live HTTP GET / — same path Ingress hits on OPEN WEB UI."""
@@ -820,7 +844,8 @@ class StatusFormatTests(unittest.TestCase):
                 body = resp.read().decode("utf-8")
                 self.assertEqual(resp.status, 200)
             self.assertIn("Necesse", body)
-            self.assertIn("Start new empty world", body)
+            self.assertIn("NEW WORLD", body)
+            self.assertNotIn("Start new empty world", body)
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
         finally:
@@ -856,22 +881,37 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Necesse",
         )
-        # Goals: world size readable, low disk flagged, restore list includes archive.
+        # Goals: world size readable, low disk flagged, restore list includes archive
+        # plus NEW WORLD; disk hero shows free space without min-threshold noise.
         self.assertRegex(view["world_save"], r"\d")
         self.assertIn("FamilyWorld", view["world_save_hint"])
         self.assertEqual(view["disk_class"], "bad")
-        self.assertIn("512", view["disk_hint"])
+        self.assertEqual(view["disk_hint"], "")
         self.assertEqual(view["uptime_hint"], "Since world restore")
         self.assertIn(
             "backup-20260804T010000Z-schedule.tar.gz",
             view["backup_options"],
         )
+        self.assertIn("NEW WORLD", view["backup_options"])
+        self.assertIn(f'value="{EMPTY_WORLD}"', view["backup_options"])
         value, css, hint = _format_disk(
             {"disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512}}
         )
         self.assertEqual(css, "good")
         self.assertRegex(value, r"GiB|GB|MiB|MB")
-        self.assertIn("512", hint)
+        self.assertEqual(hint, "")
+        themed = resolve_ui_theme({"accent": "#d4a25a", "good": "#6fbf8a"})
+        self.assertEqual(themed["accent"], "#d4a25a")
+        self.assertEqual(themed["bg"], DEFAULT_UI_THEME["bg"])
+        html = render_status_html(
+            _ui_view(
+                {"running": True, "lifecycle": "running", "monitor": {}},
+                "Necesse",
+                ui_theme={"accent": "#d4a25a", "glow": "#243f33"},
+            )
+        )
+        self.assertIn("--accent: #d4a25a", html)
+        self.assertIn("#243f33", html)
 
     def test_fmt_ago(self) -> None:
         now = 1_700_000_000.0
@@ -1002,6 +1042,56 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(supervisor._update_bypass_window)
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
+
+    def test_version_mismatch_schedules_window_bypass_then_waits_for_empty(
+        self,
+    ) -> None:
+        """Mismatch forces apply past quiet hours; still honors empty-only."""
+
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            steamcmd_dir = root / "steamcmd"
+            world.mkdir()
+            logs.mkdir()
+            steamcmd_dir.mkdir()
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(steamcmd_dir),
+                update_when_empty_only=True,
+                update_on_version_mismatch=True,
+                update_window_start_hour=2,
+                update_window_end_hour=3,
+                game_options={
+                    "data_dir": str(world),
+                    "logs_dir": str(logs),
+                },
+            )
+            supervisor = GameServerSupervisor(plugin, cfg)
+            supervisor.monitor.state.players_known = True
+            supervisor.monitor.state.player_count = 1
+            supervisor.monitor.state.players = {"76561197968471340"}
+            supervisor._on_version_mismatch(
+                '[2026-08-04 08:45:04] Client "1" had wrong version (1.3.0).'
+            )
+            self.assertTrue(supervisor._update_pending)
+            self.assertEqual(supervisor._update_reason, "version_mismatch")
+            self.assertTrue(supervisor._update_bypass_window)
+            self.assertFalse(supervisor._update_ignore_players)
+            self.assertFalse(supervisor._can_apply_update())
+            supervisor.monitor.state.players = set()
+            supervisor.monitor.state.player_count = 0
+            self.assertTrue(supervisor._can_apply_update())
+            self.assertEqual(plugin.stop_timeout_seconds, 240)
+            self.assertEqual(plugin.stop_stdin_commands, ["save", "exit"])
 
     def test_request_empty_world_reset_schedules_clear(self) -> None:
         plugin = load_plugin(FIXTURE)
