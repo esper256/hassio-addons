@@ -29,7 +29,7 @@ executable:
   - -nogui
 bool_style: one_zero
 ready_timeout_seconds: 180
-# server_port is forced to 14159 by run.sh (matches published UDP mapping).
+# server_port comes from run.sh (HA Network tab / SERVER_PORT env).
 arg_map:
   world_name: -world
   server_port: -port

@@ -12,8 +12,8 @@ For the same guide on GitHub (including Docker/Portainer), see [README.md](READM
 
 1. Set **World name** and a **Server password** on the Configuration tab.
 2. **Start** the app.
-3. Forward **UDP 14159** on your router to this Home Assistant host.
-4. In Necesse, join `your-ha-ip:14159`.
+3. Forward the Network UDP port (default **14159**) on your router to this Home Assistant host.
+4. In Necesse, join `your-ha-ip` on that same port.
 5. On the Info tab click **OPEN WEB UI** for status, build id, backups, and log tools (optional: **Show in sidebar**).
 
 The first start downloads the dedicated server through Steam and can take several minutes. The **Logs** tab begins with `Home Assistant app version: …`, then `[steamcmd]` / `[game]` output. On a cold Steam cache the supervisor first waits until Steam app info is ready, then runs `app_update`.
