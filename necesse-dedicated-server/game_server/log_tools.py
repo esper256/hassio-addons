@@ -22,24 +22,28 @@ LOG = logging.getLogger("game_server.log_tools")
 
 KEYWORD_HINTS = {
     "player_join": [
-        r"\bconnected\b",
         r"\bjoined\b",
+        r"\bconnected\b",
+        r"\bhas joined\b",
         r"\blogin\b",
-        r"\bentering\b",
     ],
     "player_leave": [
         r"\bdisconnected\b",
         r"\bleft\b",
+        r"\bhas left\b",
         r"\blogout\b",
-        r"\bleaving\b",
+    ],
+    "player_count": [
+        r"\bplayers?\s+online\b",
+        r"\bonline\s+players?\b",
+        r"players?\s*[:=]\s*\d+",
     ],
     "version_mismatch": [
-        r"\bversion\b",
-        r"\boutdated\b",
-        r"\bmismatch\b",
-        r"\bincompatible\b",
         r"\bwrong version\b",
-        r"\bupdate\b",
+        r"\bversion mismatch\b",
+        r"\bincompatible version\b",
+        r"\boutdated (client|server|version)\b",
+        r"\bclient version\b",
     ],
     "game_version": [
         r"\bgame version\b",
@@ -48,9 +52,9 @@ KEYWORD_HINTS = {
     ],
     "ready": [
         r"\blistening\b",
-        r"\bstarted\b",
+        r"\bserver started\b",
+        r"\bstarted server\b",
         r"\bready\b",
-        r"\bdone\b",
         r"\bworld loaded\b",
     ],
 }

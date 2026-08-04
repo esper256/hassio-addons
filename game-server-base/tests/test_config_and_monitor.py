@@ -383,23 +383,22 @@ class MonitorTests(unittest.TestCase):
             self.assertGreater(report["dry_run_pattern_count"], 0)
             self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
 
-    def test_dry_run_matches_necesse_style_ready_lines(self) -> None:
+    def test_dry_run_matches_generic_ready_join_and_count_lines(self) -> None:
         plugin = load_plugin(FIXTURE)
         with tempfile.TemporaryDirectory() as tmp:
             mon = LogMonitor(plugin, tmp)
             mon.ingest_stdout_line(
-                "\x1b[39m[2026-08-03 12:59:33] Started server using port 14159 "
-                "with 10 slots on world \"FamilyWorld.zip\", game version 1.3.1."
+                "\x1b[39m[12:59:33] Server started successfully, version: 1.2.3"
             )
-            mon.ingest_stdout_line(
-                "[2026-08-03 12:59:48] Suggesting garbage collection due to empty server..."
-            )
+            mon.ingest_stdout_line("[12:59:40] Alice joined the game")
+            mon.ingest_stdout_line("[12:59:41] Players online: 1")
             highlights = mon.state.highlighted_lines
             self.assertTrue(highlights)
             joined = "\n".join(item["line"] for item in highlights)
-            self.assertIn("Started server using port", joined)
+            self.assertIn("Server started", joined)
             self.assertNotIn("\x1b[", joined)
-            self.assertIn("empty server", joined.lower())
+            self.assertIn("joined the game", joined.lower())
+            self.assertIn("players online", joined.lower())
             # Dry-run game_version candidates highlight but must not capture.
             self.assertIsNone(mon.state.game_version)
             self.assertTrue(
@@ -408,6 +407,12 @@ class MonitorTests(unittest.TestCase):
                     for item in highlights
                 )
             )
+            ready_stat = next(
+                p
+                for p in mon.pattern_report()["patterns"]
+                if p["category"] == "ready" and p["hits"] > 0
+            )
+            self.assertEqual(len(ready_stat["recent_lines"]), 1)
 
     def test_active_game_version_capture(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -874,12 +879,23 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn(f"--accent: {DEFAULT_UI_THEME['accent']}", html)
         self.assertIn('href="api/world/download"', html)
         self.assertIn("FamilyWorld.zip", html)
-        # Hero order: World save → Backups → Free disk
+        # Hero order: Uptime → Crashes … World save → Backups → Free disk
+        uptime_i = html.index(">Uptime<")
+        crashes_i = html.index(">Game server crashes<")
         world_i = html.index(">World save<")
         backups_i = html.index(">Backups<")
         disk_i = html.index(">Free disk<")
+        self.assertLess(uptime_i, crashes_i)
+        self.assertLess(crashes_i, world_i)
         self.assertLess(world_i, backups_i)
         self.assertLess(backups_i, disk_i)
+        self.assertIn("Recent possible matches", html)
+        self.assertNotIn(">Pattern</th>", html)
+        # Default (no debug_mode): log-watch hidden; players hidden without tracking.
+        self.assertIn('id="log-watch"', html)
+        self.assertIn("hidden", view["log_watch_class"])
+        self.assertTrue(view["log_watch_hidden"])
+        self.assertTrue(view["players_card_hidden"])
 
     def test_status_http_get_index_returns_200(self) -> None:
         """Live HTTP GET / — same path Ingress hits on OPEN WEB UI."""
@@ -917,9 +933,12 @@ class StatusFormatTests(unittest.TestCase):
             self.assertIn("Necesse", body)
             self.assertIn("NEW WORLD", body)
             self.assertNotIn("Start new empty world", body)
+            uptime_i = body.index(">Uptime<")
+            crashes_i = body.index(">Game server crashes<")
             world_i = body.index(">World save<")
             backups_i = body.index(">Backups<")
             disk_i = body.index(">Free disk<")
+            self.assertLess(uptime_i, crashes_i)
             self.assertLess(world_i, backups_i)
             self.assertLess(backups_i, disk_i)
         except urllib.error.HTTPError as exc:
@@ -1401,31 +1420,49 @@ class StatusFormatTests(unittest.TestCase):
                 "category": "ready",
                 "pattern": r"Started server",
                 "hits": 2,
-                "last_line": "Started server using port 1",
+                "recent_lines": ["Started server on port 1", "Started server again"],
+                "last_line": "Started server again",
             },
             {
                 "mode": "dry_run",
                 "category": "ready",
                 "pattern": r"\bready\b",
                 "hits": 5,
+                "recent_lines": ["ready"],
                 "last_line": "ready",
             },
             {
                 "mode": "dry_run",
                 "category": "player_count",
-                "pattern": r"empty server",
+                "pattern": r"players online",
                 "hits": 1,
-                "last_line": "empty server",
+                "recent_lines": ["Players online: 2"],
+                "last_line": "Players online: 2",
+            },
+            {
+                "mode": "dry_run",
+                "category": "player_count",
+                "pattern": r"online players",
+                "hits": 1,
+                "recent_lines": ["Online players: 2"],
+                "last_line": "Online players: 2",
             },
         ]
         rows = _format_pattern_rows(patterns)
-        self.assertIn("Started server", rows)
+        # Collapsed by category: one ready row (active), one player_count row.
+        self.assertEqual(rows.count("<tr>"), 2)
+        self.assertIn("ready", rows)
         self.assertIn("player_count", rows)
+        self.assertIn("Started server again", rows)
+        self.assertIn("Players online: 2", rows)
+        self.assertIn("Online players: 2", rows)
+        self.assertIn("recent-matches", rows)
         self.assertNotIn(r"\bready\b", rows)
+        self.assertNotIn("<code>", rows)
         highlights = _format_highlights(
             [
                 {
-                    "line": "Started server using port 1",
+                    "line": "Started server on port 1",
                     "matches": [
                         {"mode": "active", "category": "ready"},
                         {"mode": "dry_run", "category": "ready"},
@@ -1436,6 +1473,87 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("active:ready", highlights)
         self.assertNotIn("dry_run:ready", highlights)
+
+    def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
+        hidden = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "no_player_tracking",
+                "log_patterns": {
+                    "player_tracking_enabled": False,
+                    "patterns": [
+                        {
+                            "mode": "dry_run",
+                            "category": "player_count",
+                            "pattern": r"players online",
+                            "hits": 1,
+                            "recent_lines": ["Players online: 0"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": False},
+            },
+            "ExampleGame",
+        )
+        self.assertTrue(hidden["log_watch_hidden"])
+        self.assertTrue(hidden["players_card_hidden"])
+        self.assertIn("hidden", hidden["log_watch_class"])
+        self.assertIn("hidden", hidden["players_card_class"])
+
+        debug = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": True,
+                "waits_for_empty_server": "no_player_tracking",
+                "log_patterns": {
+                    "player_tracking_enabled": False,
+                    "patterns": [
+                        {
+                            "mode": "dry_run",
+                            "category": "player_count",
+                            "pattern": r"players online",
+                            "hits": 1,
+                            "recent_lines": ["Players online: 0"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": False},
+            },
+            "ExampleGame",
+        )
+        self.assertFalse(debug["log_watch_hidden"])
+        self.assertFalse(debug["players_card_hidden"])
+        self.assertEqual(debug["log_watch_class"], "")
+        self.assertEqual(debug["players_card_class"], "")
+
+        tracked = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "yes",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_join",
+                            "pattern": r"joined",
+                            "hits": 1,
+                            "recent_lines": ["Alice joined"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": True, "player_count": 1},
+            },
+            "Necesse",
+        )
+        self.assertTrue(tracked["log_watch_hidden"])
+        self.assertFalse(tracked["players_card_hidden"])
+        self.assertEqual(tracked["players"], "1")
 
 
 class ProcessStopTests(unittest.TestCase):

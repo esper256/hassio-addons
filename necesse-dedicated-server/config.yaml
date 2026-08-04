@@ -44,6 +44,7 @@ options:
   restart_on_crash: true
   status_http_enabled: true
   ha_notifications: true
+  debug_mode: false
   backup_enabled: true
   backup_interval_minutes: 360
   backup_on_update: true
@@ -72,6 +73,7 @@ schema:
   restart_on_crash: bool
   status_http_enabled: bool
   ha_notifications: bool
+  debug_mode: bool
   backup_enabled: bool
   backup_interval_minutes: int(0,)
   backup_on_update: bool

@@ -438,6 +438,7 @@ class GameServerSupervisor:
             "waits_for_empty_server": waits_for_empty_server,
             # Same values as waits_for_empty_server (legacy field name).
             "player_gating": waits_for_empty_server,
+            "debug_mode": bool(self.config.debug_mode),
             "steam_gate": self.steam_gate.to_dict(),
             "disk": {
                 "ok": disk_ok,

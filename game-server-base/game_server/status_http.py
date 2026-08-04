@@ -226,6 +226,20 @@ HTML_PAGE = """<!DOCTYPE html>
     .tag.stale {{ border-color: var(--bad); color: var(--bad); }}
     .warn {{ color: var(--accent); }}
     code {{ color: var(--ink); }}
+    .hidden {{ display: none !important; }}
+    .recent-matches {{
+      font-size: 0.75rem;
+      line-height: 1.35;
+      max-height: 6.8rem;
+      overflow: auto;
+      max-width: 40rem;
+    }}
+    .recent-matches div {{
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+    }}
   </style>
 </head>
 <body>
@@ -234,7 +248,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <p class="sub" id="subtitle">{subtitle}</p>
     <div class="grid" id="status-grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
-      <div class="stat">
+      <div class="stat {players_card_class}" id="card-players">
         <div class="label">Number of players</div>
         <div class="value" id="v-players">{players}</div>
         <div class="hint" id="h-players">{players_hint}</div>
@@ -243,6 +257,11 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="label">Uptime</div>
         <div class="value" id="v-uptime">{uptime}</div>
         <div class="hint" id="h-uptime">{uptime_hint}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Game server crashes</div>
+        <div class="value" id="v-crashes">{crashes}</div>
+        <div class="hint" id="h-crashes">{crashes_hint}</div>
       </div>
       <div class="stat">
         <div class="label">Game version</div>
@@ -254,11 +273,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="label">Update pending</div>
         <div class="value" id="v-update">{update_pending}</div>
         <div class="hint" id="h-update">{update_check_hint}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Game server crashes</div>
-        <div class="value" id="v-crashes">{crashes}</div>
-        <div class="hint" id="h-crashes">{crashes_hint}</div>
       </div>
       <div class="stat">
         <div class="label">World save</div>
@@ -299,7 +313,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </button>
     </div>
 
-    <details class="log-watch"{log_watch_open}>
+    <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
       <summary>Game server log watching pattern hits</summary>
       <p class="sub">
         <span class="tag active">active</span> can trigger updates/player state.
@@ -308,7 +322,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </p>
       <table>
         <thead>
-          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Pattern</th><th>Last line</th></tr>
+          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent possible matches</th></tr>
         </thead>
         <tbody id="pattern-rows">
           {pattern_rows}
@@ -467,8 +481,14 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
         setText('v-players', u.players);
         setText('h-players', u.players_hint);
+        const playersCard = document.getElementById('card-players');
+        if (playersCard) {{
+          playersCard.classList.toggle('hidden', !!u.players_card_hidden);
+        }}
         setText('v-uptime', u.uptime);
         setText('h-uptime', u.uptime_hint);
+        setText('v-crashes', u.crashes);
+        setText('h-crashes', u.crashes_hint);
         setText('v-game-version', u.game_version);
         setText('h-game-version-build', u.game_version_build);
         setText('h-game-version-installed', u.game_version_installed);
@@ -477,8 +497,10 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('v-backups', u.backups);
         setText('h-backups-oldest', u.backups_oldest);
         setText('h-backups-newest', u.backups_newest);
-        setText('v-crashes', u.crashes);
-        setText('h-crashes', u.crashes_hint);
+        const logWatch = document.getElementById('log-watch');
+        if (logWatch) {{
+          logWatch.classList.toggle('hidden', !!u.log_watch_hidden);
+        }}
         setText('v-world', u.world_save);
         setHtml('h-world', u.world_save_hint);
         const disk = document.getElementById('v-disk');
@@ -1134,7 +1156,8 @@ def _ui_view(
     """Formatted strings for the status page and soft-refresh JSON."""
 
     monitor = status.get("monitor") or {}
-    patterns = (status.get("log_patterns") or {}).get("patterns") or []
+    log_patterns = status.get("log_patterns") or {}
+    patterns = log_patterns.get("patterns") or []
     has_active = any((item.get("mode") or "") == "active" for item in patterns)
     active_categories = _active_pattern_categories(patterns)
     highlights = _format_highlights(
@@ -1149,6 +1172,14 @@ def _ui_view(
         else "Unknown until player patterns are promoted"
     )
     waits = status.get("waits_for_empty_server") or status.get("player_gating")
+    debug_mode = bool(status.get("debug_mode"))
+    player_tracking = bool(log_patterns.get("player_tracking_enabled"))
+    if waits in ("no_player_tracking", "inactive_no_active_patterns"):
+        player_tracking = False
+    # Players card: hide while player_count/join/leave are still dry-run only,
+    # unless debug mode is on (operator is tuning patterns).
+    players_card_hidden = (not debug_mode) and (not player_tracking)
+    log_watch_hidden = not debug_mode
     if waits in ("no_player_tracking", "inactive_no_active_patterns"):
         update_players_note = (
             "Updates will not wait for players to leave until join/leave "
@@ -1159,6 +1190,16 @@ def _ui_view(
         update_players_note = (
             "When a newer build is available, the restart waits until nobody "
             "is online so players are not interrupted."
+        )
+    if log_watch_hidden and waits in (
+        "no_player_tracking",
+        "inactive_no_active_patterns",
+    ):
+        # Non-debug operators cannot see dry-run highlights; keep the note short.
+        update_players_note = (
+            "Updates will not wait for an empty server until player join/leave "
+            "log patterns are configured. Enable Debug mode to inspect dry-run "
+            "pattern hits, or promote patterns in the game plugin."
         )
     uptime, uptime_hint = _format_uptime(status)
     game_version, game_version_build, game_version_installed = _format_game_version(
@@ -1176,6 +1217,8 @@ def _ui_view(
         "running_class": running_class,
         "players": players,
         "players_hint": players_hint,
+        "players_card_class": "hidden" if players_card_hidden else "",
+        "players_card_hidden": players_card_hidden,
         "uptime": uptime,
         "uptime_hint": uptime_hint,
         "game_version": game_version,
@@ -1196,6 +1239,8 @@ def _ui_view(
         "update_players_note": update_players_note,
         # Collapse once any active pattern exists (setup complete enough).
         "log_watch_open": "" if has_active else " open",
+        "log_watch_class": "hidden" if log_watch_hidden else "",
+        "log_watch_hidden": log_watch_hidden,
         "pattern_rows": _format_pattern_rows(patterns),
         "highlights": highlights,
         "capture_options": _format_capture_options(status.get("log_captures") or []),
@@ -1214,6 +1259,7 @@ _STATUS_HTML_KEYS = (
     "running_class",
     "players",
     "players_hint",
+    "players_card_class",
     "uptime",
     "uptime_hint",
     "game_version",
@@ -1233,6 +1279,7 @@ _STATUS_HTML_KEYS = (
     "disk_hint",
     "update_players_note",
     "log_watch_open",
+    "log_watch_class",
     "pattern_rows",
     "highlights",
     "capture_options",
@@ -1259,6 +1306,7 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         running_class=_html_escape(view["running_class"]),
         players=_html_escape(view["players"]),
         players_hint=_html_escape(view["players_hint"]),
+        players_card_class=_html_escape(view.get("players_card_class") or ""),
         uptime=_html_escape(view["uptime"]),
         uptime_hint=_html_escape(view["uptime_hint"]),
         game_version=_html_escape(view["game_version"]),
@@ -1279,6 +1327,7 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         disk_hint=_html_escape(view["disk_hint"]),
         update_players_note=_html_escape(view["update_players_note"]),
         log_watch_open=view["log_watch_open"],
+        log_watch_class=_html_escape(view.get("log_watch_class") or ""),
         pattern_rows=view["pattern_rows"],
         highlights=_html_escape(view["highlights"]),
         capture_options=view["capture_options"],
@@ -1305,9 +1354,43 @@ def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:
     }
 
 
+def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
+    """Up to 3 newest matching lines for one regex (newest first)."""
+
+    recent = item.get("recent_lines")
+    lines: list[str]
+    if isinstance(recent, list) and recent:
+        lines = [str(x) for x in recent if str(x).strip()]
+    elif item.get("last_line"):
+        lines = [str(item.get("last_line"))]
+    else:
+        lines = []
+    # Deque stores oldest→newest; present newest first.
+    return list(reversed(lines[-3:]))
+
+
+def _format_recent_matches_cell(items: list[dict[str, Any]]) -> str:
+    """Render recent hits from each regex in a collapsed category row."""
+
+    seen: set[str] = set()
+    parts: list[str] = []
+    for item in items:
+        for line in _recent_matches_for_pattern(item):
+            text = strip_ansi(line).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            if len(text) > 160:
+                text = text[:160] + "…"
+            parts.append(f"<div>{_html_escape(text)}</div>")
+    if not parts:
+        return ""
+    return f"<div class='recent-matches'>{''.join(parts)}</div>"
+
+
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     if not patterns:
-        return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
+        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
     active_categories = _active_pattern_categories(patterns)
     # Hide dry-run rows once that category already has an active pattern.
     visible = [
@@ -1319,9 +1402,31 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
         )
     ]
     if not visible:
-        return "<tr><td colspan='5'>(no patterns to show)</td></tr>"
+        return "<tr><td colspan='4'>(no patterns to show)</td></tr>"
+
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for item in visible:
+        category = str(item.get("category") or "") or "(unknown)"
+        by_category.setdefault(category, []).append(item)
+
+    groups: list[dict[str, Any]] = []
+    for category, items in by_category.items():
+        modes = {str(i.get("mode") or "dry_run") for i in items}
+        mode = "active" if "active" in modes else "dry_run"
+        hits = sum(int(i.get("hits") or 0) for i in items)
+        stale = any(bool(i.get("stale")) for i in items if int(i.get("hits") or 0) > 0)
+        groups.append(
+            {
+                "category": category,
+                "mode": mode,
+                "hits": hits,
+                "stale": stale,
+                "items": items,
+            }
+        )
+
     ordered = sorted(
-        visible,
+        groups,
         key=lambda item: (
             0 if item.get("hits") else 1,
             0 if item.get("mode") == "active" else 1,
@@ -1330,19 +1435,16 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
         ),
     )
     rows = []
-    for item in ordered[:60]:
-        mode = item.get("mode") or "dry_run"
-        stale = " <span class='tag stale'>stale</span>" if item.get("stale") else ""
-        last = item.get("last_line") or ""
-        if len(last) > 140:
-            last = last[:140] + "…"
+    for group in ordered[:40]:
+        mode = group.get("mode") or "dry_run"
+        stale = " <span class='tag stale'>stale</span>" if group.get("stale") else ""
+        recent = _format_recent_matches_cell(list(group.get("items") or []))
         rows.append(
             "<tr>"
             f"<td><span class='tag {mode}'>{mode}</span>{stale}</td>"
-            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
-            f"<td>{int(item.get('hits') or 0)}</td>"
-            f"<td><code>{_html_escape(str(item.get('pattern') or ''))}</code></td>"
-            f"<td>{_html_escape(strip_ansi(last))}</td>"
+            f"<td>{_html_escape(str(group.get('category') or ''))}</td>"
+            f"<td>{int(group.get('hits') or 0)}</td>"
+            f"<td>{recent}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -1356,7 +1458,7 @@ def _format_highlights(
     if not items:
         return (
             "(no pattern hits yet — once the server is online, dry_run candidates "
-            "should light up lines like “Started server…” or “empty server”)"
+            "should light up lines like “server started” or “player joined”)"
         )
     active = active_categories or set()
     lines = []
