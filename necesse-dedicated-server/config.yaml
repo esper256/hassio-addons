@@ -22,7 +22,7 @@ panel_title: Necesse
 ports:
   14159/udp: 14159
 ports_description:
-  14159/udp: Host UDP port clients use (forwards to container 14159; Necesse always listens on 14159 inside)
+  14159/udp: Port players type in Necesse to join (UDP). Change only if 14159 is already taken on this machine.
 options:
   world_name: "FamilyWorld"
   server_password: ""

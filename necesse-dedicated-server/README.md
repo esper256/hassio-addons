@@ -22,8 +22,8 @@ Requires an **amd64** Home Assistant OS host (SteamCMD). On aarch64 machines the
    - **World name** — the save players will join (default `FamilyWorld`)
    - **Server password** — recommended for a house server
 5. Start the add-on.
-6. On your router, forward **UDP 14159** to your Home Assistant host.
-7. In Necesse, connect to your HA host IP on port `14159` (with the password if you set one).
+6. On your router, forward the Network UDP port (default **14159**) to your Home Assistant host.
+7. In Necesse, connect to your HA host IP on that same port (with the password if you set one).
 
 The first start downloads the dedicated server through Steam. That can take several minutes. Watch the app **Logs** tab — the very first lines print `Home Assistant app version: …` so you can confirm the install. On a cold Steam cache the supervisor waits for app info readiness before installing.
 
@@ -57,7 +57,7 @@ You do not need every advanced knob. These are the ones families usually touch:
 | Update only when empty | Wait until nobody is online before restarting (needs working join/leave detection) |
 | Backup retention | `minimal` / `standard` / `extended` — scheduled history + pre-restore keep window |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
-| Network → 14159/udp | Host UDP port clients use (container always listens on 14159) |
+| Network → UDP port | Port players type in Necesse (default 14159; change only if that port is already taken) |
 
 Optional quiet hours (`update_window_start_hour` / `end`) further limit when a pending update may restart the server. Leave them empty to allow the restart any time once the server is empty.
 
