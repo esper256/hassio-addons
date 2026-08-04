@@ -216,7 +216,7 @@ class ProcessManager:
         """Stop the game process as gracefully as the timeout allows.
 
         Sequence (all within ``timeout``):
-        1. Send plugin stdin stop commands (``save`` / ``exit``) when configured
+        1. Send plugin ``stop_stdin_commands`` when configured
         2. Wait for a voluntary exit
         3. Escalate to SIGTERM, then SIGKILL only if still running
 
@@ -248,8 +248,9 @@ class ProcessManager:
             return
 
         deadline = time.time() + timeout
-        # Spend most of the budget waiting for save/exit. Escalate late so HA's
-        # Docker stop grace (add-on timeout, ≤300s) is not burned on SIGKILL.
+        # Spend most of the budget waiting for stdin stop commands. Escalate
+        # late so HA's Docker stop grace (add-on timeout, ≤300s) is not burned
+        # on SIGKILL.
         term_budget = min(30.0, max(5.0, timeout * 0.12))
         kill_budget = min(10.0, max(3.0, timeout * 0.05))
         escalate_budget = term_budget + kill_budget
