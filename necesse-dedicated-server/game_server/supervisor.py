@@ -49,6 +49,10 @@ class GameServerSupervisor:
         self._update_not_before = 0.0
         self._apply_failures = 0
         self._update_lock = threading.Lock()
+        self._restore_pending: str | None = None
+        self._restore_lock = threading.Lock()
+        self.last_restore_error: str | None = None
+        self.last_restore_at: float | None = None
         self.local_build_id: str | None = None
         self.remote_build_id: str | None = None
         self.last_update_check_at: float | None = None
@@ -129,12 +133,110 @@ class GameServerSupervisor:
             min_free_disk_mb=config.min_free_disk_mb,
             max_backoff_minutes=config.backup_max_backoff_minutes,
         )
+        self.backups.set_failure_callback(self._on_backup_failure)
         self.status_server: StatusServer | None = None
         self._update_thread: threading.Thread | None = None
         self._status_thread: threading.Thread | None = None
 
     def capture_logs(self, reason: str = "manual") -> dict[str, Any]:
         return self.log_tools.capture(reason=reason, status=self.status())
+
+    def _on_backup_failure(self, reason: str) -> None:
+        self.notifier.notify(
+            "backup_failed",
+            f"{self.plugin.name}: backup failed",
+            (
+                f"{reason}\n"
+                f"Consecutive failures: {self.backups.consecutive_failures}. "
+                "The next attempt backs off automatically."
+            ),
+        )
+
+    def request_restore(self, archive_name: str) -> dict[str, Any]:
+        """Schedule a world restore from Ingress (runs on the supervisor loop)."""
+
+        archive = self.backups.resolve_archive(archive_name)
+        if archive is None:
+            return {
+                "ok": False,
+                "error": f"Backup not found or invalid name: {archive_name}",
+            }
+        with self._restore_lock:
+            if self._restore_pending:
+                return {
+                    "ok": False,
+                    "error": f"A restore is already pending ({self._restore_pending})",
+                }
+            if self._update_pending:
+                return {
+                    "ok": False,
+                    "error": "An update is already pending; wait for it to finish",
+                }
+            self._restore_pending = archive.name
+        LOG.warning("World restore scheduled from archive %s", archive.name)
+        return {
+            "ok": True,
+            "message": (
+                f"Restore of {archive.name} scheduled. The server will stop, "
+                "save the current world as a pre-restore safety copy (kept outside "
+                "normal backup rotation), replace the world from the archive, "
+                "and restart."
+            ),
+            "archive": archive.name,
+            "restore_pending": True,
+        }
+
+    def _apply_restore(self, archive_name: str) -> None:
+        archive = self.backups.resolve_archive(archive_name)
+        if archive is None:
+            raise FileNotFoundError(f"backup archive not found: {archive_name}")
+
+        LOG.info("Applying world restore from %s", archive.name)
+        if self.process.running:
+            self.process.stop()
+
+        try:
+            safety = self.backups.create_backup(reason="safety", pinned=True)
+            if safety is None:
+                raise RuntimeError(
+                    self.backups.last_error
+                    or self.backups.last_skip_reason
+                    or "could not create pre-restore safety backup"
+                )
+            LOG.info("Pre-restore safety copy saved as %s", safety.name)
+            result = self.backups.restore_archive(archive)
+            self.last_restore_at = time.time()
+            self.last_restore_error = None
+        except Exception as exc:
+            self.last_restore_error = str(exc)
+            LOG.exception("World restore failed")
+            self.notifier.notify(
+                "restore_failed",
+                f"{self.plugin.name}: world restore failed",
+                str(exc),
+                force=True,
+            )
+            if not self.process.running and not self._stop.is_set():
+                try:
+                    self.monitor.reset_session()
+                    self.process.start(reason="restore_failed")
+                except OSError:
+                    LOG.exception("Failed restarting server after restore failure")
+            raise
+
+        self.monitor.reset_session()
+        self.process.start(reason="restore")
+        self.notifier.notify(
+            "restored",
+            f"{self.plugin.name}: world restored",
+            (
+                f"Restored {archive.name}. "
+                "Previous world kept as a pre-restore safety copy outside "
+                "normal rotation."
+            ),
+            force=True,
+        )
+        LOG.info("World restore complete: %s", result)
 
     def status(self) -> dict[str, Any]:
         monitor = self.monitor.state.to_dict()
@@ -189,6 +291,9 @@ class GameServerSupervisor:
             "auto_update_interval_minutes": self.config.auto_update_interval_minutes,
             "auto_update_check_hour": self.config.auto_update_check_hour,
             "install_dir": self.config.install_dir,
+            "restore_pending": self._restore_pending,
+            "last_restore_at": self.last_restore_at,
+            "last_restore_error": self.last_restore_error,
             # Plain-language status for the UI (avoid "gating" jargon).
             "waits_for_empty_server": waits_for_empty_server,
             # Backward-compatible alias for older status consumers.
@@ -469,6 +574,12 @@ class GameServerSupervisor:
             except (OSError, tarfile.TarError) as exc:
                 # Do not mutate the install when we could not snapshot the world.
                 LOG.exception("Pre-update backup failed; aborting update")
+                self.notifier.notify(
+                    "backup_failed",
+                    f"{self.plugin.name}: pre-update backup failed",
+                    f"Update aborted until a world backup succeeds.\n{exc}",
+                    force=True,
+                )
                 self._schedule_update_retry(exc)
                 self._restart_existing_after_update_failure()
                 raise
@@ -660,6 +771,8 @@ class GameServerSupervisor:
                 log_toolbox=self.log_tools,
                 capture_callback=self.capture_logs,
                 update_callback=self.force_update_now,
+                restore_callback=self.request_restore,
+                backups_provider=lambda: self.backups.list_restorable_archives(),
             )
             self.status_server.start()
 
@@ -680,6 +793,17 @@ class GameServerSupervisor:
         self._update_thread.start()
 
         while not self._stop.is_set():
+            if self._restore_pending:
+                archive_name = self._restore_pending
+                try:
+                    self._apply_restore(archive_name)
+                except Exception:
+                    LOG.exception("World restore from %s failed", archive_name)
+                finally:
+                    with self._restore_lock:
+                        if self._restore_pending == archive_name:
+                            self._restore_pending = None
+
             if self._update_pending and self._can_apply_update():
                 try:
                     self._apply_update()
@@ -698,7 +822,7 @@ class GameServerSupervisor:
                 continue
             if self._stop.is_set():
                 break
-            if self._update_pending:
+            if self._update_pending or self._restore_pending:
                 continue
             if self.process.intentional_stop:
                 break

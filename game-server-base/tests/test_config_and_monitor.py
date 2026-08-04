@@ -37,7 +37,9 @@ from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests 
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
     _format_backups,
+    _format_backup_options,
     _format_crashes_hint,
+    _format_disk,
     _format_game_version,
     _format_highlights,
     _format_install_updated,
@@ -408,6 +410,45 @@ class BackupRetentionTests(unittest.TestCase):
             self.assertTrue(oldest.startswith("Oldest: "))
             self.assertTrue(newest.startswith("Newest: "))
 
+    def test_pinned_pre_restore_and_restore_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"ORIGINAL-WORLD-DATA" * 8)
+            failures: list[str] = []
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            mgr.set_failure_callback(failures.append)
+            archive = mgr.create_backup(reason="schedule")
+            self.assertIsNotNone(archive)
+            assert archive is not None
+            (source / "save.bin").write_bytes(b"CHANGED-WORLD-DATA!" * 8)
+            safety = mgr.create_backup(reason="safety", pinned=True)
+            self.assertIsNotNone(safety)
+            assert safety is not None
+            self.assertTrue(safety.name.startswith("pre-restore-"))
+            for i in range(30):
+                fake = backup_dir / f"backup-20260101T{i:06d}Z-schedule.tar.gz"
+                fake.write_bytes(b"z" * 80)
+                os.utime(fake, (1_700_000_000 + i, 1_700_000_000 + i))
+            mgr._prune()
+            self.assertTrue(safety.is_file())
+            self.assertIsNone(mgr.resolve_archive("../evil.tar.gz"))
+            mgr.restore_archive(archive.name)
+            self.assertEqual(
+                (source / "save.bin").read_bytes(),
+                b"ORIGINAL-WORLD-DATA" * 8,
+            )
+            mgr._register_failure("no space")
+            self.assertEqual(failures, ["no space"])
+
     def test_profiles(self) -> None:
         standard = retention_from_profile("standard")
         self.assertEqual(standard.keep_daily, 7)
@@ -554,6 +595,49 @@ class VersionTests(unittest.TestCase):
 
 
 class StatusFormatTests(unittest.TestCase):
+    def test_world_save_and_disk_cards_in_ui_view(self) -> None:
+        view = _ui_view(
+            {
+                "running": True,
+                "game_uptime_seconds": 10,
+                "last_start_reason": "restore",
+                "crash_count": 0,
+                "world_save": {
+                    "bytes": 2 * 1024 * 1024,
+                    "label": "FamilyWorld.zip",
+                    "scope": "named_path",
+                },
+                "disk": {"ok": False, "free_mb": 100, "min_free_disk_mb": 512},
+                "backups": {
+                    "archive_count": 1,
+                    "restorable": [
+                        {
+                            "name": "backup-20260804T010000Z-schedule.tar.gz",
+                            "kind": "backup",
+                            "mtime": time.time() - 3600,
+                        }
+                    ],
+                },
+                "waits_for_empty_server": "yes",
+            },
+            "Necesse",
+        )
+        self.assertEqual(view["world_save"], "2.0 MB")
+        self.assertEqual(view["world_save_hint"], "FamilyWorld.zip")
+        self.assertEqual(view["disk"], "100 MiB")
+        self.assertEqual(view["disk_class"], "bad")
+        self.assertIn("Min 512", view["disk_hint"])
+        self.assertEqual(view["uptime_hint"], "Since world restore")
+        self.assertIn(
+            "backup-20260804T010000Z-schedule.tar.gz",
+            view["backup_options"],
+        )
+        value, css, hint = _format_disk(
+            {"disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512}}
+        )
+        self.assertEqual(value, "2.0 GiB")
+        self.assertEqual(css, "good")
+
     def test_fmt_ago(self) -> None:
         now = 1_700_000_000.0
         self.assertEqual(_fmt_ago(now - 10, now=now), "just now")

@@ -207,11 +207,34 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="value" id="v-crashes">{crashes}</div>
         <div class="hint" id="h-crashes">{crashes_hint}</div>
       </div>
+      <div class="stat">
+        <div class="label">World save</div>
+        <div class="value" id="v-world">{world_save}</div>
+        <div class="hint" id="h-world">{world_save_hint}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Free disk</div>
+        <div class="value {disk_class}" id="v-disk">{disk}</div>
+        <div class="hint" id="h-disk">{disk_hint}</div>
+      </div>
     </div>
     <p class="sub warn" id="update-players-note">{update_players_note}</p>
     <div class="actions" id="update-actions">
       <button type="button" id="btn-force-update" onclick="return forceUpdate(event)">
         Update game server now
+      </button>
+    </div>
+
+    <h2>World backups</h2>
+    <p class="sub">
+      Restore replaces the live world. The current world is saved first as a
+      pre-restore safety copy kept outside normal backup rotation.
+    </p>
+    <div class="capture-row">
+      <label for="backup-select">Saved backups</label>
+      <select id="backup-select">{backup_options}</select>
+      <button type="button" id="btn-restore" onclick="return restoreBackup(event)">
+        Restore selected backup
       </button>
     </div>
 
@@ -252,6 +275,8 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/status">Status JSON</a></li>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
+        <li><a href="api/backups">Backups list JSON</a></li>
+        <li>POST <code>api/backups/restore</code> — restore selected archive</li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
@@ -268,6 +293,45 @@ HTML_PAGE = """<!DOCTYPE html>
         window.location = data.download_path.replace(/^\\//, '');
       }} else {{
         alert(JSON.stringify(data, null, 2));
+      }}
+      return false;
+    }}
+    async function restoreBackup(ev) {{
+      ev.preventDefault();
+      const select = document.getElementById('backup-select');
+      if (!select || !select.value) {{
+        alert('No backup selected');
+        return false;
+      }}
+      const name = select.value;
+      const ok = window.confirm(
+        'Restore this backup over the live world?\\n\\n' +
+        name + '\\n\\n' +
+        'The game server will stop. The current world is saved first as a ' +
+        'pre-restore safety copy (kept outside normal backup rotation), then ' +
+        'the selected backup replaces the world and the server restarts.\\n\\n' +
+        'Anyone playing will be disconnected.'
+      );
+      if (!ok) return false;
+      const btn = document.getElementById('btn-restore');
+      if (btn) btn.disabled = true;
+      try {{
+        const res = await fetch('api/backups/restore', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ archive: name }}),
+        }});
+        const data = await res.json();
+        if (data.ok) {{
+          alert(data.message || 'Restore scheduled.');
+          softRefresh();
+        }} else {{
+          alert(data.error || 'Could not schedule restore.');
+        }}
+      }} catch (e) {{
+        alert('Could not schedule restore.');
+      }} finally {{
+        if (btn) btn.disabled = false;
       }}
       return false;
     }}
@@ -339,6 +403,14 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('h-backups-newest', u.backups_newest);
         setText('v-crashes', u.crashes);
         setText('h-crashes', u.crashes_hint);
+        setText('v-world', u.world_save);
+        setText('h-world', u.world_save_hint);
+        const disk = document.getElementById('v-disk');
+        if (disk) {{
+          disk.textContent = u.disk;
+          disk.className = 'value ' + (u.disk_class || '');
+        }}
+        setText('h-disk', u.disk_hint);
         setText('update-players-note', u.update_players_note);
         setHtml('pattern-rows', u.pattern_rows);
         setText('highlights', u.highlights);
@@ -347,6 +419,12 @@ HTML_PAGE = """<!DOCTYPE html>
           const prev = sel.value;
           sel.innerHTML = u.capture_options;
           if (prev) sel.value = prev;
+        }}
+        const bsel = document.getElementById('backup-select');
+        if (bsel && u.backup_options) {{
+          const prev = bsel.value;
+          bsel.innerHTML = u.backup_options;
+          if (prev) bsel.value = prev;
         }}
       }} catch (e) {{}}
     }}
@@ -368,6 +446,8 @@ class StatusServer:
         log_toolbox=None,
         capture_callback: Callable[[str], dict[str, Any]] | None = None,
         update_callback: Callable[[], dict[str, Any]] | None = None,
+        restore_callback: Callable[[str], dict[str, Any]] | None = None,
+        backups_provider: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -376,6 +456,8 @@ class StatusServer:
         self.log_toolbox = log_toolbox
         self.capture_callback = capture_callback
         self.update_callback = update_callback
+        self.restore_callback = restore_callback
+        self.backups_provider = backups_provider
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -385,6 +467,8 @@ class StatusServer:
         toolbox = self.log_toolbox
         capture_cb = self.capture_callback
         update_cb = self.update_callback
+        restore_cb = self.restore_callback
+        backups_cb = self.backups_provider
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
@@ -445,6 +529,33 @@ class StatusServer:
                     result = update_cb()
                     self._json(200 if result.get("ok") else 409, result)
                     return
+                if path == "/api/backups/restore":
+                    if restore_cb is None:
+                        self._json(
+                            501, {"ok": False, "error": "restore unavailable"}
+                        )
+                        return
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8") or "{}")
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        self._json(400, {"ok": False, "error": "invalid JSON body"})
+                        return
+                    if not isinstance(payload, dict):
+                        self._json(400, {"ok": False, "error": "expected JSON object"})
+                        return
+                    archive = str(
+                        payload.get("archive") or payload.get("name") or ""
+                    ).strip()
+                    if not archive:
+                        self._json(
+                            400, {"ok": False, "error": "missing archive name"}
+                        )
+                        return
+                    result = restore_cb(archive)
+                    self._json(200 if result.get("ok") else 409, result)
+                    return
                 self._json(404, {"error": "not found"})
 
             def do_GET(self) -> None:  # noqa: N802
@@ -468,6 +579,14 @@ class StatusServer:
 
                 if path == "/api/ui":
                     self._json(200, _ui_view(status, game_name))
+                    return
+
+                if path == "/api/backups":
+                    if backups_cb is not None:
+                        archives = backups_cb()
+                    else:
+                        archives = (status.get("backups") or {}).get("restorable") or []
+                    self._json(200, {"archives": archives})
                     return
 
                 if path == "/api/logs":
@@ -584,11 +703,17 @@ class StatusServer:
                         backups_newest=_html_escape(view["backups_newest"]),
                         crashes=_html_escape(str(view["crashes"])),
                         crashes_hint=_html_escape(view["crashes_hint"]),
+                        world_save=_html_escape(view["world_save"]),
+                        world_save_hint=_html_escape(view["world_save_hint"]),
+                        disk=_html_escape(view["disk"]),
+                        disk_class=_html_escape(view["disk_class"]),
+                        disk_hint=_html_escape(view["disk_hint"]),
                         update_players_note=_html_escape(view["update_players_note"]),
                         log_watch_open=view["log_watch_open"],
                         pattern_rows=view["pattern_rows"],
                         highlights=_html_escape(view["highlights"]),
                         capture_options=view["capture_options"],
+                        backup_options=view["backup_options"],
                     ).encode("utf-8")
                     self._send(200, html, "text/html; charset=utf-8")
                     return
@@ -695,6 +820,8 @@ def _format_uptime(status: dict[str, Any]) -> tuple[str, str]:
         hint = "Since crash restart"
     elif reason in ("update", "update_failed"):
         hint = "Since server update"
+    elif reason in ("restore", "restore_failed"):
+        hint = "Since world restore"
     else:
         hint = "Since first start"
     return value, hint
@@ -785,6 +912,55 @@ def _format_install_updated(status: dict[str, Any]) -> tuple[str, str]:
     return "Unknown", "No Steam install stamp yet"
 
 
+def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (value, css class, hint) for free disk under the backup volume."""
+
+    info = status.get("disk") or {}
+    free = info.get("free_mb")
+    minimum = info.get("min_free_disk_mb")
+    ok = bool(info.get("ok"))
+    try:
+        free_mb = float(free) if free is not None else None
+    except (TypeError, ValueError):
+        free_mb = None
+    try:
+        min_mb = int(minimum) if minimum is not None else 0
+    except (TypeError, ValueError):
+        min_mb = 0
+    if free_mb is None:
+        return "Unknown", "", f"Min {min_mb} MiB"
+    if free_mb >= 1024:
+        value = f"{free_mb / 1024:.1f} GiB"
+    else:
+        value = f"{free_mb:.0f} MiB"
+    hint = f"Min {min_mb} MiB free required"
+    return value, ("good" if ok else "bad"), hint
+
+
+def _format_backup_options(status: dict[str, Any]) -> str:
+    info = status.get("backups") or {}
+    archives = info.get("restorable") or []
+    if not isinstance(archives, list) or not archives:
+        return '<option value="">No backups yet</option>'
+    options: list[str] = []
+    for item in archives:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        kind = str(item.get("kind") or "backup")
+        mtime = item.get("mtime")
+        age = _fmt_ago(mtime) if mtime else "unknown age"
+        label = f"{name} ({kind}, {age})"
+        options.append(
+            f'<option value="{_html_escape(name)}">{_html_escape(label)}</option>'
+        )
+    if not options:
+        return '<option value="">No backups yet</option>'
+    return "\n".join(options)
+
+
 def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     info = status.get("world_save") or {}
     raw_bytes = info.get("bytes")
@@ -845,6 +1021,8 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         status
     )
     backups, backups_oldest, backups_newest = _format_backups(status)
+    world_save, world_save_hint = _format_world_save(status)
+    disk, disk_class, disk_hint = _format_disk(status)
     return {
         "game": game_name,
         "subtitle": _format_subtitle(status),
@@ -864,12 +1042,18 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "backups_newest": backups_newest,
         "crashes": int(status.get("crash_count") or 0),
         "crashes_hint": _format_crashes_hint(status),
+        "world_save": world_save,
+        "world_save_hint": world_save_hint,
+        "disk": disk,
+        "disk_class": disk_class,
+        "disk_hint": disk_hint,
         "update_players_note": update_players_note,
         # Collapse once any active pattern exists (setup complete enough).
         "log_watch_open": "" if has_active else " open",
         "pattern_rows": _format_pattern_rows(patterns),
         "highlights": highlights,
         "capture_options": _format_capture_options(status.get("log_captures") or []),
+        "backup_options": _format_backup_options(status),
     }
 
 
