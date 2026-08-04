@@ -42,6 +42,8 @@ services:
       TZ: America/Los_Angeles
     volumes:
       - ./data:/data
+    # Match HA add-on timeout (300s): give save/exit room before SIGKILL.
+    stop_grace_period: 300s
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/healthz"]
       interval: 30s

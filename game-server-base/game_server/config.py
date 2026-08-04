@@ -40,7 +40,7 @@ class SupervisorConfig:
     restart_on_crash: bool = True
     crash_restart_delay_seconds: int = 5
     max_crash_restarts_per_hour: int = 10
-    stop_timeout_seconds: int = 60
+    stop_timeout_seconds: int = 0  # 0 = use plugin.stop_timeout_seconds
     run_as_user: str = "gameserver"
     drop_privileges: bool = True
 
@@ -265,7 +265,7 @@ def load_config() -> SupervisorConfig:
         max_crash_restarts_per_hour=_as_int(
             normalized.get("max_crash_restarts_per_hour"), 10
         ),
-        stop_timeout_seconds=_as_int(normalized.get("stop_timeout_seconds"), 60),
+        stop_timeout_seconds=_as_int(normalized.get("stop_timeout_seconds"), 0),
         run_as_user=str(normalized.get("run_as_user") or "gameserver"),
         drop_privileges=_as_bool(normalized.get("drop_privileges"), True),
         status_http_enabled=_as_bool(normalized.get("status_http_enabled"), True),

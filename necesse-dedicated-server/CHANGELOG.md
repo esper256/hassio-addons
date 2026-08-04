@@ -4,6 +4,7 @@
 
 - Ingress: **Start new empty world** — same confirm → stop → optional pre-restore safety copy → clear world files → restart flow as restore, but with no archive (game creates a fresh world)
 - Save-game safety: refuse to wipe/replace live world data without a successful safety backup on disk; safety copies skip the "tiny world" skip; retention is the only archive deletion path (removed keep-5 pre-restore prune); restore API requires `confirm:true`
+- Orderly stop: on HA/Docker SIGTERM, ask Necesse to `save`/`exit` and wait for a voluntary quit before SIGTERM/SIGKILL; use most of the 300s add-on stop grace for the game (240s) so supervisor cleanup can still finish; exit 0 on intentional stop; abort in-flight SteamCMD when stop is requested
 
 ## 2.1.17
 

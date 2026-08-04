@@ -869,9 +869,15 @@ class GameServerSupervisor:
 
     def run(self) -> int:
         def _signal_handler(signum: int, _frame: Any) -> None:
+            # HA/Docker stop: SIGTERM, then SIGKILL after add-on ``timeout`` (≤300s).
+            # Start the game graceful stop immediately so save/exit can use that budget
+            # even if the main loop is blocked in wait()/SteamCMD.
             LOG.info("Received signal %s; shutting down", signum)
             self._stop.set()
-            self.process.stop()
+            try:
+                self.process.stop()
+            except Exception:  # noqa: BLE001
+                LOG.exception("Error while stopping game process on signal")
 
         signal.signal(signal.SIGTERM, _signal_handler)
         signal.signal(signal.SIGINT, _signal_handler)
@@ -973,8 +979,12 @@ class GameServerSupervisor:
         self.backups.stop()
         if self.status_server:
             self.status_server.stop()
+        # Idempotent if the signal handler already stopped the game.
         self.process.stop()
         self._publish_status()
+        # Exit 0 on intentional stop so HA/Docker do not treat SIGTERM as failure.
+        if self._stop.is_set() or self.process.intentional_stop:
+            return 0
         return self.process.last_exit_code or 0
 
 

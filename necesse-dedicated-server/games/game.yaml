@@ -10,7 +10,7 @@ data_dir: /data/world
 logs_dir: /data/logs
 install_marker: Server.jar
 min_backup_bytes: 1024
-stop_timeout_seconds: 60
+stop_timeout_seconds: 240
 stop_stdin_commands:
   - save
   - exit
