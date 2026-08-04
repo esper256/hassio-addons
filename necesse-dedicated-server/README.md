@@ -57,7 +57,7 @@ You do not need every advanced knob. These are the ones families usually touch:
 | Update only when empty | Wait until nobody is online before restarting (needs working join/leave detection) |
 | Backup retention | `minimal` / `standard` / `extended` — scheduled history + pre-restore keep window |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
-| Network → UDP port | Port Necesse listens on / players type to join (default 14159; change only if already taken) |
+| Network → UDP port | Port players type to join on this HA machine (default 14159; change only if already taken) |
 
 Optional quiet hours (`update_window_start_hour` / `end`) further limit when a pending update may restart the server. Leave them empty to allow the restart any time once the server is empty.
 

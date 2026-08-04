@@ -2,13 +2,13 @@
 
 ## 2.1.25
 
-- Use host networking and start Necesse on the Network UDP port so the listen port and the player connect port are the same number (no Docker remap)
-- Status UI binds to the hassio gateway under HA so host networking does not expose the passwordless page on the LAN
-- Clarify Network help: this port is both what Necesse listens on and what players type
+- Keep bridge networking (no `host_network`): Necesse always listens on UDP **14159** inside the app
+- Network tab sets the port players use on the Home Assistant machine; leave it at 14159 unless that port is already taken
+- Drop the host-network experiment that would have exposed app ports on the LAN
 
 ## 2.1.24
 
-- Clarify Network UDP port help text: this is the port players type in Necesse; change it only when 14159 is already taken on this machine (for example a second Necesse app)
+- Clarify Network UDP port help text (players’ join port on the HA machine; prefer leaving at 14159)
 
 ## 2.1.23
 

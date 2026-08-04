@@ -9,9 +9,7 @@ arch:
 startup: application
 boot: auto
 init: false
-# Host network so Necesse can listen on the same UDP port players use (no Docker
-# remap from a fixed container port to a different host port).
-host_network: true
+host_network: false
 hassio_api: true
 homeassistant_api: true
 # Ingress = OPEN WEB UI (appears after the app is started). Uses HA auth; no host port.
@@ -21,11 +19,12 @@ ingress_entry: /
 ingress_stream: true
 panel_icon: mdi:sword
 panel_title: Necesse
-# Key is the addon port id; the value is what players use and what Necesse binds.
+# HA format is "container-port/udp: host-port". The container port is fixed at
+# 14159 (Necesse listens there). The Network UI only changes the host port.
 ports:
   14159/udp: 14159
 ports_description:
-  14159/udp: UDP port Necesse listens on — same number players type to join. Change only if 14159 is already taken on this machine.
+  14159/udp: Port players use on this Home Assistant machine (UDP). Leave at 14159 unless that port is already taken.
 options:
   world_name: "FamilyWorld"
   server_password: ""

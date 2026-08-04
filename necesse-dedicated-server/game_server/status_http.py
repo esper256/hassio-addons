@@ -583,13 +583,12 @@ class StatusServer:
                 LOG.debug("%s - %s", self.address_string(), fmt % args)
 
             def _peer_allowed(self) -> bool:
-                # Under Home Assistant, Ingress + watchdog come from Supervisor
-                # (172.30.32.2). Loopback covers local host-network health checks.
+                # Under Home Assistant, Ingress + watchdog come from Supervisor.
                 # Outside HA (Portainer/Docker), allow all peers.
                 if not os.environ.get("SUPERVISOR_TOKEN"):
                     return True
                 peer = self.client_address[0]
-                return peer in {INGRESS_PEER, "127.0.0.1", "::1"}
+                return peer == INGRESS_PEER
 
             def _ingress_base(self) -> str:
                 raw = (self.headers.get("X-Ingress-Path") or "").strip()
