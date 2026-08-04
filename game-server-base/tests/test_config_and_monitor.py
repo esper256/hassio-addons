@@ -65,7 +65,6 @@ from game_server.world_save import (  # noqa: E402
     prepare_world_download,
     world_save_is_downloadable,
 )
-from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _app_info_cmd,
@@ -88,6 +87,7 @@ from game_server.version import app_version  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
+STATIONEERS_PLUGIN = ROOT.parent / "stationeers-dedicated-server" / "games" / "game.yaml"
 
 
 class ConfigTests(unittest.TestCase):
@@ -110,23 +110,54 @@ class ConfigTests(unittest.TestCase):
             options = load_options_json(path)
             self.assertEqual(options["world_name"], "TestWorld")
 
+            plugin = load_plugin(FIXTURE)
             os.environ["OPTIONS_FILE"] = str(path)
-            os.environ["SERVER_PASSWORD"] = "secret"
+            # Game option env keys come from the plugin (WORLD_NAME via arg_map),
+            # not a hardcoded allowlist in config.py.
+            os.environ["WORLD_NAME"] = "FromEnv"
             try:
-                cfg = load_config()
+                cfg = load_config(game_env_keys=plugin.docker_env_keys())
             finally:
                 os.environ.pop("OPTIONS_FILE", None)
-                os.environ.pop("SERVER_PASSWORD", None)
+                os.environ.pop("WORLD_NAME", None)
 
-            self.assertEqual(cfg.game_options["world_name"], "TestWorld")
+            self.assertEqual(cfg.game_options["world_name"], "FromEnv")
             self.assertEqual(cfg.auto_update_interval_minutes, 15)
             self.assertEqual(cfg.auto_update_check_hour, 5)
             self.assertFalse(cfg.update_on_start)
-            self.assertEqual(cfg.game_options["server_password"], "secret")
             self.assertEqual(cfg.install_dir, "/data/game")
             self.assertEqual(cfg.backup_retention, "extended")
             self.assertEqual(cfg.retention().keep_monthly, 24)
             self.assertEqual(format_bool(True, "one_zero"), "1")
+
+    def test_game_env_keys_not_accepted_without_plugin(self) -> None:
+        os.environ["WORLD_TYPE"] = "Lunar"
+        os.environ["STATUS_HTTP_PORT"] = "8101"
+        try:
+            cfg = load_config()
+        finally:
+            os.environ.pop("WORLD_TYPE", None)
+            os.environ.pop("STATUS_HTTP_PORT", None)
+        self.assertNotIn("world_type", cfg.game_options)
+        self.assertEqual(cfg.status_http_port, 8101)
+
+    def test_plugin_docker_env_keys_cover_cli_surface(self) -> None:
+        stationeers = load_plugin(STATIONEERS_PLUGIN)
+        keys = set(stationeers.docker_env_keys())
+        self.assertIn("WORLD_NAME", keys)
+        self.assertIn("WORLD_TYPE", keys)
+        self.assertIn("SERVER_NAME", keys)
+        self.assertIn("UPDATE_PORT", keys)
+        self.assertIn("DIFFICULTY", keys)
+        self.assertNotIn("JAVA_OPTS", keys)
+
+        necesse = load_plugin(NECESSE_PLUGIN)
+        necesse_keys = set(necesse.docker_env_keys())
+        self.assertIn("WORLD_NAME", necesse_keys)
+        self.assertIn("SERVER_PASSWORD", necesse_keys)
+        self.assertIn("JAVA_OPTS", necesse_keys)
+        self.assertNotIn("WORLD_TYPE", necesse_keys)
+        self.assertNotIn("START_CONDITION", necesse_keys)
 
 
 class PluginTests(unittest.TestCase):
@@ -140,6 +171,60 @@ class PluginTests(unittest.TestCase):
         assert plugin.world_save is not None
         self.assertEqual(plugin.world_save.strategy, "named_path")
         self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+    def test_load_stationeers_plugin_builds_unity_cli(self) -> None:
+        self.assertTrue(STATIONEERS_PLUGIN.is_file(), f"missing {STATIONEERS_PLUGIN}")
+        plugin = load_plugin(STATIONEERS_PLUGIN)
+        self.assertEqual(plugin.name, "Stationeers")
+        self.assertEqual(plugin.steam_app_id, 600760)
+        self.assertEqual(plugin.install_marker, "rocketstation_DedicatedServer.x86_64")
+        self.assertEqual(plugin.settings_flag, "-settings")
+        self.assertIn("GamePort", plugin.settings_map.values())
+        self.assertEqual(plugin.log_patterns.ready, [])
+        self.assertEqual(plugin.ui_theme.get("accent"), "#5ec8ff")
+        cfg = SupervisorConfig(
+            drop_privileges=False,
+            status_http_enabled=False,
+            backup_enabled=False,
+            ha_notifications=False,
+            game_options={
+                "world_name": "FamilyStation",
+                "world_type": "Lunar",
+                "server_name": "Family Stationeers",
+                "server_port": 27016,
+                "update_port": 27015,
+                "server_slots": 10,
+                "server_visible": True,
+                "auto_save": True,
+                "save_interval": 300,
+                "auto_pause": True,
+                "upnp_enabled": False,
+                "use_steam_p2p": False,
+                "bind_ip": "0.0.0.0",
+                "data_dir": "/data/world",
+                "logs_dir": "/data/logs",
+            },
+        )
+        cmd = ProcessManager(plugin, cfg).build_command()
+        self.assertEqual(cmd[0], "./rocketstation_DedicatedServer.x86_64")
+        self.assertIn("-file", cmd)
+        self.assertIn("start", cmd)
+        self.assertIn("FamilyStation", cmd)
+        self.assertIn("Lunar", cmd)
+        self.assertIn("-settings", cmd)
+        self.assertIn("GamePort", cmd)
+        self.assertIn("27016", cmd)
+        self.assertIn("UpdatePort", cmd)
+        self.assertIn("27015", cmd)
+        self.assertIn("SavePath", cmd)
+        self.assertIn("/data/world", cmd)
+        # Optional empty fields must not inject blank tokens before -noclear.
+        file_idx = cmd.index("-file")
+        noclear_idx = cmd.index("-noclear")
+        self.assertEqual(
+            cmd[file_idx:noclear_idx],
+            ["-file", "start", "FamilyStation", "Lunar"],
+        )
 
 
 class NecessePatternPromotionTests(unittest.TestCase):
@@ -330,10 +415,9 @@ class WorldSaveLocatorTests(unittest.TestCase):
             self.assertEqual(located.bytes, 100)
             self.assertEqual(located.label, "world data")
 
-    def test_heuristic_is_opt_in_only(self) -> None:
+    def test_named_path_does_not_guess_alternate_layouts(self) -> None:
         plugin = load_plugin(FIXTURE)
-        # Default named_path must not consult the heuristic module when templates miss
-        # a non-template layout.
+        # A save outside declared templates must stay missing — no path guessing.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             odd = root / "worlds" / "FamilyWorld.zip"
@@ -346,23 +430,21 @@ class WorldSaveLocatorTests(unittest.TestCase):
             )
             self.assertEqual(located.scope, "missing")
 
-            plugin.world_save = WorldSaveSpec(
-                strategy="named_path",
-                paths=["{data_dir}/saves/worlds/{world_name}.zip"],
-                allow_heuristic_fallback=True,
-            )
-            located = locate_active_world(
-                plugin,
-                {"world_name": "FamilyWorld"},
-                data_dir=str(root),
-            )
-            self.assertEqual(located.scope, "heuristic")
-            self.assertEqual(located.label, "FamilyWorld.zip")
-
-            direct = heuristic_locate_world(root, "FamilyWorld")
-            self.assertIsNotNone(direct)
-            assert direct is not None
-            self.assertEqual(direct.scope, "heuristic")
+            with self.assertRaises(ValueError):
+                WorldSaveSpec.from_dict(
+                    {
+                        "strategy": "heuristic",
+                        "paths": ["{data_dir}/saves/{world_name}"],
+                    }
+                )
+            with self.assertRaises(ValueError):
+                WorldSaveSpec.from_dict(
+                    {
+                        "strategy": "named_path",
+                        "paths": ["{data_dir}/saves/worlds/{world_name}.zip"],
+                        "allow_heuristic_fallback": True,
+                    }
+                )
 
 
 class MonitorTests(unittest.TestCase):
@@ -1796,6 +1878,127 @@ class StatusFormatTests(unittest.TestCase):
         self.assertTrue(counted["log_watch_hidden"])
         self.assertFalse(counted["players_card_hidden"])
         self.assertEqual(counted["players"], "1")
+
+
+class ProcessCommandBuildTests(unittest.TestCase):
+    """Generic argv_prefix / settings_map CLI building (non-Java Steam servers)."""
+
+    def test_argv_prefix_and_settings_block(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.executable = ["./server.x86_64"]
+        plugin.arg_map = {}
+        plugin.bool_style = "true_false"
+        plugin.argv_prefix = [
+            "-file",
+            "start",
+            "{world_name}",
+            "{world_type}",
+            "{difficulty}",
+            "-noclear",
+            "-logFile",
+            "-",
+            "-settingspath",
+            "{data_dir}/settings.xml",
+        ]
+        plugin.settings_flag = "-settings"
+        plugin.fixed_settings = {
+            "StartLocalHost": "true",
+            "SavePath": "{data_dir}",
+        }
+        plugin.settings_map = {
+            "server_name": "ServerName",
+            "server_port": "GamePort",
+            "server_password": "ServerPassword",
+            "server_slots": "ServerMaxPlayers",
+            "auto_save": "AutoSave",
+        }
+        cfg = SupervisorConfig(
+            drop_privileges=False,
+            status_http_enabled=False,
+            backup_enabled=False,
+            ha_notifications=False,
+            game_options={
+                "world_name": "MyStation",
+                "world_type": "Lunar",
+                "difficulty": "",
+                "server_name": "Family Station",
+                "server_port": 27016,
+                "server_password": "",
+                "server_slots": 8,
+                "auto_save": True,
+                "data_dir": "/data/world",
+                "logs_dir": "/data/logs",
+            },
+        )
+        plugin.data_dir = "/data/world"
+        plugin.logs_dir = "/data/logs"
+        cmd = ProcessManager(plugin, cfg).build_command()
+        self.assertEqual(
+            cmd,
+            [
+                "./server.x86_64",
+                "-file",
+                "start",
+                "MyStation",
+                "Lunar",
+                "-noclear",
+                "-logFile",
+                "-",
+                "-settingspath",
+                "/data/world/settings.xml",
+                "-settings",
+                "StartLocalHost",
+                "true",
+                "SavePath",
+                "/data/world",
+                "ServerName",
+                "Family Station",
+                "GamePort",
+                "27016",
+                "ServerMaxPlayers",
+                "8",
+                "AutoSave",
+                "true",
+            ],
+        )
+        # Empty optional password must not appear as a settings pair.
+        self.assertNotIn("ServerPassword", cmd)
+
+    def test_arg_map_still_works_for_simple_flags(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.executable = ["java", "-jar", "Server.jar", "-nogui"]
+        plugin.argv_prefix = []
+        plugin.settings_flag = ""
+        plugin.settings_map = {}
+        plugin.fixed_settings = {}
+        plugin.arg_map = {"world_name": "-world", "server_port": "-port"}
+        plugin.bool_style = "one_zero"
+        cfg = SupervisorConfig(
+            drop_privileges=False,
+            status_http_enabled=False,
+            backup_enabled=False,
+            ha_notifications=False,
+            game_options={
+                "world_name": "FamilyWorld",
+                "server_port": 14159,
+                "java_opts": "-Xmx1G",
+            },
+        )
+        cmd = ProcessManager(plugin, cfg).build_command()
+        self.assertEqual(
+            cmd,
+            [
+                "java",
+                "-Xmx1G",
+                "-jar",
+                "Server.jar",
+                "-nogui",
+                "-world",
+                "FamilyWorld",
+                "-port",
+                "14159",
+            ],
+        )
 
 
 class ProcessStopTests(unittest.TestCase):

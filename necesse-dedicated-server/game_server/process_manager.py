@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -18,6 +19,36 @@ from .plugin import GamePlugin
 from .privileges import make_preexec
 
 LOG = logging.getLogger("game_server.process")
+
+_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def _format_option_value(value: object, bool_style: str) -> str:
+    if isinstance(value, bool) or (
+        isinstance(value, str)
+        and value.lower() in {"true", "false", "1", "0", "yes", "no"}
+    ):
+        return format_bool(value, bool_style)
+    return str(value)
+
+
+def _render_argv_token(token: str, options: dict, bool_style: str) -> str:
+    """Expand ``{option_key}`` templates; return empty string to omit the token."""
+
+    text = str(token)
+
+    def repl(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in options:
+            return ""
+        value = options[key]
+        if value is None or value == "":
+            return ""
+        return _format_option_value(value, bool_style)
+
+    if "{" in text:
+        return _TEMPLATE_RE.sub(repl, text)
+    return text
 
 
 class ProcessManager:
@@ -71,23 +102,47 @@ class ProcessManager:
         if "logs_dir" not in options:
             options["logs_dir"] = self.plugin.logs_dir
 
+        for token in self.plugin.argv_prefix:
+            rendered = _render_argv_token(token, options, self.plugin.bool_style)
+            if rendered == "":
+                continue
+            cmd.append(rendered)
+
         for option_key, flag in self.plugin.arg_map.items():
             if option_key not in options:
                 continue
             value = options[option_key]
             if value is None or value == "":
                 continue
-            if isinstance(value, bool) or (
-                isinstance(value, str)
-                and value.lower() in {"true", "false", "1", "0", "yes", "no"}
-            ):
-                rendered = format_bool(value, self.plugin.bool_style)
-            else:
-                rendered = str(value)
+            rendered = _format_option_value(value, self.plugin.bool_style)
             if flag.endswith("="):
                 cmd.append(f"{flag}{rendered}")
             else:
                 cmd.extend([flag, rendered])
+
+        settings_flag = (self.plugin.settings_flag or "").strip()
+        if settings_flag and (self.plugin.fixed_settings or self.plugin.settings_map):
+            pairs: list[str] = []
+            for setting_name, raw in self.plugin.fixed_settings.items():
+                rendered = _render_argv_token(raw, options, self.plugin.bool_style)
+                if rendered == "":
+                    continue
+                pairs.extend([str(setting_name), rendered])
+            for option_key, setting_name in self.plugin.settings_map.items():
+                if option_key not in options:
+                    continue
+                value = options[option_key]
+                if value is None or value == "":
+                    continue
+                pairs.extend(
+                    [
+                        str(setting_name),
+                        _format_option_value(value, self.plugin.bool_style),
+                    ]
+                )
+            if pairs:
+                cmd.append(settings_flag)
+                cmd.extend(pairs)
         return cmd
 
     def start(self, reason: str = "boot") -> None:
@@ -161,7 +216,7 @@ class ProcessManager:
         """Stop the game process as gracefully as the timeout allows.
 
         Sequence (all within ``timeout``):
-        1. Send plugin stdin stop commands (``save`` / ``exit``) when configured
+        1. Send plugin ``stop_stdin_commands`` when configured
         2. Wait for a voluntary exit
         3. Escalate to SIGTERM, then SIGKILL only if still running
 
@@ -193,8 +248,9 @@ class ProcessManager:
             return
 
         deadline = time.time() + timeout
-        # Spend most of the budget waiting for save/exit. Escalate late so HA's
-        # Docker stop grace (add-on timeout, ≤300s) is not burned on SIGKILL.
+        # Spend most of the budget waiting for stdin stop commands. Escalate
+        # late so HA's Docker stop grace (add-on timeout, ≤300s) is not burned
+        # on SIGKILL.
         term_budget = min(30.0, max(5.0, timeout * 0.12))
         kill_budget = min(10.0, max(3.0, timeout * 0.05))
         escalate_budget = term_budget + kill_budget

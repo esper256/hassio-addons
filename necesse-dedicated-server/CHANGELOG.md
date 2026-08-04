@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.32
+
+- Sync shared supervisor: remove cross-game world-save path heuristic (Necesse already declares `world_save.paths`)
+
+## 2.1.31
+
+- Sync shared supervisor: Docker/compose game option env keys come from each plugin (`docker_env_keys`), not a hardcoded base allowlist
+
+## 2.1.30
+
+- Sync shared supervisor: generic `argv_prefix` / `settings_map` CLI building for non-Java Steam servers (no Necesse behavior change)
+
 ## 2.1.29
 
 - Documentation cleanup: concise get-started guides (repo README, Necesse README/DOCS, packaging guide)

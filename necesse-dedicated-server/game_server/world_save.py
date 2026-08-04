@@ -6,8 +6,7 @@ single-file save as-is; zip a folder save). Explicit ``backup_paths`` remain
 the fallback when no named world exists yet, and for restoring legacy
 ``.tar.gz`` snapshots of those roots.
 
-Heuristic cross-game guessing lives in ``world_save_heuristic`` and is only
-used when a plugin explicitly opts in.
+Games must declare paths — there is no cross-game path guessing.
 """
 
 from __future__ import annotations
@@ -30,11 +29,9 @@ _TEMPLATE_KEY_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 # Strategies the plugin may declare.
 STRATEGY_NAMED_PATH = "named_path"
 STRATEGY_BACKUP_SOURCES = "backup_sources"
-STRATEGY_HEURISTIC = "heuristic"
 
 # Result scopes returned to status/UI.
 SCOPE_NAMED_PATH = "named_path"
-SCOPE_HEURISTIC = "heuristic"
 SCOPE_BACKUP_SOURCES = "backup_sources"
 SCOPE_MISSING = "missing"
 
@@ -52,8 +49,6 @@ class WorldSaveSpec:
     # Path templates expanded with {data_dir}, {world_name}, and option keys.
     paths: list[str] = field(default_factory=list)
     world_name_option: str = "world_name"
-    # Opt-in only. Never enable by default — see world_save_heuristic.py.
-    allow_heuristic_fallback: bool = False
 
     @classmethod
     def from_dict(cls, data: Any) -> "WorldSaveSpec | None":
@@ -62,14 +57,20 @@ class WorldSaveSpec:
         if not isinstance(data, dict):
             raise ValueError("world_save must be a mapping when provided")
         strategy = str(data.get("strategy") or STRATEGY_NAMED_PATH).strip().lower()
-        if strategy not in {
-            STRATEGY_NAMED_PATH,
-            STRATEGY_BACKUP_SOURCES,
-            STRATEGY_HEURISTIC,
-        }:
+        if strategy == "heuristic":
+            raise ValueError(
+                "world_save.strategy 'heuristic' was removed; declare "
+                "world_save.paths templates (named_path) instead"
+            )
+        if strategy not in {STRATEGY_NAMED_PATH, STRATEGY_BACKUP_SOURCES}:
             raise ValueError(
                 f"Unsupported world_save.strategy {strategy!r}; "
-                f"expected named_path, backup_sources, or heuristic"
+                f"expected named_path or backup_sources"
+            )
+        if data.get("allow_heuristic_fallback"):
+            raise ValueError(
+                "world_save.allow_heuristic_fallback was removed; declare "
+                "world_save.paths templates instead"
             )
         paths = [str(p) for p in (data.get("paths") or []) if str(p).strip()]
         return cls(
@@ -79,7 +80,6 @@ class WorldSaveSpec:
                 data.get("world_name_option") or "world_name"
             ).strip()
             or "world_name",
-            allow_heuristic_fallback=bool(data.get("allow_heuristic_fallback", False)),
         )
 
 
@@ -154,7 +154,7 @@ def world_upload_accepts(active: ActiveWorld) -> dict[str, object]:
     )
     uploadable = (
         kind in {KIND_FILE, KIND_DIRECTORY}
-        and active.scope in {SCOPE_NAMED_PATH, SCOPE_HEURISTIC, SCOPE_MISSING}
+        and active.scope in {SCOPE_NAMED_PATH, SCOPE_MISSING}
         and bool(active.path)
     )
     if kind == KIND_DIRECTORY:
@@ -205,8 +205,7 @@ def locate_active_world(
 
     Order of preference inside this function:
     1. ``named_path`` templates from the plugin
-    2. explicit ``heuristic`` strategy / opt-in heuristic fallback
-    3. honest ``backup_sources`` sum (not presented as a named world file)
+    2. honest ``backup_sources`` sum (not presented as a named world file)
     """
 
     options = dict(game_options or {})
@@ -222,25 +221,7 @@ def locate_active_world(
         found = _locate_named_path(spec, root, options)
         if found is not None:
             return found
-        if spec.allow_heuristic_fallback:
-            hack = _try_heuristic(root, _world_name(spec, options), sources)
-            if hack is not None:
-                return hack
         return _missing_named(spec, root, options, sources)
-
-    if strategy == STRATEGY_HEURISTIC:
-        hack = _try_heuristic(root, _world_name(spec, options), sources)
-        if hack is not None:
-            return hack
-        return _from_backup_sources(sources) if _any_exists(sources) else ActiveWorld(
-            bytes=0,
-            path=None,
-            label=None,
-            scope=SCOPE_MISSING,
-            sources=[],
-            expected_paths=[],
-            kind=KIND_UNKNOWN,
-        )
 
     # strategy == backup_sources (or unknown handled at parse time)
     return _from_backup_sources(sources)
@@ -395,21 +376,6 @@ def _from_backup_sources(sources: list[str]) -> ActiveWorld:
 
 def _any_exists(sources: list[str]) -> bool:
     return any(Path(p).exists() for p in sources)
-
-
-def _try_heuristic(
-    data_dir: str,
-    world_name: str,
-    backup_sources: list[str],
-) -> ActiveWorld | None:
-    # Imported lazily so happy-path callers never need this module.
-    from . import world_save_heuristic
-
-    return world_save_heuristic.heuristic_locate_world(
-        data_dir,
-        world_name,
-        fallback_paths=backup_sources,
-    )
 
 
 @dataclass(frozen=True)

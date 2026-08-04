@@ -1,9 +1,9 @@
-name: "Necesse Dedicated Server"
-description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "2.1.32"
-slug: "necesse_dedicated_server"
-url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
-# SteamCMD / Necesse dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
+name: "Stationeers Dedicated Server"
+description: "Stationeers dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
+version: "1.0.0"
+slug: "stationeers_dedicated_server"
+url: "https://github.com/esper256/hassio-addons/tree/main/stationeers-dedicated-server"
+# SteamCMD / Stationeers dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
 arch:
   - amd64
 startup: application
@@ -17,26 +17,32 @@ ingress: true
 ingress_port: 8099
 ingress_entry: /
 ingress_stream: true
-panel_icon: mdi:sword
-panel_title: Necesse
-# HA format is "container-port/udp: host-port". The container port is fixed at
-# 14159 (Necesse listens there). The Network UI only changes the host port.
+panel_icon: mdi:rocket-launch
+panel_title: Stationeers
+# HA format is "container-port/protocol: host-port". Container ports are fixed
+# (GamePort 27016, UpdatePort 27015). The Network UI only changes host ports.
 ports:
-  14159/udp: 14159
+  27016/udp: 27016
+  27015/udp: 27015
 ports_description:
-  14159/udp: Port players use on this Home Assistant machine (UDP). Leave at 14159 unless that port is already taken.
+  27016/udp: Game port players use on this Home Assistant machine (UDP). Leave at 27016 unless that port is already taken.
+  27015/udp: Steam query / update port (UDP). Leave at 27015 unless that port is already taken.
 options:
-  world_name: "FamilyWorld"
+  world_name: "FamilyStation"
+  world_type: "Lunar"
+  server_name: "Family Stationeers"
   server_password: ""
   server_slots: 10
-  server_owner: ""
-  server_motd: "Welcome to the family Necesse server!"
-  pause_when_empty: true
-  give_clients_power: false
-  enable_logging: true
-  zip_saves: true
-  server_language: "en"
-  java_opts: "-Xms512M -Xmx2G"
+  server_visible: true
+  auto_save: true
+  save_interval: 300
+  auto_pause: true
+  upnp_enabled: false
+  use_steam_p2p: false
+  server_auth_secret: ""
+  difficulty: ""
+  start_condition: ""
+  start_location: ""
   update_on_start: true
   auto_update_interval_minutes: 1440
   auto_update_check_hour: 5
@@ -49,19 +55,23 @@ options:
   backup_enabled: true
   backup_on_update: true
   backup_retention: standard
-  min_free_disk_mb: 512
+  min_free_disk_mb: 1024
 schema:
   world_name: str
+  world_type: str
+  server_name: str
   server_password: password
-  server_slots: int(1,250)
-  server_owner: str?
-  server_motd: str
-  pause_when_empty: bool
-  give_clients_power: bool
-  enable_logging: bool
-  zip_saves: bool
-  server_language: str
-  java_opts: str?
+  server_slots: int(1,30)
+  server_visible: bool
+  auto_save: bool
+  save_interval: int(30,3600)
+  auto_pause: bool
+  upnp_enabled: bool
+  use_steam_p2p: bool
+  server_auth_secret: password
+  difficulty: str?
+  start_condition: str?
+  start_location: str?
   update_on_start: bool
   auto_update_interval_minutes: int(0,)
   auto_update_check_hour: int(0,23)?
