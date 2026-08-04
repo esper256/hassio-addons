@@ -5,7 +5,9 @@
 - Ingress: **Restore from upload** — upload a world save; apply mode comes from the active world kind (single-file save vs folder save), not from guessing the upload alone
   - File worlds (e.g. a game that stores the world as one `.zip`): replace that file as-is
   - Folder worlds: require a `.zip` and extract into the save directory
+  - Upload controls styled like other action buttons and placed with backup restore
 - Generic `world_save` locator exposes `kind` / upload hints for any game plugin
+- Remove the Ingress update “waits until nobody is online” note (and related copy) entirely
 
 ## 2.1.26
 
