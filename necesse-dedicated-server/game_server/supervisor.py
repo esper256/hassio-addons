@@ -26,7 +26,12 @@ from .status_http import StatusServer
 from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
 from .version import app_version
-from .world_save import backup_sources_for, locate_active_world
+from .world_save import (
+    backup_sources_for,
+    locate_active_world,
+    prepare_world_download,
+    world_save_is_downloadable,
+)
 
 LOG = logging.getLogger("game_server.supervisor")
 
@@ -55,6 +60,10 @@ class GameServerSupervisor:
         self._update_not_before = 0.0
         self._apply_failures = 0
         self._update_lock = threading.Lock()
+        # Version-mismatch (etc.): probe Steam before any stop/apply.
+        self._urgent_update_check = False
+        self._urgent_update_check_bypass_window = False
+        self._urgent_update_check_reason: str | None = None
         self._restore_pending: str | None = None
         self._restore_lock = threading.Lock()
         self.last_restore_error: str | None = None
@@ -159,6 +168,26 @@ class GameServerSupervisor:
                 "The next attempt backs off automatically."
             ),
         )
+
+    def world_save_download(self) -> dict[str, Any] | None:
+        """Prepare the active world save for Ingress download (file or zip)."""
+
+        active = locate_active_world(
+            self.plugin,
+            self.config.game_options,
+            data_dir=self.plugin.data_dir,
+        )
+        prepared = prepare_world_download(active, data_dir=self.plugin.data_dir)
+        if prepared is None:
+            return None
+        return {
+            "path": str(prepared.path),
+            "filename": prepared.filename,
+            "content_type": prepared.content_type,
+            "cleanup_path": (
+                str(prepared.cleanup_path) if prepared.cleanup_path else None
+            ),
+        }
 
     def request_restore(self, archive_name: str) -> dict[str, Any]:
         """Schedule a world restore or empty-world reset from Ingress."""
@@ -361,11 +390,15 @@ class GameServerSupervisor:
         )
         # Prefer on-disk build id for display; do not mutate self on a status read.
         local_build = install_meta.get("build_id") or self.local_build_id
-        world_size = locate_active_world(
+        active_world = locate_active_world(
             self.plugin,
             self.config.game_options,
             data_dir=self.plugin.data_dir,
-        ).to_dict()
+        )
+        world_size = active_world.to_dict()
+        world_size["downloadable"] = world_save_is_downloadable(
+            active_world, data_dir=self.plugin.data_dir
+        )
         phase = self.lifecycle()
         return {
             "game": self.plugin.name,
@@ -409,6 +442,7 @@ class GameServerSupervisor:
             "waits_for_empty_server": waits_for_empty_server,
             # Same values as waits_for_empty_server (legacy field name).
             "player_gating": waits_for_empty_server,
+            "debug_mode": bool(self.config.debug_mode),
             "steam_gate": self.steam_gate.to_dict(),
             "disk": {
                 "ok": disk_ok,
@@ -437,10 +471,9 @@ class GameServerSupervisor:
 
     def _on_version_mismatch(self, line: str) -> None:
         # Only invoked for active patterns (dry-run candidates never call this).
-        # Apply path: bypass quiet-hours window, still wait for empty when
-        # update_when_empty_only (rejected clients never count as online), then
-        # _apply_update → process.stop() (stdin save/exit + stop_timeout_seconds)
-        # → SteamCMD install_or_update → restart.
+        # Do NOT stop the game yet — ask Steam whether a newer build exists first.
+        # Main loop runs the check, and only then may request_update → orderly
+        # stop (save/exit + stop_timeout) → SteamCMD app_update → restart.
         try:
             self.capture_logs("version_mismatch")
         except OSError:
@@ -448,12 +481,20 @@ class GameServerSupervisor:
         self.notifier.notify(
             "version_mismatch",
             f"{self.plugin.name}: client version mismatch",
-            f"A client was rejected for a version problem. Scheduling update.\n{line}",
+            f"A client was rejected for a version problem. Checking Steam for a "
+            f"newer build before any restart.\n{line}",
         )
         if not self.config.update_on_version_mismatch:
             return
-        LOG.warning("Scheduling update due to version mismatch: %s", line)
-        self.request_update(reason="version_mismatch", bypass_window=True)
+        LOG.warning(
+            "Client version mismatch; queuing Steam update check before any "
+            "restart: %s",
+            line,
+        )
+        with self._update_lock:
+            self._urgent_update_check = True
+            self._urgent_update_check_bypass_window = True
+            self._urgent_update_check_reason = "version_mismatch"
 
     def request_update(
         self,
@@ -787,6 +828,105 @@ class GameServerSupervisor:
             return self._seconds_until_local_hour(check_hour)
         return float(max(0, minutes) * 60)
 
+    def _probe_steam_for_update(
+        self,
+        *,
+        reason: str,
+        bypass_window: bool,
+    ) -> bool | None:
+        """Ask SteamCMD whether a newer build exists.
+
+        Returns:
+            True — newer build found; apply was scheduled (still not stopped here)
+            False — up to date or check failed; do not restart
+            None — deferred for Steam cooldown/spacing; caller may retry
+        """
+
+        cooldown = self.steam_gate.seconds_until_next_call()
+        if cooldown > 0:
+            LOG.info(
+                "Deferring Steam update check (%s); Steam cooldown %.0fs remaining",
+                reason,
+                cooldown,
+            )
+            return None
+
+        self.update_check_count += 1
+        self.last_update_check_at = time.time()
+        run_uid, run_gid = self._steamcmd_identity()
+        result = steamcmd.update_available(
+            self.config.steamcmd_dir,
+            self.config.install_dir,
+            self.plugin,
+            stop_event=self._stop,
+            run_uid=run_uid,
+            run_gid=run_gid,
+        )
+        self.local_build_id = result.local_build_id or self.local_build_id
+        self.remote_build_id = result.remote_build_id
+        if not result.check_ok:
+            self.last_update_error = result.error
+            LOG.warning(
+                "Steam update check unavailable (local=%s): %s",
+                result.local_build_id or "unknown",
+                result.error,
+            )
+            self.notifier.notify(
+                "update_check_failed",
+                f"{self.plugin.name}: update check failed",
+                str(result.error),
+            )
+            return False
+        if result.update_available:
+            LOG.info(
+                "Remote update available (local=%s remote=%s); scheduling apply (%s)",
+                result.local_build_id,
+                result.remote_build_id,
+                reason,
+            )
+            self.request_update(reason=reason, bypass_window=bypass_window)
+            self.last_update_error = None
+            return True
+
+        LOG.info(
+            "Game is up to date (buildid=%s); not restarting (%s)",
+            result.local_build_id or result.remote_build_id or "unknown",
+            reason,
+        )
+        self.last_update_error = None
+        if reason == "version_mismatch":
+            self.notifier.notify(
+                "version_mismatch_no_update",
+                f"{self.plugin.name}: version mismatch, no Steam update",
+                (
+                    "A client was rejected for a version problem, but Steam reports "
+                    f"the install is already current "
+                    f"(build {result.local_build_id or 'unknown'}). "
+                    "Not stopping the server."
+                ),
+            )
+        return False
+
+    def _run_urgent_update_check(self) -> None:
+        """Handle version-mismatch Steam probes from the main loop."""
+
+        with self._update_lock:
+            if not self._urgent_update_check:
+                return
+            reason = self._urgent_update_check_reason or "version_mismatch"
+            bypass_window = self._urgent_update_check_bypass_window
+
+        outcome = self._probe_steam_for_update(
+            reason=reason, bypass_window=bypass_window
+        )
+        if outcome is None:
+            # Cooldown — keep the urgent flag and retry on the next main-loop pass.
+            return
+        with self._update_lock:
+            self._urgent_update_check = False
+            self._urgent_update_check_reason = None
+            self._urgent_update_check_bypass_window = False
+
     def _update_checker_loop(self) -> None:
         minutes = self.steam_gate.clamp_check_interval_minutes(
             self.config.auto_update_interval_minutes
@@ -823,53 +963,7 @@ class GameServerSupervisor:
                 )
             if self._stop.wait(wait_for):
                 return
-            cooldown = self.steam_gate.seconds_until_next_call()
-            if cooldown > 0:
-                LOG.info(
-                    "Skipping Steam update check; Steam cooldown %.0fs remaining",
-                    cooldown,
-                )
-                continue
-            self.update_check_count += 1
-            self.last_update_check_at = time.time()
-            run_uid, run_gid = self._steamcmd_identity()
-            result = steamcmd.update_available(
-                self.config.steamcmd_dir,
-                self.config.install_dir,
-                self.plugin,
-                stop_event=self._stop,
-                run_uid=run_uid,
-                run_gid=run_gid,
-            )
-            self.local_build_id = result.local_build_id or self.local_build_id
-            self.remote_build_id = result.remote_build_id
-            if not result.check_ok:
-                self.last_update_error = result.error
-                LOG.warning(
-                    "Steam update check unavailable (local=%s): %s",
-                    result.local_build_id or "unknown",
-                    result.error,
-                )
-                self.notifier.notify(
-                    "update_check_failed",
-                    f"{self.plugin.name}: update check failed",
-                    str(result.error),
-                )
-                continue
-            if result.update_available:
-                LOG.info(
-                    "Remote update available (local=%s remote=%s)",
-                    result.local_build_id,
-                    result.remote_build_id,
-                )
-                self.request_update(reason="steam_build", bypass_window=False)
-            else:
-                LOG.info(
-                    "Game is up to date (buildid=%s)",
-                    result.local_build_id
-                    or result.remote_build_id
-                    or "unknown",
-                )
+            self._probe_steam_for_update(reason="steam_build", bypass_window=False)
 
     def run(self) -> int:
         def _signal_handler(signum: int, _frame: Any) -> None:
@@ -899,6 +993,7 @@ class GameServerSupervisor:
                 update_callback=self.force_update_now,
                 restore_callback=self.request_restore,
                 backups_provider=lambda: self.backups.list_restorable_archives(),
+                world_download_callback=self.world_save_download,
             )
             self.status_server.start()
 
@@ -929,6 +1024,12 @@ class GameServerSupervisor:
                     with self._restore_lock:
                         if self._restore_pending == archive_name:
                             self._restore_pending = None
+
+            if self._urgent_update_check:
+                try:
+                    self._run_urgent_update_check()
+                except Exception:
+                    LOG.exception("Urgent Steam update check failed")
 
             if self._update_pending and self._can_apply_update():
                 try:

@@ -49,6 +49,8 @@ class SupervisorConfig:
     status_http_host: str = "0.0.0.0"
     status_http_port: int = 8099
     ha_notifications: bool = True
+    # When false, Ingress hides log-watch / dry-run pattern tooling.
+    debug_mode: bool = False
 
     # Backups
     backup_enabled: bool = True
@@ -156,6 +158,7 @@ def _env_overrides() -> dict[str, Any]:
         "STATUS_HTTP_HOST",
         "STATUS_HTTP_PORT",
         "HA_NOTIFICATIONS",
+        "DEBUG_MODE",
         "BACKUP_ENABLED",
         "BACKUP_INTERVAL_MINUTES",
         "BACKUP_DIR",
@@ -220,6 +223,7 @@ def load_config() -> SupervisorConfig:
         "status_http_host",
         "status_http_port",
         "ha_notifications",
+        "debug_mode",
         "backup_enabled",
         "backup_interval_minutes",
         "backup_dir",
@@ -272,6 +276,7 @@ def load_config() -> SupervisorConfig:
         status_http_host=str(normalized.get("status_http_host") or "0.0.0.0"),
         status_http_port=_as_int(normalized.get("status_http_port"), 8099),
         ha_notifications=_as_bool(normalized.get("ha_notifications"), True),
+        debug_mode=_as_bool(normalized.get("debug_mode"), False),
         backup_enabled=_as_bool(normalized.get("backup_enabled"), True),
         backup_interval_minutes=_as_int(
             normalized.get("backup_interval_minutes"), 360

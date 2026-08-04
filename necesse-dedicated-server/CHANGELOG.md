@@ -2,10 +2,14 @@
 
 ## 2.1.21
 
-- Activate Necesse `version_mismatch` log pattern for `Client "…" had wrong version (…)` — schedules a Steam update that bypasses quiet hours, still waits for an empty server, then orderly `save`/`exit` stop (240s budget) before SteamCMD
+- Activate Necesse `version_mismatch` log pattern for `Client "…" had wrong version (…)` — probes Steam for a newer build first; only then schedules stop/apply (bypass quiet hours, wait for empty, orderly `save`/`exit` with 240s budget, SteamCMD)
 - Ingress theme colors come from per-game `ui_theme` in `games/game.yaml` (Necesse keeps green/amber)
 - World restore UI: style restore like other action buttons; drop separate empty-world button; add **NEW WORLD** at the bottom of the backup selector
 - Free disk hero no longer shows the “Min 512 MiB” hint (threshold still enforced for backups/updates)
+- Ingress hero order: Uptime → Crashes … World save → Backups → Free disk; world save name links to download (file as-is, folder as stdlib zip)
+- HA option **Debug mode** (default off): when off, hide Ingress log-watch pattern tooling; also hide Number of players until active join/leave/count patterns exist
+- Log-watch table: one row per category, “Recent possible matches” (up to 3 lines per regex), Pattern column removed
+- Base dry-run candidate regexes made cross-game (dropped Necesse-specific ready/player_count phrasing)
 
 ## 2.1.20
 

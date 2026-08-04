@@ -65,6 +65,9 @@ configuration:
   ha_notifications:
     name: Home Assistant notifications
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
+  debug_mode:
+    name: Debug mode
+    description: Show Ingress log-watch pattern tooling (dry-run regex hits). Leave off for normal operation.
   backup_enabled:
     name: Enable backups
     description: Periodically archive /data/world into /data/backups.

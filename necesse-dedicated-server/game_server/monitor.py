@@ -27,6 +27,8 @@ class PatternStat:
     first_hit_at: float | None = None
     last_hit_at: float | None = None
     last_line: str | None = None
+    # Newest last; UI shows up to these recent hits per regex.
+    recent_lines: deque[str] = field(default_factory=lambda: deque(maxlen=3))
 
     def note(self, line: str) -> None:
         now = time.time()
@@ -35,6 +37,7 @@ class PatternStat:
             self.first_hit_at = now
         self.last_hit_at = now
         self.last_line = line
+        self.recent_lines.append(line)
 
     def to_dict(self) -> dict[str, Any]:
         stale = False
@@ -49,6 +52,7 @@ class PatternStat:
             "first_hit_at": self.first_hit_at,
             "last_hit_at": self.last_hit_at,
             "last_line": self.last_line,
+            "recent_lines": list(self.recent_lines),
             "stale": stale,
         }
 

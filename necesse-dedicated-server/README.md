@@ -94,7 +94,7 @@ Backups refuse empty/tiny worlds, back off after failures, and won’t run if fr
 ### Logs
 
 - **Home Assistant → app Logs tab** — starts with a version banner, then supervisor + game + SteamCMD (`[game]`, `[game-log]`, `[steamcmd]`)
-- **OPEN WEB UI** — status (including world save size and free disk), pattern hits, world restore, raw tail, downloadable log captures (no SSH / no host port)
+- **OPEN WEB UI** — status (world save size with download link, backups, free disk), pattern hits, world restore, raw tail, downloadable log captures (no SSH / no host port)
 
 ---
 

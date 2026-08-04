@@ -61,6 +61,8 @@ from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
     backup_sources_for,
     locate_active_world,
+    prepare_world_download,
+    world_save_is_downloadable,
 )
 from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
@@ -251,6 +253,66 @@ class WorldSaveLocatorTests(unittest.TestCase):
             self.assertEqual(value, "—")
             self.assertIn("FamilyWorld.zip", hint)
 
+    def test_world_save_download_file_and_directory_zip(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "saves" / "worlds" / "FamilyWorld.zip"
+            world.parent.mkdir(parents=True)
+            world.write_bytes(b"SAVE-BYTES")
+            located = locate_active_world(
+                plugin,
+                {"world_name": "FamilyWorld"},
+                data_dir=str(root),
+            )
+            self.assertTrue(
+                world_save_is_downloadable(located, data_dir=str(root))
+            )
+            prepared = prepare_world_download(located, data_dir=str(root))
+            self.assertIsNotNone(prepared)
+            assert prepared is not None
+            self.assertEqual(prepared.path, world.resolve())
+            self.assertEqual(prepared.filename, "FamilyWorld.zip")
+            self.assertIsNone(prepared.cleanup_path)
+
+            folder = root / "saves" / "worlds" / "FolderWorld"
+            folder.mkdir()
+            (folder / "chunk.bin").write_bytes(b"CHUNK")
+            from game_server.world_save import ActiveWorld
+
+            dir_world = ActiveWorld(
+                bytes=5,
+                path=str(folder),
+                label="FolderWorld",
+                scope="named_path",
+            )
+            zipped = prepare_world_download(dir_world, data_dir=str(root))
+            self.assertIsNotNone(zipped)
+            assert zipped is not None
+            self.assertEqual(zipped.filename, "FolderWorld.zip")
+            self.assertEqual(zipped.content_type, "application/zip")
+            self.assertTrue(zipped.path.is_file())
+            self.assertEqual(zipped.cleanup_path, zipped.path)
+            import zipfile
+
+            with zipfile.ZipFile(zipped.path) as zf:
+                self.assertIn("chunk.bin", zf.namelist())
+            zipped.path.unlink(missing_ok=True)
+
+            # Path outside data_dir must be rejected.
+            outside = root.parent / "escape.bin"
+            outside.write_bytes(b"nope")
+            bad = ActiveWorld(
+                bytes=4,
+                path=str(outside),
+                label="escape.bin",
+                scope="named_path",
+            )
+            self.assertFalse(
+                world_save_is_downloadable(bad, data_dir=str(root))
+            )
+            self.assertIsNone(prepare_world_download(bad, data_dir=str(root)))
+
     def test_no_world_save_spec_uses_backup_sources_only(self) -> None:
         plugin = load_plugin(FIXTURE)
         plugin.world_save = None
@@ -321,23 +383,22 @@ class MonitorTests(unittest.TestCase):
             self.assertGreater(report["dry_run_pattern_count"], 0)
             self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
 
-    def test_dry_run_matches_necesse_style_ready_lines(self) -> None:
+    def test_dry_run_matches_generic_ready_join_and_count_lines(self) -> None:
         plugin = load_plugin(FIXTURE)
         with tempfile.TemporaryDirectory() as tmp:
             mon = LogMonitor(plugin, tmp)
             mon.ingest_stdout_line(
-                "\x1b[39m[2026-08-03 12:59:33] Started server using port 14159 "
-                "with 10 slots on world \"FamilyWorld.zip\", game version 1.3.1."
+                "\x1b[39m[12:59:33] Server started successfully, version: 1.2.3"
             )
-            mon.ingest_stdout_line(
-                "[2026-08-03 12:59:48] Suggesting garbage collection due to empty server..."
-            )
+            mon.ingest_stdout_line("[12:59:40] Alice joined the game")
+            mon.ingest_stdout_line("[12:59:41] Players online: 1")
             highlights = mon.state.highlighted_lines
             self.assertTrue(highlights)
             joined = "\n".join(item["line"] for item in highlights)
-            self.assertIn("Started server using port", joined)
+            self.assertIn("Server started", joined)
             self.assertNotIn("\x1b[", joined)
-            self.assertIn("empty server", joined.lower())
+            self.assertIn("joined the game", joined.lower())
+            self.assertIn("players online", joined.lower())
             # Dry-run game_version candidates highlight but must not capture.
             self.assertIsNone(mon.state.game_version)
             self.assertTrue(
@@ -346,6 +407,12 @@ class MonitorTests(unittest.TestCase):
                     for item in highlights
                 )
             )
+            ready_stat = next(
+                p
+                for p in mon.pattern_report()["patterns"]
+                if p["category"] == "ready" and p["hits"] > 0
+            )
+            self.assertEqual(len(ready_stat["recent_lines"]), 1)
 
     def test_active_game_version_capture(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -762,6 +829,7 @@ class StatusFormatTests(unittest.TestCase):
                     "bytes": 2 * 1024 * 1024,
                     "label": "FamilyWorld.zip",
                     "scope": "named_path",
+                    "downloadable": True,
                 },
                 "disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512},
                 "backups": {
@@ -809,6 +877,25 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
         self.assertIn('href="/api/hassio_ingress/token/"', html)
         self.assertIn(f"--accent: {DEFAULT_UI_THEME['accent']}", html)
+        self.assertIn('href="api/world/download"', html)
+        self.assertIn("FamilyWorld.zip", html)
+        # Hero order: Uptime → Crashes … World save → Backups → Free disk
+        uptime_i = html.index(">Uptime<")
+        crashes_i = html.index(">Game server crashes<")
+        world_i = html.index(">World save<")
+        backups_i = html.index(">Backups<")
+        disk_i = html.index(">Free disk<")
+        self.assertLess(uptime_i, crashes_i)
+        self.assertLess(crashes_i, world_i)
+        self.assertLess(world_i, backups_i)
+        self.assertLess(backups_i, disk_i)
+        self.assertIn("Recent possible matches", html)
+        self.assertNotIn(">Pattern</th>", html)
+        # Default (no debug_mode): log-watch hidden; players hidden without tracking.
+        self.assertIn('id="log-watch"', html)
+        self.assertIn("hidden", view["log_watch_class"])
+        self.assertTrue(view["log_watch_hidden"])
+        self.assertTrue(view["players_card_hidden"])
 
     def test_status_http_get_index_returns_200(self) -> None:
         """Live HTTP GET / — same path Ingress hits on OPEN WEB UI."""
@@ -846,12 +933,77 @@ class StatusFormatTests(unittest.TestCase):
             self.assertIn("Necesse", body)
             self.assertIn("NEW WORLD", body)
             self.assertNotIn("Start new empty world", body)
+            uptime_i = body.index(">Uptime<")
+            crashes_i = body.index(">Game server crashes<")
+            world_i = body.index(">World save<")
+            backups_i = body.index(">Backups<")
+            disk_i = body.index(">Free disk<")
+            self.assertLess(uptime_i, crashes_i)
+            self.assertLess(world_i, backups_i)
+            self.assertLess(backups_i, disk_i)
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
         finally:
             server.stop()
             if old is not None:
                 os.environ["SUPERVISOR_TOKEN"] = old
+
+    def test_status_http_world_download_streams_file(self) -> None:
+        import urllib.error
+        import urllib.request
+
+        from game_server.status_http import StatusServer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            world = Path(tmp) / "FamilyWorld.zip"
+            payload = b"LIVE-WORLD-BYTES"
+            world.write_bytes(payload)
+
+            def download() -> dict:
+                return {
+                    "path": str(world),
+                    "filename": "FamilyWorld.zip",
+                    "content_type": "application/zip",
+                    "cleanup_path": None,
+                }
+
+            old = os.environ.pop("SUPERVISOR_TOKEN", None)
+            server = StatusServer(
+                "127.0.0.1",
+                0,
+                lambda: {
+                    "running": True,
+                    "lifecycle": "running",
+                    "monitor": {},
+                    "log_patterns": {"patterns": []},
+                    "log_captures": [],
+                    "backups": {"archive_count": 0, "restorable": []},
+                },
+                game_name="Necesse",
+                world_download_callback=download,
+            )
+            try:
+                server.start()
+                assert server._httpd is not None
+                port = server._httpd.server_address[1]
+                with urllib.request.urlopen(  # noqa: S310 - local test server
+                    f"http://127.0.0.1:{port}/api/world/download", timeout=5
+                ) as resp:
+                    self.assertEqual(resp.status, 200)
+                    self.assertEqual(resp.read(), payload)
+                    self.assertIn(
+                        "FamilyWorld.zip",
+                        resp.headers.get("Content-Disposition", ""),
+                    )
+            except urllib.error.HTTPError as exc:
+                self.fail(
+                    f"GET /api/world/download failed with HTTP {exc.code}: "
+                    f"{exc.read()!r}"
+                )
+            finally:
+                server.stop()
+                if old is not None:
+                    os.environ["SUPERVISOR_TOKEN"] = old
 
     def test_world_save_and_disk_cards_in_ui_view(self) -> None:
         view = _ui_view(
@@ -885,6 +1037,23 @@ class StatusFormatTests(unittest.TestCase):
         # plus NEW WORLD; disk hero shows free space without min-threshold noise.
         self.assertRegex(view["world_save"], r"\d")
         self.assertIn("FamilyWorld", view["world_save_hint"])
+        self.assertNotIn("api/world/download", view["world_save_hint"])
+        linked = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "world_save": {
+                    "bytes": 2048,
+                    "label": "FamilyWorld.zip",
+                    "scope": "named_path",
+                    "downloadable": True,
+                },
+                "monitor": {},
+            },
+            "Necesse",
+        )
+        self.assertIn('href="api/world/download"', linked["world_save_hint"])
+        self.assertIn("FamilyWorld.zip", linked["world_save_hint"])
         self.assertEqual(view["disk_class"], "bad")
         self.assertEqual(view["disk_hint"], "")
         self.assertEqual(view["uptime_hint"], "Since world restore")
@@ -1043,10 +1212,14 @@ class StatusFormatTests(unittest.TestCase):
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
 
-    def test_version_mismatch_schedules_window_bypass_then_waits_for_empty(
+    def test_version_mismatch_checks_steam_before_scheduling_stop(
         self,
     ) -> None:
-        """Mismatch forces apply past quiet hours; still honors empty-only."""
+        """Mismatch probes Steam first; only schedules apply when an update exists."""
+
+        from unittest import mock
+
+        from game_server.steamcmd import UpdateCheckResult
 
         plugin = load_plugin(NECESSE_PLUGIN)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1082,6 +1255,34 @@ class StatusFormatTests(unittest.TestCase):
             supervisor._on_version_mismatch(
                 '[2026-08-04 08:45:04] Client "1" had wrong version (1.3.0).'
             )
+            # Must not schedule a stop/apply until Steam confirms a newer build.
+            self.assertFalse(supervisor._update_pending)
+            self.assertTrue(supervisor._urgent_update_check)
+
+            with mock.patch(
+                "game_server.supervisor.steamcmd.update_available",
+                return_value=UpdateCheckResult(
+                    update_available=False,
+                    local_build_id="100",
+                    remote_build_id="100",
+                ),
+            ):
+                supervisor._run_urgent_update_check()
+            self.assertFalse(supervisor._update_pending)
+            self.assertFalse(supervisor._urgent_update_check)
+
+            supervisor._on_version_mismatch(
+                '[2026-08-04 08:45:05] Client "1" had wrong version (1.3.0).'
+            )
+            with mock.patch(
+                "game_server.supervisor.steamcmd.update_available",
+                return_value=UpdateCheckResult(
+                    update_available=True,
+                    local_build_id="100",
+                    remote_build_id="101",
+                ),
+            ):
+                supervisor._run_urgent_update_check()
             self.assertTrue(supervisor._update_pending)
             self.assertEqual(supervisor._update_reason, "version_mismatch")
             self.assertTrue(supervisor._update_bypass_window)
@@ -1251,31 +1452,49 @@ class StatusFormatTests(unittest.TestCase):
                 "category": "ready",
                 "pattern": r"Started server",
                 "hits": 2,
-                "last_line": "Started server using port 1",
+                "recent_lines": ["Started server on port 1", "Started server again"],
+                "last_line": "Started server again",
             },
             {
                 "mode": "dry_run",
                 "category": "ready",
                 "pattern": r"\bready\b",
                 "hits": 5,
+                "recent_lines": ["ready"],
                 "last_line": "ready",
             },
             {
                 "mode": "dry_run",
                 "category": "player_count",
-                "pattern": r"empty server",
+                "pattern": r"players online",
                 "hits": 1,
-                "last_line": "empty server",
+                "recent_lines": ["Players online: 2"],
+                "last_line": "Players online: 2",
+            },
+            {
+                "mode": "dry_run",
+                "category": "player_count",
+                "pattern": r"online players",
+                "hits": 1,
+                "recent_lines": ["Online players: 2"],
+                "last_line": "Online players: 2",
             },
         ]
         rows = _format_pattern_rows(patterns)
-        self.assertIn("Started server", rows)
+        # Collapsed by category: one ready row (active), one player_count row.
+        self.assertEqual(rows.count("<tr>"), 2)
+        self.assertIn("ready", rows)
         self.assertIn("player_count", rows)
+        self.assertIn("Started server again", rows)
+        self.assertIn("Players online: 2", rows)
+        self.assertIn("Online players: 2", rows)
+        self.assertIn("recent-matches", rows)
         self.assertNotIn(r"\bready\b", rows)
+        self.assertNotIn("<code>", rows)
         highlights = _format_highlights(
             [
                 {
-                    "line": "Started server using port 1",
+                    "line": "Started server on port 1",
                     "matches": [
                         {"mode": "active", "category": "ready"},
                         {"mode": "dry_run", "category": "ready"},
@@ -1286,6 +1505,87 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("active:ready", highlights)
         self.assertNotIn("dry_run:ready", highlights)
+
+    def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
+        hidden = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "no_player_tracking",
+                "log_patterns": {
+                    "player_tracking_enabled": False,
+                    "patterns": [
+                        {
+                            "mode": "dry_run",
+                            "category": "player_count",
+                            "pattern": r"players online",
+                            "hits": 1,
+                            "recent_lines": ["Players online: 0"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": False},
+            },
+            "ExampleGame",
+        )
+        self.assertTrue(hidden["log_watch_hidden"])
+        self.assertTrue(hidden["players_card_hidden"])
+        self.assertIn("hidden", hidden["log_watch_class"])
+        self.assertIn("hidden", hidden["players_card_class"])
+
+        debug = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": True,
+                "waits_for_empty_server": "no_player_tracking",
+                "log_patterns": {
+                    "player_tracking_enabled": False,
+                    "patterns": [
+                        {
+                            "mode": "dry_run",
+                            "category": "player_count",
+                            "pattern": r"players online",
+                            "hits": 1,
+                            "recent_lines": ["Players online: 0"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": False},
+            },
+            "ExampleGame",
+        )
+        self.assertFalse(debug["log_watch_hidden"])
+        self.assertFalse(debug["players_card_hidden"])
+        self.assertEqual(debug["log_watch_class"], "")
+        self.assertEqual(debug["players_card_class"], "")
+
+        tracked = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "yes",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_join",
+                            "pattern": r"joined",
+                            "hits": 1,
+                            "recent_lines": ["Alice joined"],
+                        }
+                    ],
+                },
+                "monitor": {"players_known": True, "player_count": 1},
+            },
+            "Necesse",
+        )
+        self.assertTrue(tracked["log_watch_hidden"])
+        self.assertFalse(tracked["players_card_hidden"])
+        self.assertEqual(tracked["players"], "1")
 
 
 class ProcessStopTests(unittest.TestCase):
