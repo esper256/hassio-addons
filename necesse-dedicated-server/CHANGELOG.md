@@ -1,11 +1,15 @@
 # Changelog
 
+## 2.1.24
+
+- Clarify Network UDP port help text: this is the port players type in Necesse; change it only when 14159 is already taken on this machine (for example a second Necesse app)
+
 ## 2.1.23
 
 - **Update only when empty** copy clarifies it needs working player join/leave detection
 - Remove HA `backup_interval_minutes` and `server_port` options (parallel/confusing knobs)
   - Scheduled backups run daily; history is controlled only by **Backup retention**
-  - Necesse always listens on UDP **14159** inside the container; remap the host port on the Network tab
+  - Network UDP port is what players use; Home Assistant forwards it into the app
 - **Backup before update** keeps only the newest pre-update archive (no growing trail)
 - Backup families under one retention profile: rolling scheduled archives, one pre-update snapshot, and pre-restore safety copies kept for **1 / 7 / 30 days** (`minimal` / `standard` / `extended`)
 
