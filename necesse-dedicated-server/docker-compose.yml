@@ -38,7 +38,6 @@ services:
       BACKUP_INTERVAL_MINUTES: "1440"
       BACKUP_ON_UPDATE: "true"
       BACKUP_RETENTION: standard
-      PRE_RESTORE_KEEP_DAYS: "7"
       MIN_FREE_DISK_MB: "512"
       JAVA_OPTS: "-Xms512M -Xmx2G"
       TZ: America/Los_Angeles

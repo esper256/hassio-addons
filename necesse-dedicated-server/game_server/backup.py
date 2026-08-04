@@ -33,19 +33,21 @@ _LEGACY_PRE_UPDATE_RE = re.compile(r"^backup-.+-pre-update\.tar\.gz$")
 
 # Pending-restore token: wipe world sources and let the game create a fresh world.
 EMPTY_WORLD = "__empty__"
-# Default how long pre-restore safety copies are kept (HA option overrides).
-DEFAULT_PRE_RESTORE_KEEP_DAYS = 7
 
 
 @dataclass
 class RetentionPolicy:
-    """Cascading retention: daily → weekly → monthly (optional yearly)."""
+    """Cascading retention: daily → weekly → monthly (optional yearly).
+
+    Also carries how long pre-restore safety copies are kept (days).
+    """
 
     keep_recent: int = 0
     keep_daily: int = 7
     keep_weekly: int = 4
     keep_monthly: int = 12
     keep_yearly: int = 0
+    pre_restore_keep_days: int = 7
     profile: str = "standard"
 
     def describe(self) -> str:
@@ -56,18 +58,21 @@ class RetentionPolicy:
         ]
         if self.keep_yearly:
             parts.append(f"{self.keep_yearly} yearly")
+        parts.append(f"{self.pre_restore_keep_days}d pre-restore")
         return f"{self.profile} ({', '.join(parts)})"
 
 
 # Simple UX: one named profile instead of tuning each tier.
 # Standard matches the common NAS pattern: dailies for a week, weeklies for a
-# month, then monthlies for about a year.
+# month, then monthlies for about a year. Pre-restore safety copies use the
+# same profile: minimal=1d, standard=7d, extended=30d.
 RETENTION_PROFILES: dict[str, RetentionPolicy] = {
     "minimal": RetentionPolicy(
         keep_daily=3,
         keep_weekly=2,
         keep_monthly=3,
         keep_yearly=0,
+        pre_restore_keep_days=1,
         profile="minimal",
     ),
     "standard": RetentionPolicy(
@@ -75,6 +80,7 @@ RETENTION_PROFILES: dict[str, RetentionPolicy] = {
         keep_weekly=4,
         keep_monthly=12,
         keep_yearly=0,
+        pre_restore_keep_days=7,
         profile="standard",
     ),
     "extended": RetentionPolicy(
@@ -82,6 +88,7 @@ RETENTION_PROFILES: dict[str, RetentionPolicy] = {
         keep_weekly=8,
         keep_monthly=24,
         keep_yearly=2,
+        pre_restore_keep_days=30,
         profile="extended",
     ),
 }
@@ -107,7 +114,6 @@ class BackupManager:
         min_source_bytes: int = 1024,
         min_free_disk_mb: int = 512,
         max_backoff_minutes: int = 1440,
-        pre_restore_keep_days: int = DEFAULT_PRE_RESTORE_KEEP_DAYS,
     ) -> None:
         self.backup_dir = Path(backup_dir)
         self.sources = [Path(s) for s in sources]
@@ -119,7 +125,6 @@ class BackupManager:
         self.min_source_bytes = max(0, min_source_bytes)
         self.min_free_disk_mb = max(0, min_free_disk_mb)
         self.max_backoff_seconds = max(self.interval_seconds, max_backoff_minutes * 60)
-        self.pre_restore_keep_days = max(0, int(pre_restore_keep_days))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.last_backup_at: float | None = None
@@ -257,7 +262,7 @@ class BackupManager:
         """Create a world archive under backup_dir.
 
         ``outside_rotation=True`` writes a ``pre-restore-*.tar.gz`` safety copy
-        (age-pruned via ``pre_restore_keep_days``).
+        (age-pruned via the retention profile's ``pre_restore_keep_days``).
 
         ``reason="pre-update"`` writes ``pre-update-*.tar.gz`` (only the newest
         of that family is kept).
@@ -368,12 +373,11 @@ class BackupManager:
 
     def _prune_pre_restore_by_age(self) -> None:
         archives = self.list_pre_restore_archives()
-        if self.pre_restore_keep_days <= 0:
-            # 0 = keep none after prune (except we still allow create; next prune
-            # removes them). Prefer keeping nothing only when explicitly 0.
+        keep_days = max(0, int(self.retention.pre_restore_keep_days))
+        if keep_days <= 0:
             self._unlink_except(archives, set(), label="pre-restore age")
             return
-        cutoff = time.time() - (self.pre_restore_keep_days * 86400)
+        cutoff = time.time() - (keep_days * 86400)
         keep = {p for p in archives if p.stat().st_mtime >= cutoff}
         self._unlink_except(archives, keep, label="pre-restore age")
 
@@ -666,8 +670,8 @@ class BackupManager:
                 "keep_weekly": self.retention.keep_weekly,
                 "keep_monthly": self.retention.keep_monthly,
                 "keep_yearly": self.retention.keep_yearly,
+                "pre_restore_keep_days": self.retention.pre_restore_keep_days,
             },
-            "pre_restore_keep_days": self.pre_restore_keep_days,
             "pre_update_count": len(self.list_pre_update_archives()),
             "pre_restore_count": len(self.list_pre_restore_archives()),
             "min_source_bytes": self.min_source_bytes,

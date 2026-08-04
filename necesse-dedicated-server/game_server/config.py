@@ -61,10 +61,9 @@ class SupervisorConfig:
     backup_on_update: bool = True
     backup_min_source_bytes: int = 1024
     # One UX knob: minimal | standard | extended
+    # (also sets pre-restore safety keep days: 1 / 7 / 30)
     backup_retention: str = "standard"
     backup_max_backoff_minutes: int = 1440
-    # How long pre-restore safety copies are kept (days).
-    pre_restore_keep_days: int = 7
 
     # Disk
     min_free_disk_mb: int = 512
@@ -170,7 +169,6 @@ def _env_overrides() -> dict[str, Any]:
         "BACKUP_MIN_SOURCE_BYTES",
         "BACKUP_RETENTION",
         "BACKUP_MAX_BACKOFF_MINUTES",
-        "PRE_RESTORE_KEEP_DAYS",
         "MIN_FREE_DISK_MB",
         "STEAMCMD_DIR",
         "INSTALL_DIR",
@@ -236,7 +234,6 @@ def load_config() -> SupervisorConfig:
         "backup_min_source_bytes",
         "backup_retention",
         "backup_max_backoff_minutes",
-        "pre_restore_keep_days",
         "min_free_disk_mb",
         "steamcmd_dir",
         "install_dir",
@@ -295,9 +292,6 @@ def load_config() -> SupervisorConfig:
         backup_retention=str(normalized.get("backup_retention") or "standard"),
         backup_max_backoff_minutes=_as_int(
             normalized.get("backup_max_backoff_minutes"), 1440
-        ),
-        pre_restore_keep_days=_as_int(
-            normalized.get("pre_restore_keep_days"), 7
         ),
         min_free_disk_mb=_as_int(normalized.get("min_free_disk_mb"), 512),
         steamcmd_dir=str(normalized.get("steamcmd_dir") or "/opt/steamcmd"),

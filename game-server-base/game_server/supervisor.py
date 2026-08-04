@@ -149,7 +149,6 @@ class GameServerSupervisor:
             min_source_bytes=max(config.backup_min_source_bytes, plugin.min_backup_bytes),
             min_free_disk_mb=config.min_free_disk_mb,
             max_backoff_minutes=config.backup_max_backoff_minutes,
-            pre_restore_keep_days=config.pre_restore_keep_days,
         )
         self.backups.set_failure_callback(self._on_backup_failure)
         self.status_server: StatusServer | None = None

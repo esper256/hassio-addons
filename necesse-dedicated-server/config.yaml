@@ -47,7 +47,6 @@ options:
   backup_enabled: true
   backup_on_update: true
   backup_retention: standard
-  pre_restore_keep_days: 7
   min_free_disk_mb: 512
 schema:
   world_name: str
@@ -75,7 +74,6 @@ schema:
   backup_enabled: bool
   backup_on_update: bool
   backup_retention: list(minimal|standard|extended)
-  pre_restore_keep_days: int(0,)
   min_free_disk_mb: int(0,)
 backup_exclude:
   - "**/steamapps/**"

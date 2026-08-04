@@ -73,10 +73,7 @@ configuration:
     description: Create one world backup immediately before applying a Steam update. Only the newest pre-update backup is kept (older ones are removed).
   backup_retention:
     name: Backup retention
-    description: "How scheduled backup history is thinned over time. standard = 7 daily → 4 weekly → 12 monthly. minimal uses less disk; extended keeps longer history. Separate from the single pre-update backup and timed pre-restore safety copies."
-  pre_restore_keep_days:
-    name: Keep restore safety backups (days)
-    description: How long to keep pre-restore safety copies created before a restore or new-world wipe. Default 7 days. 0 deletes them on the next retention pass.
+    description: "How backup history is kept. Scheduled archives use daily→weekly→monthly thinning; pre-restore safety copies use the same profile (minimal=1 day, standard=7 days, extended=30 days). Only one pre-update backup is kept."
   min_free_disk_mb:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold.

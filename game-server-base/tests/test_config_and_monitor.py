@@ -585,13 +585,13 @@ class BackupRetentionTests(unittest.TestCase):
                 interval_minutes=0,
                 enabled=True,
                 min_source_bytes=1,
-                pre_restore_keep_days=7,
                 retention=RetentionPolicy(
                     keep_recent=1,
                     keep_daily=0,
                     keep_weekly=0,
                     keep_monthly=0,
                     keep_yearly=0,
+                    pre_restore_keep_days=7,
                     profile="test",
                 ),
             )
@@ -691,6 +691,9 @@ class BackupRetentionTests(unittest.TestCase):
         self.assertEqual(standard.keep_daily, 7)
         self.assertEqual(standard.keep_weekly, 4)
         self.assertEqual(standard.keep_monthly, 12)
+        self.assertEqual(standard.pre_restore_keep_days, 7)
+        self.assertEqual(retention_from_profile("minimal").pre_restore_keep_days, 1)
+        self.assertEqual(retention_from_profile("extended").pre_restore_keep_days, 30)
         self.assertEqual(retention_from_profile("nope").profile, "standard")
 
     def test_generational_keepers(self) -> None:

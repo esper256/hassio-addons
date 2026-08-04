@@ -55,8 +55,7 @@ You do not need every advanced knob. These are the ones families usually touch:
 | Daily Steam check hour | Local hour to ask Steam once a day for a newer build (default **5** = 5:00am) |
 | Auto-update interval | Only used if the daily hour is cleared (`0` = off; values under 15 become 15) |
 | Update only when empty | Wait until nobody is online before restarting (needs working join/leave detection) |
-| Backup retention | `minimal` / `standard` / `extended` — how scheduled backup history is thinned |
-| Keep restore safety backups | Days to keep pre-restore / new-world safety copies (default 7) |
+| Backup retention | `minimal` / `standard` / `extended` — scheduled history + pre-restore keep window |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
 | Network → 14159/udp | Host UDP port clients use (container always listens on 14159) |
 
@@ -85,15 +84,13 @@ Three archive kinds live under `/data/backups`:
 
 1. **Scheduled** (`backup-*.tar.gz`) — daily creates; thinned by the retention profile
 2. **Pre-update** (`pre-update-*.tar.gz`) — one snapshot from the latest game-code update (only the newest is kept)
-3. **Pre-restore** (`pre-restore-*.tar.gz`) — safety copies before restore / new world; kept for the configured number of days (default 7)
+3. **Pre-restore** (`pre-restore-*.tar.gz`) — safety copies before restore / new world; age window from the same profile
 
-Retention profile (scheduled history only):
-
-| Profile | Keeps roughly |
-| --- | --- |
-| `minimal` | 3 daily → 2 weekly → 3 monthly |
-| `standard` (default) | 7 daily → 4 weekly → 12 monthly |
-| `extended` | 7 daily → 8 weekly → 24 monthly → 2 yearly |
+| Profile | Scheduled history | Pre-restore keep |
+| --- | --- | --- |
+| `minimal` | 3 daily → 2 weekly → 3 monthly | 1 day |
+| `standard` (default) | 7 daily → 4 weekly → 12 monthly | 7 days |
+| `extended` | 7 daily → 8 weekly → 24 monthly → 2 yearly | 30 days |
 
 Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low. Backup failures create a Home Assistant notification.
 
