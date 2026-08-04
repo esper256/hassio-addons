@@ -14,9 +14,11 @@ stop_timeout_seconds: 240
 stop_stdin_commands:
   - save
   - exit
+# Fallback roots when no named world exists yet; also used to restore legacy
+# *.tar.gz snapshots. New backups follow world_save kind (copy the .zip as-is).
 backup_paths:
   - /data/world
-# Active world artifact for status UI (backups still use backup_paths above).
+# Active world artifact for status UI, upload restore, and by-kind backups.
 world_save:
   strategy: named_path
   paths:
