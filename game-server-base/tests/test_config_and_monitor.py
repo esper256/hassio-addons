@@ -1263,6 +1263,7 @@ class SteamCMDHelperTests(unittest.TestCase):
             env=None,
             run_uid=None,
             run_gid=None,
+            stop_event=None,
         ):
             idx = min(calls["n"], len(outputs) - 1)
             calls["n"] += 1
