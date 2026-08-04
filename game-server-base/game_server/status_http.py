@@ -75,6 +75,76 @@ def _html_escape(text: str) -> str:
     return html.escape(str(text), quote=True)
 
 
+def _as_confirm_flag(value: Any) -> bool:
+    """True for JSON true / common truthy confirm encodings."""
+
+    if value is True:
+        return True
+    if isinstance(value, (int, float)) and value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return False
+
+
+def _read_http_body(handler: BaseHTTPRequestHandler, *, max_bytes: int = 1_000_000) -> bytes:
+    """Read a request body even when Ingress omits Content-Length (chunked)."""
+
+    length_header = handler.headers.get("Content-Length")
+    if length_header is not None and str(length_header).strip() != "":
+        try:
+            length = int(length_header)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
+            return b""
+        return handler.rfile.read(min(length, max_bytes))
+
+    encoding = (handler.headers.get("Transfer-Encoding") or "").lower()
+    if "chunked" not in encoding:
+        return b""
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        size_line = handler.rfile.readline()
+        if not size_line:
+            break
+        size_token = size_line.strip().split(b";", 1)[0]
+        try:
+            size = int(size_token, 16)
+        except ValueError:
+            break
+        if size == 0:
+            # Consume optional trailers through the blank line.
+            while True:
+                trailer = handler.rfile.readline()
+                if trailer in (b"", b"\r\n", b"\n"):
+                    break
+            break
+        if total + size > max_bytes:
+            raise ValueError("request body too large")
+        chunk = handler.rfile.read(size)
+        chunks.append(chunk)
+        total += len(chunk)
+        handler.rfile.read(2)  # trailing CRLF after each chunk
+    return b"".join(chunks)
+
+
+def _parse_json_object(raw: bytes) -> dict[str, Any]:
+    if not raw or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid JSON body") from exc
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("expected JSON object")
+    return payload
+
+
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -404,10 +474,15 @@ HTML_PAGE = """<!DOCTYPE html>
       const btn = document.getElementById('btn-restore');
       if (btn) btn.disabled = true;
       try {{
+        // Query-string mirrors the JSON body: some Ingress paths drop/omit the
+        // POST body (missing Content-Length), which used to look like a failed confirm.
+        const qs = emptyWorld
+          ? 'empty=1&confirm=1'
+          : ('archive=' + encodeURIComponent(name) + '&confirm=1');
         const body = emptyWorld
           ? {{ empty: true, confirm: true }}
           : {{ archive: name, confirm: true }};
-        const res = await fetch('api/backups/restore', {{
+        const res = await fetch('api/backups/restore?' + qs, {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
           body: JSON.stringify(body),
@@ -665,30 +740,43 @@ class StatusServer:
                             501, {"ok": False, "error": "restore unavailable"}
                         )
                         return
-                    length = int(self.headers.get("Content-Length") or 0)
-                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    parsed = urlparse(self.path)
+                    query = parse_qs(parsed.query)
                     try:
-                        payload = json.loads(raw.decode("utf-8") or "{}")
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        self._json(400, {"ok": False, "error": "invalid JSON body"})
+                        payload = _parse_json_object(_read_http_body(self))
+                    except ValueError as exc:
+                        self._json(400, {"ok": False, "error": str(exc)})
                         return
-                    if not isinstance(payload, dict):
-                        self._json(400, {"ok": False, "error": "expected JSON object"})
-                        return
+                    # Prefer JSON body; fall back to query string when Ingress
+                    # delivers an empty body (common when Content-Length is lost).
+                    if "archive" not in payload and "name" not in payload:
+                        archive_q = (query.get("archive") or [""])[0]
+                        if archive_q:
+                            payload["archive"] = archive_q
+                    if "empty" not in payload and (query.get("empty") or [""])[0]:
+                        payload["empty"] = (query.get("empty") or [""])[0]
+                    if "confirm" not in payload and (query.get("confirm") or [""])[0]:
+                        payload["confirm"] = (query.get("confirm") or [""])[0]
+
                     archive = str(
                         payload.get("archive") or payload.get("name") or ""
                     ).strip()
-                    empty = bool(payload.get("empty"))
-                    # Explicit confirm flag — UI confirm() alone is not enough if a
-                    # script POSTs without thinking; require confirm:true in body.
-                    if payload.get("confirm") is not True:
+                    empty_raw = payload.get("empty")
+                    empty = bool(empty_raw) and str(empty_raw).strip().lower() not in {
+                        "0",
+                        "false",
+                        "no",
+                        "off",
+                        "",
+                    }
+                    if not _as_confirm_flag(payload.get("confirm")):
                         self._json(
                             400,
                             {
                                 "ok": False,
                                 "error": (
-                                    "confirmation required: set confirm:true after "
-                                    "the operator acknowledges the world will be replaced"
+                                    "Could not confirm the restore request. "
+                                    "Try again from OPEN WEB UI."
                                 ),
                             },
                         )
@@ -1130,11 +1218,18 @@ def _format_running(status: dict[str, Any]) -> tuple[str, str]:
     """Hero server label from lifecycle (falls back to running bool)."""
 
     phase = str(status.get("lifecycle") or "").strip()
+    # Restore/update stop the game first; surface that while it is still up.
+    if phase == "restoring":
+        if status.get("running"):
+            return "stopping for restore", "accent"
+        return "restoring world", "accent"
+    if phase == "updating":
+        if status.get("running"):
+            return "stopping for update", "accent"
+        return "updating", "accent"
     labels = {
         "running": ("running", "good"),
         "installing": ("installing", "accent"),
-        "updating": ("updating", "accent"),
-        "restoring": ("restoring", "accent"),
         "waiting": ("waiting", "accent"),
         "starting": ("starting", "accent"),
         "stopping": ("stopping", "accent"),

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.26
+
+- Fix NEW WORLD / restore from Ingress: when the POST body is dropped (missing Content-Length), accept `confirm` / `empty` / `archive` from the query string so the second “confirmation required” alert no longer blocks the action
+- Server hero shows **stopping for restore** / **restoring world** while a restore runs (and the same idea for updates)
+
 ## 2.1.25
 
 - Keep bridge networking (no `host_network`): Necesse always listens on UDP **14159** inside the app
