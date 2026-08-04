@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from game_server.backup import (  # noqa: E402
+    EMPTY_WORLD,
     BackupManager,
     RetentionPolicy,
     retention_from_profile,
@@ -451,6 +452,35 @@ class BackupRetentionTests(unittest.TestCase):
             mgr._register_failure("no space")
             self.assertEqual(failures, ["no space"])
 
+    def test_clear_world_sources_resets_to_scratch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            source = root / "world"
+            source.mkdir()
+            (source / "saves").mkdir()
+            (source / "saves" / "worlds").mkdir(parents=True)
+            (source / "saves" / "worlds" / "FamilyWorld.zip").write_bytes(
+                b"WORLD-BYTES" * 32
+            )
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            safety = mgr.create_backup(reason="before-empty", outside_rotation=True)
+            self.assertIsNotNone(safety)
+            result = mgr.clear_world_sources()
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["empty"])
+            self.assertTrue(source.is_dir())
+            self.assertFalse(any(source.iterdir()))
+            # Empty world has nothing to validate for a normal backup.
+            valid, _reason = mgr.validate_sources()
+            self.assertFalse(valid)
+
     def test_profiles(self) -> None:
         standard = retention_from_profile("standard")
         self.assertEqual(standard.keep_daily, 7)
@@ -771,6 +801,47 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(supervisor._update_bypass_window)
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
+
+    def test_request_empty_world_reset_schedules_clear(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            world.mkdir()
+            logs.mkdir()
+            (world / "save.bin").write_bytes(b"LIVE-WORLD" * 16)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=True,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(world),
+                    "logs_dir": str(logs),
+                },
+            )
+            supervisor = GameServerSupervisor(plugin, cfg)
+            # Point backup sources at our temp world (plugin defaults are /data/...).
+            supervisor.backups.sources = [world]
+            supervisor.backups.min_source_bytes = 1
+            result = supervisor.request_restore(EMPTY_WORLD)
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["empty"])
+            self.assertEqual(supervisor._restore_pending, EMPTY_WORLD)
+            # Avoid launching a real game binary in unit tests.
+            supervisor.process.start = lambda reason="boot": None  # type: ignore[method-assign]
+            supervisor.process.stop = lambda timeout=None: None  # type: ignore[method-assign]
+            supervisor._apply_restore(EMPTY_WORLD)
+            self.assertTrue(world.is_dir())
+            self.assertFalse(any(world.iterdir()))
+            self.assertIsNone(supervisor.last_restore_error)
+            safety_copies = list((root / "backups").glob("pre-restore-*.tar.gz"))
+            self.assertEqual(len(safety_copies), 1)
 
     def test_status_read_does_not_mutate_build_id_or_lie_about_starting(self) -> None:
         plugin = load_plugin(FIXTURE)

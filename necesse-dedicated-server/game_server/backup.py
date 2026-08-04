@@ -25,6 +25,9 @@ PRE_RESTORE_GLOB = "pre-restore-*.tar.gz"
 PRE_RESTORE_KEEP = 5
 _ARCHIVE_NAME_RE = re.compile(r"^(backup|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$")
 
+# Pending-restore token: wipe world sources and let the game create a fresh world.
+EMPTY_WORLD = "__empty__"
+
 
 @dataclass
 class RetentionPolicy:
@@ -345,6 +348,49 @@ class BackupManager:
             return None
         return path if path.is_file() else None
 
+    def _remove_sources(self) -> list[str]:
+        """Delete configured world sources. Returns paths that existed."""
+
+        removed: list[str] = []
+        for source in self.sources:
+            if not source.exists():
+                continue
+            LOG.info("Removing current world data: %s", source)
+            if source.is_dir():
+                shutil.rmtree(source)
+            else:
+                source.unlink()
+            removed.append(str(source))
+        return removed
+
+    def _ensure_source_roots(self) -> None:
+        """Recreate empty directory roots so the game can write a new world."""
+
+        for source in self.sources:
+            if source.exists():
+                continue
+            # Archive-looking suffixes are treated as files (parent only).
+            if source.suffix.lower() in {".zip", ".tar", ".gz", ".7z", ".rar"}:
+                source.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                source.mkdir(parents=True, exist_ok=True)
+
+    def clear_world_sources(self) -> dict[str, Any]:
+        """Wipe configured world sources so the next start is a fresh world.
+
+        Does not stop/start the game process — caller owns lifecycle.
+        """
+
+        with self._lock:
+            removed = self._remove_sources()
+            self._ensure_source_roots()
+        return {
+            "ok": True,
+            "empty": True,
+            "cleared": removed,
+            "sources": [str(s) for s in self.sources],
+        }
+
     def restore_archive(self, archive: str | Path) -> dict[str, Any]:
         """Extract a backup over configured world sources.
 
@@ -371,13 +417,7 @@ class BackupManager:
         extract_root = next(iter(parents))
 
         with self._lock:
-            for source in self.sources:
-                if source.exists():
-                    LOG.info("Removing current world data before restore: %s", source)
-                    if source.is_dir():
-                        shutil.rmtree(source)
-                    else:
-                        source.unlink()
+            self._remove_sources()
 
             LOG.info("Restoring %s into %s", path.name, extract_root)
             with tarfile.open(path, "r:gz") as tar:
