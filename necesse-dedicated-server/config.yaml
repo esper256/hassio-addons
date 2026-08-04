@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "2.1.22"
+version: "2.1.23"
 slug: "necesse_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
 # SteamCMD / Necesse dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
@@ -22,12 +22,11 @@ panel_title: Necesse
 ports:
   14159/udp: 14159
 ports_description:
-  14159/udp: Necesse game traffic (UDP)
+  14159/udp: Host UDP port clients use (forwards to container 14159; Necesse always listens on 14159 inside)
 options:
   world_name: "FamilyWorld"
   server_password: ""
   server_slots: 10
-  server_port: 14159
   server_owner: ""
   server_motd: "Welcome to the family Necesse server!"
   pause_when_empty: true
@@ -46,15 +45,14 @@ options:
   status_http_enabled: true
   ha_notifications: true
   backup_enabled: true
-  backup_interval_minutes: 360
   backup_on_update: true
   backup_retention: standard
+  pre_restore_keep_days: 7
   min_free_disk_mb: 512
 schema:
   world_name: str
   server_password: password
   server_slots: int(1,250)
-  server_port: port
   server_owner: str?
   server_motd: str
   pause_when_empty: bool
@@ -75,9 +73,9 @@ schema:
   status_http_enabled: bool
   ha_notifications: bool
   backup_enabled: bool
-  backup_interval_minutes: int(0,)
   backup_on_update: bool
   backup_retention: list(minimal|standard|extended)
+  pre_restore_keep_days: int(0,)
   min_free_disk_mb: int(0,)
 backup_exclude:
   - "**/steamapps/**"

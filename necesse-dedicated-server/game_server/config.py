@@ -54,13 +54,17 @@ class SupervisorConfig:
 
     # Backups
     backup_enabled: bool = True
-    backup_interval_minutes: int = 360
+    # Create cadence for scheduled backups. HA exposes retention profile only;
+    # default daily (1440) so create rate matches keep_daily slots. Env override OK.
+    backup_interval_minutes: int = 1440
     backup_dir: str = "/data/backups"
     backup_on_update: bool = True
     backup_min_source_bytes: int = 1024
     # One UX knob: minimal | standard | extended
     backup_retention: str = "standard"
     backup_max_backoff_minutes: int = 1440
+    # How long pre-restore safety copies are kept (days).
+    pre_restore_keep_days: int = 7
 
     # Disk
     min_free_disk_mb: int = 512
@@ -166,6 +170,7 @@ def _env_overrides() -> dict[str, Any]:
         "BACKUP_MIN_SOURCE_BYTES",
         "BACKUP_RETENTION",
         "BACKUP_MAX_BACKOFF_MINUTES",
+        "PRE_RESTORE_KEEP_DAYS",
         "MIN_FREE_DISK_MB",
         "STEAMCMD_DIR",
         "INSTALL_DIR",
@@ -231,6 +236,7 @@ def load_config() -> SupervisorConfig:
         "backup_min_source_bytes",
         "backup_retention",
         "backup_max_backoff_minutes",
+        "pre_restore_keep_days",
         "min_free_disk_mb",
         "steamcmd_dir",
         "install_dir",
@@ -279,7 +285,7 @@ def load_config() -> SupervisorConfig:
         debug_mode=_as_bool(normalized.get("debug_mode"), False),
         backup_enabled=_as_bool(normalized.get("backup_enabled"), True),
         backup_interval_minutes=_as_int(
-            normalized.get("backup_interval_minutes"), 360
+            normalized.get("backup_interval_minutes"), 1440
         ),
         backup_dir=str(normalized.get("backup_dir") or "/data/backups"),
         backup_on_update=_as_bool(normalized.get("backup_on_update"), True),
@@ -289,6 +295,9 @@ def load_config() -> SupervisorConfig:
         backup_retention=str(normalized.get("backup_retention") or "standard"),
         backup_max_backoff_minutes=_as_int(
             normalized.get("backup_max_backoff_minutes"), 1440
+        ),
+        pre_restore_keep_days=_as_int(
+            normalized.get("pre_restore_keep_days"), 7
         ),
         min_free_disk_mb=_as_int(normalized.get("min_free_disk_mb"), 512),
         steamcmd_dir=str(normalized.get("steamcmd_dir") or "/opt/steamcmd"),

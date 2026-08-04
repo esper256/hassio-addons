@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.23
+
+- **Update only when empty** copy clarifies it needs working player join/leave detection
+- Remove HA `backup_interval_minutes` and `server_port` options (parallel/confusing knobs)
+  - Scheduled backups run daily; history is controlled only by **Backup retention**
+  - Necesse always listens on UDP **14159** inside the container; remap the host port on the Network tab
+- **Backup before update** keeps only the newest pre-update archive (no growing trail)
+- Add **Keep restore safety backups (days)** (default 7) for pre-restore / new-world safety copies
+- Backup families are now distinct: rolling retention archives, one pre-update snapshot, age-limited pre-restore copies
+
 ## 2.1.22
 
 - Version bump so Home Assistant refreshes the Configuration schema (2.1.21 follow-ups were invisible to already-installed apps)

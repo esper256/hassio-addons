@@ -54,9 +54,11 @@ You do not need every advanced knob. These are the ones families usually touch:
 | Update on start | Run SteamCMD when the add-on starts (recommended) |
 | Daily Steam check hour | Local hour to ask Steam once a day for a newer build (default **5** = 5:00am) |
 | Auto-update interval | Only used if the daily hour is cleared (`0` = off; values under 15 become 15) |
-| Update only when empty | When a newer build is ready, wait until nobody is online before restarting |
-| Backup retention | `minimal` / `standard` / `extended` — how much history to keep |
+| Update only when empty | Wait until nobody is online before restarting (needs working join/leave detection) |
+| Backup retention | `minimal` / `standard` / `extended` — how scheduled backup history is thinned |
+| Keep restore safety backups | Days to keep pre-restore / new-world safety copies (default 7) |
 | HA notifications | Persistent notifications on crash / update failure / version mismatch |
+| Network → 14159/udp | Host UDP port clients use (container always listens on 14159) |
 
 Optional quiet hours (`update_window_start_hour` / `end`) further limit when a pending update may restart the server. Leave them empty to allow the restart any time once the server is empty.
 
@@ -79,7 +81,13 @@ Optional quiet hours (`update_window_start_hour` / `end`) further limit when a p
 
 ### Backups
 
-Retention is one dropdown:
+Three archive kinds live under `/data/backups`:
+
+1. **Scheduled** (`backup-*.tar.gz`) — daily creates; thinned by the retention profile
+2. **Pre-update** (`pre-update-*.tar.gz`) — one snapshot from the latest game-code update (only the newest is kept)
+3. **Pre-restore** (`pre-restore-*.tar.gz`) — safety copies before restore / new world; kept for the configured number of days (default 7)
+
+Retention profile (scheduled history only):
 
 | Profile | Keeps roughly |
 | --- | --- |
@@ -89,7 +97,7 @@ Retention is one dropdown:
 
 Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low. Backup failures create a Home Assistant notification.
 
-**Restore from Ingress:** pick a backup (or **NEW WORLD** at the bottom of the list) → **Restore selected backup** → confirm. The server stops; if any world data exists it is saved as a pre-restore safety copy first; only after that backup succeeds does the selected archive replace the world (or world files are cleared for **NEW WORLD**); then the server restarts. Archives are only deleted by the configured retention plan.
+**Restore from Ingress:** pick a backup (or **NEW WORLD** at the bottom of the list) → **Restore selected backup** → confirm. The server stops; if any world data exists it is saved as a pre-restore safety copy first; only after that backup succeeds does the selected archive replace the world (or world files are cleared for **NEW WORLD**); then the server restarts. Archives are only deleted by their family’s retention rule.
 
 ### Logs
 

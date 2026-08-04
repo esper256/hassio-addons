@@ -8,9 +8,6 @@ configuration:
   server_slots:
     name: Max players
     description: Maximum concurrent players.
-  server_port:
-    name: Server port
-    description: UDP port the Necesse process listens on inside the container.
   server_owner:
     name: Server owner
     description: Optional owner player name.
@@ -46,7 +43,7 @@ configuration:
     description: Local hour (0–23) to ask Steam once per day for a newer dedicated-server build. Default is 5 (5:00am). Leave empty to use the interval setting instead.
   update_when_empty_only:
     name: Update only when empty
-    description: When a newer build is ready, wait until nobody is online before restarting so players are not interrupted.
+    description: When a newer build is ready, wait until nobody is online before restarting so players are not interrupted. Requires working player join/leave detection (configured log patterns) — without that, emptiness cannot be determined and updates will not proceed while this is on.
   update_on_version_mismatch:
     name: Update on version mismatch
     description: If clients are rejected for a wrong/outdated version, check Steam for a newer build and only then restart to update.
@@ -70,18 +67,18 @@ configuration:
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
   backup_enabled:
     name: Enable backups
-    description: Periodically archive /data/world into /data/backups.
-  backup_interval_minutes:
-    name: Backup interval (minutes)
-    description: How often to attempt a backup. Failures/empty worlds back off from this interval.
+    description: Periodically archive /data/world into /data/backups on a daily schedule; history is thinned by the retention profile below.
   backup_on_update:
     name: Backup before update
-    description: Create a world backup immediately before applying a Steam update.
+    description: Create one world backup immediately before applying a Steam update. Only the newest pre-update backup is kept (older ones are removed).
   backup_retention:
     name: Backup retention
-    description: "How history is thinned over time. standard = 7 daily → 4 weekly → 12 monthly. minimal uses less disk; extended keeps longer history."
+    description: "How scheduled backup history is thinned over time. standard = 7 daily → 4 weekly → 12 monthly. minimal uses less disk; extended keeps longer history. Separate from the single pre-update backup and timed pre-restore safety copies."
+  pre_restore_keep_days:
+    name: Keep restore safety backups (days)
+    description: How long to keep pre-restore safety copies created before a restore or new-world wipe. Default 7 days. 0 deletes them on the next retention pass.
   min_free_disk_mb:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold.
 network:
-  14159/udp: Necesse game traffic
+  14159/udp: Host UDP port for Necesse clients (mapped to fixed container port 14159)

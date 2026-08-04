@@ -303,7 +303,8 @@ HTML_PAGE = """<!DOCTYPE html>
       Restore replaces the live world only after you confirm, and only after a
       successful pre-restore safety backup when any world data exists. Choose
       <strong>NEW WORLD</strong> in the list for an empty world. Archives are
-      deleted only by the configured retention plan.
+      deleted only by their family rules: retention profile (scheduled), keep
+      newest (pre-update), or age window (pre-restore).
     </p>
     <div class="capture-row">
       <label for="backup-select">Saved backups</label>
