@@ -22,11 +22,17 @@ from game_server.backup import (  # noqa: E402
     select_generational_keepers,
 )
 from game_server.disk import format_bytes  # noqa: E402
-from game_server.config import format_bool, load_config, load_options_json  # noqa: E402
+from game_server.config import (  # noqa: E402
+    SupervisorConfig,
+    format_bool,
+    load_config,
+    load_options_json,
+)
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
+from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
     _fmt_ago,
@@ -611,6 +617,72 @@ class StatusFormatTests(unittest.TestCase):
             5, now=later
         )
         self.assertGreater(seconds_next_day, 23 * 3600)
+
+    def test_force_update_now_schedules_even_with_players(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            steamcmd_dir = root / "steamcmd"
+            world.mkdir()
+            logs.mkdir()
+            steamcmd_dir.mkdir()
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(steamcmd_dir),
+                update_when_empty_only=True,
+                game_options={
+                    "data_dir": str(world),
+                    "logs_dir": str(logs),
+                },
+            )
+            plugin.log_patterns.player_join = [r"(?P<player>.+) joined"]
+            plugin.log_patterns.player_leave = [r"(?P<player>.+) left"]
+            supervisor = GameServerSupervisor(plugin, cfg)
+            self.assertTrue(supervisor.monitor.player_tracking_enabled)
+            supervisor.monitor.state.players_known = True
+            supervisor.monitor.state.player_count = 2
+            supervisor.monitor.state.players = {"Alice", "Bob"}
+            # Without a manual force, a normal pending update must wait.
+            supervisor.request_update(reason="steam_build")
+            self.assertFalse(supervisor._can_apply_update())
+            result = supervisor.force_update_now()
+            self.assertTrue(result["ok"])
+            self.assertTrue(supervisor._update_pending)
+            self.assertTrue(supervisor._update_ignore_players)
+            self.assertTrue(supervisor._update_bypass_window)
+            self.assertEqual(supervisor._update_reason, "manual")
+            self.assertTrue(supervisor._can_apply_update())
+
+    def test_capture_archive_path_rejects_traversal(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            state = root / "state"
+            logs.mkdir()
+            state.mkdir()
+            evil = state / "evil"
+            evil.mkdir()
+            (evil / "capture.tar.gz").write_bytes(b"pwn")
+            good = state / "captures" / "goodid"
+            # LogToolbox creates captures under state/captures
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            box.captures_dir.mkdir(parents=True, exist_ok=True)
+            capture_dir = box.captures_dir / "20260803T000000Z"
+            capture_dir.mkdir()
+            (capture_dir / "capture.tar.gz").write_bytes(b"ok")
+            self.assertIsNotNone(box.capture_archive_path("20260803T000000Z"))
+            self.assertIsNone(box.capture_archive_path("../evil"))
+            self.assertIsNone(box.capture_archive_path(".."))
+            self.assertIsNone(box.capture_archive_path("evil/../../etc"))
 
     def test_uptime_crashes_game_version_and_subtitle(self) -> None:
         uptime, hint = _format_uptime(

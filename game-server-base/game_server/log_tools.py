@@ -323,7 +323,17 @@ class LogToolbox:
         }
 
     def capture_archive_path(self, capture_id: str) -> Path | None:
-        path = self.captures_dir / capture_id / "capture.tar.gz"
+        """Resolve a capture archive, rejecting path traversal / odd ids."""
+
+        raw = str(capture_id or "").strip()
+        if not raw or not re.fullmatch(r"[A-Za-z0-9._-]+", raw):
+            return None
+        root = self.captures_dir.resolve()
+        path = (self.captures_dir / raw / "capture.tar.gz").resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            return None
         return path if path.is_file() else None
 
 

@@ -31,6 +31,7 @@ RUN dpkg --add-architecture i386 \
       python3 \
       python3-yaml \
       procps \
+      tzdata \
       xz-utils \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
  && locale-gen en_US.UTF-8 \
