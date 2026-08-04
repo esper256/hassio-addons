@@ -18,11 +18,10 @@ from .disk import ensure_free_mb, path_total_bytes
 
 LOG = logging.getLogger("game_server.backup")
 
-# Rotation set (pruned). Pre-restore safety copies use a different prefix so they
-# are never deleted by generational retention.
+# Two archive families under backup_dir. Both are only deleted by the configured
+# generational retention plan (never by an ad-hoc "keep N" cap).
 ROTATION_GLOB = "backup-*.tar.gz"
 PRE_RESTORE_GLOB = "pre-restore-*.tar.gz"
-PRE_RESTORE_KEEP = 5
 _ARCHIVE_NAME_RE = re.compile(r"^(backup|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$")
 
 # Pending-restore token: wipe world sources and let the game create a fresh world.
@@ -191,6 +190,37 @@ class BackupManager:
     def source_bytes(self) -> int:
         return sum(path_total_bytes(source) for source in self.sources)
 
+    def sources_have_any_data(self) -> bool:
+        """True if any non-empty file exists under configured backup sources.
+
+        Used before destructive world ops. Unlike ``validate_sources``, this does
+        not apply ``min_source_bytes`` — a small save is still a save.
+        """
+
+        for source in self.sources:
+            if not source.exists():
+                continue
+            if source.is_file():
+                try:
+                    if source.stat().st_size > 0:
+                        return True
+                except OSError:
+                    continue
+                continue
+            if not source.is_dir():
+                continue
+            try:
+                for path in source.rglob("*"):
+                    if path.is_file() and not path.is_symlink():
+                        try:
+                            if path.stat().st_size > 0:
+                                return True
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return False
+
     def validate_sources(self) -> tuple[bool, str | None]:
         existing = [s for s in self.sources if s.exists()]
         if not existing:
@@ -204,12 +234,23 @@ class BackupManager:
         return True, None
 
     def create_backup(
-        self, reason: str = "manual", *, outside_rotation: bool = False
+        self,
+        reason: str = "manual",
+        *,
+        outside_rotation: bool = False,
+        allow_tiny: bool = False,
+        prune_after: bool = True,
     ) -> Path | None:
         """Create a world archive under backup_dir.
 
         ``outside_rotation=True`` writes a ``pre-restore-*.tar.gz`` safety copy
-        that is kept out of generational prune (capped separately).
+        (separate filename family; still pruned only via the retention plan).
+
+        ``allow_tiny=True`` skips ``min_source_bytes`` (required for pre-wipe
+        safety copies — a small world is still worth keeping).
+
+        ``prune_after=False`` defers retention pruning (used while a live-world
+        wipe still depends on the archive that was just created).
         """
 
         if not self.enabled and not outside_rotation:
@@ -226,18 +267,24 @@ class BackupManager:
             )
             return None
 
-        valid, reason_text = self.validate_sources()
-        if not valid:
-            self.last_skip_reason = reason_text
-            self.last_error = reason_text
-            LOG.warning("Skipping backup: %s", reason_text)
-            return None
+        if allow_tiny:
+            if not self.sources_have_any_data():
+                self.last_skip_reason = "no world data to back up"
+                self.last_error = self.last_skip_reason
+                LOG.warning("Skipping backup: %s", self.last_skip_reason)
+                return None
+        else:
+            valid, reason_text = self.validate_sources()
+            if not valid:
+                self.last_skip_reason = reason_text
+                self.last_error = reason_text
+                LOG.warning("Skipping backup: %s", reason_text)
+                return None
 
         existing = [s for s in self.sources if s.exists()]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
         if outside_rotation:
-            # Outside normal rotation: never matched by backup-*.tar.gz prune.
             archive = self.backup_dir / f"pre-restore-{stamp}-{safe_reason}.tar.gz"
         else:
             archive = self.backup_dir / f"backup-{stamp}-{safe_reason}.tar.gz"
@@ -246,7 +293,7 @@ class BackupManager:
             for source in existing:
                 tar.add(source, arcname=source.name)
 
-        # Reject accidental empty archives.
+        # Reject accidental empty archives (never keep a useless file).
         if archive.stat().st_size < 64:
             archive.unlink(missing_ok=True)
             self.last_skip_reason = "archive was empty/tiny after creation"
@@ -258,15 +305,32 @@ class BackupManager:
         self.backup_count += 1
         self.last_error = None
         self.last_skip_reason = None
-        if outside_rotation:
-            self._prune_pre_restore()
-        else:
-            self._prune()
+        if prune_after:
+            self.apply_retention()
         return archive
 
-    def _prune(self) -> None:
+    def create_safety_backup(self, reason: str = "safety") -> Path | None:
+        """Pre-wipe safety copy: any non-empty world data, no immediate prune."""
+
+        return self.create_backup(
+            reason=reason,
+            outside_rotation=True,
+            allow_tiny=True,
+            prune_after=False,
+        )
+
+    def apply_retention(self) -> None:
+        """Delete archives that fall outside the configured retention plan.
+
+        This is the only intentional bulk-delete of backup archives.
+        """
+
+        self._prune_glob(ROTATION_GLOB)
+        self._prune_glob(PRE_RESTORE_GLOB)
+
+    def _prune_glob(self, pattern: str) -> None:
         archives = sorted(
-            self.backup_dir.glob(ROTATION_GLOB),
+            self.backup_dir.glob(pattern),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -276,24 +340,14 @@ class BackupManager:
                 continue
             try:
                 stale.unlink()
-                LOG.info("Pruned old backup %s", stale.name)
+                LOG.info("Pruned old backup %s (retention)", stale.name)
             except OSError:
                 LOG.warning("Failed to prune %s", stale)
 
-    def _prune_pre_restore(self) -> None:
-        """Keep only the newest pre-restore safety copies (not in rotation)."""
+    def _prune(self) -> None:
+        """Backward-compatible alias for tests / callers."""
 
-        archives = sorted(
-            self.backup_dir.glob(PRE_RESTORE_GLOB),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for stale in archives[PRE_RESTORE_KEEP:]:
-            try:
-                stale.unlink()
-                LOG.info("Pruned old pre-restore backup %s", stale.name)
-            except OSError:
-                LOG.warning("Failed to prune pre-restore %s", stale)
+        self.apply_retention()
 
     def list_archives(self) -> list[Path]:
         """Return rotatable backup archives oldest → newest."""
@@ -348,6 +402,39 @@ class BackupManager:
             return None
         return path if path.is_file() else None
 
+    def _require_safety_backup_before_wipe(self, prior_safety_backup: Path | None) -> None:
+        """Hard gate: never delete live world data without a real safety archive."""
+
+        if not self.sources_have_any_data():
+            return
+        if prior_safety_backup is None:
+            raise RuntimeError(
+                "refusing to delete live world data without a successful safety backup"
+            )
+        path = Path(prior_safety_backup)
+        if not path.is_file():
+            raise RuntimeError(
+                f"refusing to delete live world data; safety backup missing: {path.name}"
+            )
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise RuntimeError(
+                f"refusing to delete live world data; cannot stat safety backup: {exc}"
+            ) from exc
+        if size < 64:
+            raise RuntimeError(
+                f"refusing to delete live world data; safety backup is empty: {path.name}"
+            )
+        # Must live under backup_dir (no arbitrary path as a "safety" token).
+        root = self.backup_dir.resolve()
+        try:
+            path.resolve().relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError(
+                "refusing to delete live world data; safety backup is outside backup_dir"
+            ) from exc
+
     def _clear_source_contents(self) -> list[str]:
         """Remove world *data* while keeping existing directory inodes.
 
@@ -360,6 +447,9 @@ class BackupManager:
 
         File sources are unlinked (parent directory is left alone). Missing
         sources are left missing — do not recreate them here.
+
+        Callers must pass the wipe-gate in ``clear_world_sources`` /
+        ``restore_archive`` first.
         """
 
         cleared: list[str] = []
@@ -382,27 +472,40 @@ class BackupManager:
             cleared.append(str(source))
         return cleared
 
-    def clear_world_sources(self) -> dict[str, Any]:
+    def clear_world_sources(
+        self, *, prior_safety_backup: Path | None
+    ) -> dict[str, Any]:
         """Wipe configured world data so the next start is a fresh world.
 
         Does not stop/start the game process — caller owns lifecycle.
-        Preserves existing source-directory ownership (see
-        ``_clear_source_contents``).
+        If any world data exists, ``prior_safety_backup`` must be a successful
+        archive under backup_dir (refuse otherwise).
         """
 
         with self._lock:
+            self._require_safety_backup_before_wipe(prior_safety_backup)
             removed = self._clear_source_contents()
         return {
             "ok": True,
             "empty": True,
             "cleared": removed,
             "sources": [str(s) for s in self.sources],
+            "safety_backup": (
+                prior_safety_backup.name if prior_safety_backup is not None else None
+            ),
         }
 
-    def restore_archive(self, archive: str | Path) -> dict[str, Any]:
+    def restore_archive(
+        self,
+        archive: str | Path,
+        *,
+        prior_safety_backup: Path | None,
+    ) -> dict[str, Any]:
         """Extract a backup over configured world sources.
 
         Does not stop/start the game process — caller owns lifecycle.
+        If any world data exists, ``prior_safety_backup`` must be a successful
+        archive under backup_dir (refuse otherwise).
         """
 
         path = self.resolve_archive(str(archive)) if not isinstance(archive, Path) else archive
@@ -425,6 +528,7 @@ class BackupManager:
         extract_root = next(iter(parents))
 
         with self._lock:
+            self._require_safety_backup_before_wipe(prior_safety_backup)
             # Clear contents in place when the source is a directory so we do not
             # replace a gameserver-owned inode with a root-owned one before extract.
             self._clear_source_contents()
@@ -442,6 +546,9 @@ class BackupManager:
             "archive": path.name,
             "extract_root": str(extract_root),
             "sources": [str(s) for s in self.sources],
+            "safety_backup": (
+                prior_safety_backup.name if prior_safety_backup is not None else None
+            ),
         }
 
     @staticmethod

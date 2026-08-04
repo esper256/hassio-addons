@@ -250,9 +250,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restore replaces the live world. The current world is saved first as a
-      pre-restore safety copy kept outside normal backup rotation when there is
-      data to keep. Start empty clears world files so the game creates a fresh world.
+      Restore / empty-world replace the live world only after you confirm, and only
+      after a successful pre-restore safety backup when any world data exists.
+      Archives are deleted only by the configured retention plan.
     </p>
     <div class="capture-row">
       <label for="backup-select">Saved backups</label>
@@ -303,7 +303,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
-        <li>POST <code>api/backups/restore</code> — restore selected archive, or <code>{"empty":true}</code> for a fresh world</li>
+        <li>POST <code>api/backups/restore</code> — <code>{"archive":"…","confirm":true}</code> or <code>{"empty":true,"confirm":true}</code></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
@@ -334,10 +334,9 @@ HTML_PAGE = """<!DOCTYPE html>
       const ok = window.confirm(
         'Restore this backup over the live world?\\n\\n' +
         name + '\\n\\n' +
-        'The game server will stop. The current world is saved first as a ' +
-        'pre-restore safety copy (kept outside normal backup rotation) when ' +
-        'there is data to keep, then the selected backup replaces the world ' +
-        'and the server restarts.\\n\\n' +
+        'The game server will stop. If any world data exists, it is saved first ' +
+        'as a pre-restore safety copy. Only after that backup succeeds does the ' +
+        'selected archive replace the world; then the server restarts.\\n\\n' +
         'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
@@ -347,7 +346,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const res = await fetch('api/backups/restore', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ archive: name }}),
+          body: JSON.stringify({{ archive: name, confirm: true }}),
         }});
         const data = await res.json();
         if (data.ok) {{
@@ -367,9 +366,9 @@ HTML_PAGE = """<!DOCTYPE html>
       ev.preventDefault();
       const ok = window.confirm(
         'Start a new empty world?\\n\\n' +
-        'The game server will stop. The current world is saved first as a ' +
-        'pre-restore safety copy when there is data to keep, then world files ' +
-        'are cleared and the server restarts so the game can create a fresh world.\\n\\n' +
+        'The game server will stop. If any world data exists, it is saved first ' +
+        'as a pre-restore safety copy. Only after that backup succeeds are world ' +
+        'files cleared so the game can create a fresh world on restart.\\n\\n' +
         'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
@@ -379,7 +378,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const res = await fetch('api/backups/restore', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ empty: true }}),
+          body: JSON.stringify({{ empty: true, confirm: true }}),
         }});
         const data = await res.json();
         if (data.ok) {{
@@ -612,6 +611,20 @@ class StatusServer:
                         payload.get("archive") or payload.get("name") or ""
                     ).strip()
                     empty = bool(payload.get("empty"))
+                    # Explicit confirm flag — UI confirm() alone is not enough if a
+                    # script POSTs without thinking; require confirm:true in body.
+                    if payload.get("confirm") is not True:
+                        self._json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "confirmation required: set confirm:true after "
+                                    "the operator acknowledges the world will be replaced"
+                                ),
+                            },
+                        )
+                        return
                     if empty and archive:
                         self._json(
                             400,

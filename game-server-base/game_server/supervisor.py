@@ -214,13 +214,13 @@ class GameServerSupervisor:
         }
 
     def _create_pre_restore_safety(self) -> Path | None:
-        """Safety-copy the live world when there is data worth keeping."""
+        """Safety-copy the live world before any wipe. Required when data exists."""
 
-        valid, reason = self.backups.validate_sources()
-        if not valid:
-            LOG.info("Skipping pre-restore safety copy: %s", reason)
+        if not self.backups.sources_have_any_data():
+            LOG.info("No world data present; skipping pre-restore safety copy")
             return None
-        safety = self.backups.create_backup(reason="safety", outside_rotation=True)
+        # Bypass min_source_bytes and defer retention prune until after wipe.
+        safety = self.backups.create_safety_backup(reason="safety")
         if safety is None:
             raise RuntimeError(
                 self.backups.last_error
@@ -249,10 +249,16 @@ class GameServerSupervisor:
             try:
                 safety = self._create_pre_restore_safety()
                 if empty:
-                    result = self.backups.clear_world_sources()
+                    result = self.backups.clear_world_sources(
+                        prior_safety_backup=safety
+                    )
                 else:
                     assert archive is not None
-                    result = self.backups.restore_archive(archive)
+                    result = self.backups.restore_archive(
+                        archive, prior_safety_backup=safety
+                    )
+                # Retention only after the live world is safely archived + replaced.
+                self.backups.apply_retention()
                 self.last_restore_at = time.time()
                 self.last_restore_error = None
             except Exception as exc:
@@ -289,7 +295,7 @@ class GameServerSupervisor:
             else:
                 assert archive is not None
                 safety_note = (
-                    f"Previous world kept as {safety.name} outside normal rotation."
+                    f"Previous world kept as {safety.name}."
                     if safety is not None
                     else "No prior world data to keep."
                 )

@@ -444,13 +444,80 @@ class BackupRetentionTests(unittest.TestCase):
             mgr._prune()
             self.assertTrue(safety.is_file())
             self.assertIsNone(mgr.resolve_archive("../evil.tar.gz"))
-            mgr.restore_archive(archive.name)
+            mgr.restore_archive(archive.name, prior_safety_backup=safety)
             self.assertEqual(
                 (source / "save.bin").read_bytes(),
                 b"ORIGINAL-WORLD-DATA" * 8,
             )
             mgr._register_failure("no space")
             self.assertEqual(failures, ["no space"])
+
+    def test_refuse_wipe_without_safety_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"PRECIOUS-SAVE" * 32)
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                mgr.clear_world_sources(prior_safety_backup=None)
+            self.assertIn("safety backup", str(ctx.exception).lower())
+            self.assertTrue((source / "save.bin").is_file())
+            # Tiny worlds still require a safety copy (not skipped by min_source_bytes).
+            mgr.min_source_bytes = 10_000_000
+            self.assertTrue(mgr.sources_have_any_data())
+            self.assertFalse(mgr.validate_sources()[0])
+            safety = mgr.create_safety_backup(reason="safety")
+            self.assertIsNotNone(safety)
+            assert safety is not None
+            mgr.clear_world_sources(prior_safety_backup=safety)
+            self.assertFalse(any(source.iterdir()))
+
+    def test_pre_restore_only_deleted_by_retention_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"DATA" * 64)
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+                retention=RetentionPolicy(
+                    keep_recent=2,
+                    keep_daily=0,
+                    keep_weekly=0,
+                    keep_monthly=0,
+                    keep_yearly=0,
+                    profile="test",
+                ),
+            )
+            safeties = []
+            for i in range(5):
+                (source / "save.bin").write_bytes(f"DATA-{i}".encode() * 32)
+                path = mgr.create_safety_backup(reason=f"s{i}")
+                self.assertIsNotNone(path)
+                assert path is not None
+                os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
+                safeties.append(path)
+            # Creating safety copies must not prune older ones yet.
+            self.assertEqual(len(list(backup_dir.glob("pre-restore-*.tar.gz"))), 5)
+            mgr.apply_retention()
+            remaining = sorted(backup_dir.glob("pre-restore-*.tar.gz"))
+            self.assertEqual(len(remaining), 2)
+            self.assertEqual({p.name for p in remaining}, {safeties[-1].name, safeties[-2].name})
 
     def test_clear_world_sources_resets_to_scratch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,7 +539,8 @@ class BackupRetentionTests(unittest.TestCase):
             )
             safety = mgr.create_backup(reason="before-empty", outside_rotation=True)
             self.assertIsNotNone(safety)
-            result = mgr.clear_world_sources()
+            assert safety is not None
+            result = mgr.clear_world_sources(prior_safety_backup=safety)
             self.assertTrue(result["ok"])
             self.assertTrue(result["empty"])
             # Directory inode kept (ownership/mode); only contents cleared.
