@@ -78,4 +78,4 @@ configuration:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold.
 network:
-  14159/udp: Host UDP port for Necesse clients (mapped to fixed container port 14159)
+  14159/udp: Port players type in Necesse to reach this server on your Home Assistant machine (UDP). Leave at 14159 unless that port is already taken (for example a second Necesse app on 14160).
