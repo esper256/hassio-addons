@@ -36,6 +36,8 @@ from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
 from game_server.status_http import (  # noqa: E402
+    HTML_PAGE,
+    _STATUS_HTML_KEYS,
     _fmt_ago,
     _format_backups,
     _format_backup_options,
@@ -51,6 +53,7 @@ from game_server.status_http import (  # noqa: E402
     _format_world_save,
     _ui_view,
     healthz_ok,
+    render_status_html,
 )
 from game_server.world_save import (  # noqa: E402
     WorldSaveSpec,
@@ -696,6 +699,135 @@ class VersionTests(unittest.TestCase):
 
 
 class StatusFormatTests(unittest.TestCase):
+    def test_html_page_placeholders_are_only_known_fields(self) -> None:
+        """Catch unescaped JSON/CSS braces before they break Ingress GET /."""
+
+        import string
+
+        fields = {
+            name
+            for _, name, _, _ in string.Formatter().parse(HTML_PAGE)
+            if name is not None
+        }
+        # Literal JSON like {"archive":...} shows up as a field named '"archive"'.
+        suspicious = {
+            name
+            for name in fields
+            if name.startswith(("'", '"')) or ":" in name or "," in name
+        }
+        self.assertEqual(
+            suspicious,
+            set(),
+            "HTML_PAGE has unescaped {...} literals; double braces as {{ }}",
+        )
+        self.assertEqual(fields, set(_STATUS_HTML_KEYS) | {"base_href"})
+
+    def test_render_status_html_matches_http_handler_path(self) -> None:
+        """Integration-ish: full page render with realistic restore UI content."""
+
+        view = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "game_uptime_seconds": 125,
+                "supervisor_uptime_seconds": 3600,
+                "last_start_reason": "boot",
+                "crash_count": 0,
+                "app_version": "2.1.19",
+                "steamcmd_version": "1",
+                "game_version": "1.3.1",
+                "local_build_id": "24494683",
+                "install_last_updated_at": time.time() - 86400,
+                "world_save": {
+                    "bytes": 2 * 1024 * 1024,
+                    "label": "FamilyWorld.zip",
+                    "scope": "named_path",
+                },
+                "disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512},
+                "backups": {
+                    "archive_count": 1,
+                    "restorable": [
+                        {
+                            "name": "backup-20260804T010000Z-schedule.tar.gz",
+                            "kind": "backup",
+                            "mtime": time.time() - 3600,
+                        }
+                    ],
+                },
+                "waits_for_empty_server": "yes",
+                "monitor": {
+                    "player_count": 0,
+                    "players_known": True,
+                    "highlighted_lines": [],
+                },
+                "log_patterns": {
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "ready",
+                            "pattern": r"Started server",
+                            "hits": 1,
+                            "last_line": "Started server using port 14159",
+                        }
+                    ]
+                },
+                "log_captures": [],
+            },
+            "Necesse",
+        )
+        html = render_status_html(view, base_href="/api/hassio_ingress/token/")
+        self.assertIn("<!DOCTYPE html>", html)
+        self.assertIn("Necesse", html)
+        self.assertIn("Start new empty world", html)
+        self.assertIn("Restore selected backup", html)
+        # Docs examples must survive format() as literal JSON text.
+        self.assertIn('{"archive":"…","confirm":true}', html)
+        self.assertIn('{"empty":true,"confirm":true}', html)
+        self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
+        self.assertIn('href="/api/hassio_ingress/token/"', html)
+
+    def test_status_http_get_index_returns_200(self) -> None:
+        """Live HTTP GET / — same path Ingress hits on OPEN WEB UI."""
+
+        import urllib.error
+        import urllib.request
+
+        from game_server.status_http import StatusServer
+
+        status = {
+            "running": True,
+            "lifecycle": "running",
+            "game_uptime_seconds": 10,
+            "supervisor_uptime_seconds": 10,
+            "crash_count": 0,
+            "backups": {"archive_count": 0, "restorable": []},
+            "disk": {"ok": True, "free_mb": 1024, "min_free_disk_mb": 512},
+            "monitor": {"player_count": 0, "players_known": False},
+            "log_patterns": {"patterns": []},
+            "log_captures": [],
+            "waits_for_empty_server": "no_player_tracking",
+        }
+        # Bind an ephemeral port; no SUPERVISOR_TOKEN ⇒ peer allowlist open.
+        old = os.environ.pop("SUPERVISOR_TOKEN", None)
+        server = StatusServer("127.0.0.1", 0, lambda: status, game_name="Necesse")
+        try:
+            server.start()
+            assert server._httpd is not None
+            port = server._httpd.server_address[1]
+            with urllib.request.urlopen(  # noqa: S310 - local test server
+                f"http://127.0.0.1:{port}/", timeout=5
+            ) as resp:
+                body = resp.read().decode("utf-8")
+                self.assertEqual(resp.status, 200)
+            self.assertIn("Necesse", body)
+            self.assertIn("Start new empty world", body)
+        except urllib.error.HTTPError as exc:
+            self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
+        finally:
+            server.stop()
+            if old is not None:
+                os.environ["SUPERVISOR_TOKEN"] = old
+
     def test_world_save_and_disk_cards_in_ui_view(self) -> None:
         view = _ui_view(
             {

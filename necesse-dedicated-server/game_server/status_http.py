@@ -303,7 +303,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
-        <li>POST <code>api/backups/restore</code> — <code>{"archive":"…","confirm":true}</code> or <code>{"empty":true,"confirm":true}</code></li>
+        <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
@@ -778,39 +778,8 @@ class StatusServer:
 
                 if path in ("/", "/index.html", "/ingress"):
                     view = _ui_view(status, game_name)
-                    html = HTML_PAGE.format(
-                        game=_html_escape(view["game"]),
-                        base_href=_html_escape(self._ingress_base()),
-                        subtitle=_html_escape(view["subtitle"]),
-                        running=_html_escape(view["running"]),
-                        running_class=_html_escape(view["running_class"]),
-                        players=_html_escape(view["players"]),
-                        players_hint=_html_escape(view["players_hint"]),
-                        uptime=_html_escape(view["uptime"]),
-                        uptime_hint=_html_escape(view["uptime_hint"]),
-                        game_version=_html_escape(view["game_version"]),
-                        game_version_build=_html_escape(view["game_version_build"]),
-                        game_version_installed=_html_escape(
-                            view["game_version_installed"]
-                        ),
-                        update_pending=_html_escape(view["update_pending"]),
-                        update_check_hint=_html_escape(view["update_check_hint"]),
-                        backups=_html_escape(str(view["backups"])),
-                        backups_oldest=_html_escape(view["backups_oldest"]),
-                        backups_newest=_html_escape(view["backups_newest"]),
-                        crashes=_html_escape(str(view["crashes"])),
-                        crashes_hint=_html_escape(view["crashes_hint"]),
-                        world_save=_html_escape(view["world_save"]),
-                        world_save_hint=_html_escape(view["world_save_hint"]),
-                        disk=_html_escape(view["disk"]),
-                        disk_class=_html_escape(view["disk_class"]),
-                        disk_hint=_html_escape(view["disk_hint"]),
-                        update_players_note=_html_escape(view["update_players_note"]),
-                        log_watch_open=view["log_watch_open"],
-                        pattern_rows=view["pattern_rows"],
-                        highlights=_html_escape(view["highlights"]),
-                        capture_options=view["capture_options"],
-                        backup_options=view["backup_options"],
+                    html = render_status_html(
+                        view, base_href=self._ingress_base()
                     ).encode("utf-8")
                     self._send(200, html, "text/html; charset=utf-8")
                     return
@@ -1148,6 +1117,80 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "capture_options": _format_capture_options(status.get("log_captures") or []),
         "backup_options": _format_backup_options(status),
     }
+
+
+_STATUS_HTML_KEYS = (
+    "game",
+    "subtitle",
+    "running",
+    "running_class",
+    "players",
+    "players_hint",
+    "uptime",
+    "uptime_hint",
+    "game_version",
+    "game_version_build",
+    "game_version_installed",
+    "update_pending",
+    "update_check_hint",
+    "backups",
+    "backups_oldest",
+    "backups_newest",
+    "crashes",
+    "crashes_hint",
+    "world_save",
+    "world_save_hint",
+    "disk",
+    "disk_class",
+    "disk_hint",
+    "update_players_note",
+    "log_watch_open",
+    "pattern_rows",
+    "highlights",
+    "capture_options",
+    "backup_options",
+)
+
+
+def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
+    """Render the Ingress status page from a ``_ui_view`` dict.
+
+    Kept as a pure function so unit tests exercise the same ``str.format``
+    path the HTTP handler uses (catches unescaped ``{...}`` in the template).
+    """
+
+    return HTML_PAGE.format(
+        base_href=_html_escape(base_href),
+        game=_html_escape(view["game"]),
+        subtitle=_html_escape(view["subtitle"]),
+        running=_html_escape(view["running"]),
+        running_class=_html_escape(view["running_class"]),
+        players=_html_escape(view["players"]),
+        players_hint=_html_escape(view["players_hint"]),
+        uptime=_html_escape(view["uptime"]),
+        uptime_hint=_html_escape(view["uptime_hint"]),
+        game_version=_html_escape(view["game_version"]),
+        game_version_build=_html_escape(view["game_version_build"]),
+        game_version_installed=_html_escape(view["game_version_installed"]),
+        update_pending=_html_escape(view["update_pending"]),
+        update_check_hint=_html_escape(view["update_check_hint"]),
+        backups=_html_escape(str(view["backups"])),
+        backups_oldest=_html_escape(view["backups_oldest"]),
+        backups_newest=_html_escape(view["backups_newest"]),
+        crashes=_html_escape(str(view["crashes"])),
+        crashes_hint=_html_escape(view["crashes_hint"]),
+        world_save=_html_escape(view["world_save"]),
+        world_save_hint=_html_escape(view["world_save_hint"]),
+        disk=_html_escape(view["disk"]),
+        disk_class=_html_escape(view["disk_class"]),
+        disk_hint=_html_escape(view["disk_hint"]),
+        update_players_note=_html_escape(view["update_players_note"]),
+        log_watch_open=view["log_watch_open"],
+        pattern_rows=view["pattern_rows"],
+        highlights=_html_escape(view["highlights"]),
+        capture_options=view["capture_options"],
+        backup_options=view["backup_options"],
+    )
 
 
 def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:

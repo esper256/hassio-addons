@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.20
+
+- Fix Ingress status page crash on GET `/` (`KeyError: '"archive"'`) caused by unescaped JSON examples in the HTML `str.format` template; add full-page render + placeholder lint tests so this class of bug fails CI
+
 ## 2.1.19
 
 - Orderly stop: on HA/Docker SIGTERM, ask Necesse to `save`/`exit` and wait for a voluntary quit before SIGTERM/SIGKILL; use most of the 300s add-on stop grace for the game (240s) so supervisor cleanup can still finish; exit 0 on intentional stop; abort in-flight SteamCMD when stop is requested
