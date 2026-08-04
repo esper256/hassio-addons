@@ -106,6 +106,7 @@ def _run_streaming(
     env: dict[str, str] | None = None,
     run_uid: int | None = None,
     run_gid: int | None = None,
+    stop_event: threading.Event | None = None,
 ) -> tuple[int, str]:
     """Run a command, streaming stdout/stderr line-by-line into HA Logs."""
 
@@ -133,20 +134,41 @@ def _run_streaming(
 
     reader = threading.Thread(target=_reader, name="steamcmd-stdout", daemon=True)
     reader.start()
+    stopped = False
     try:
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                stopped = True
+                LOG.warning("Stop requested; terminating SteamCMD")
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                break
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise subprocess.TimeoutExpired(cmd, timeout)
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=min(1.0, remaining))
+                break
             except subprocess.TimeoutExpired:
-                pass
-            raise
+                continue
     finally:
         reader.join(timeout=30)
     combined = "\n".join(lines)
     remember_steamcmd_version(combined)
+    if stopped:
+        raise SteamCMDError("Stopped while SteamCMD was running")
     return int(proc.returncode or 0), combined
 
 
@@ -413,6 +435,7 @@ def wait_for_app_info(
                 env=env,
                 run_uid=run_uid,
                 run_gid=run_gid,
+                stop_event=stop_event,
             )
         except subprocess.TimeoutExpired as exc:
             raise SteamCMDError(
@@ -585,6 +608,7 @@ def install_or_update(
                     env=env,
                     run_uid=run_uid,
                     run_gid=run_gid,
+                    stop_event=stop_event,
                 )
                 if _install_succeeded(
                     returncode=returncode,

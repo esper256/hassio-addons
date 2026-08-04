@@ -1066,6 +1066,102 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn("dry_run:ready", highlights)
 
 
+class ProcessStopTests(unittest.TestCase):
+    def test_stop_uses_plugin_timeout_when_config_unset(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.stop_timeout_seconds = 240
+        plugin.stop_stdin_commands = ["save", "exit"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                stop_timeout_seconds=0,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            plugin.data_dir = str(root / "world")
+            plugin.logs_dir = str(root / "logs")
+            plugin.working_dir = str(root / "game")
+            (root / "game").mkdir()
+            # Cooperative "game": exit when stdin closes / receives a line.
+            plugin.executable = [
+                sys.executable,
+                "-c",
+                (
+                    "import sys\n"
+                    "for line in sys.stdin:\n"
+                    "    line=line.strip()\n"
+                    "    if line == 'exit':\n"
+                    "        raise SystemExit(0)\n"
+                ),
+            ]
+            mgr = ProcessManager(plugin, cfg)
+            mgr.start(reason="boot")
+            self.assertTrue(mgr.running)
+            started = time.time()
+            mgr.stop()
+            elapsed = time.time() - started
+            self.assertFalse(mgr.running)
+            self.assertTrue(mgr.intentional_stop)
+            # Should finish via stdin exit well under the 240s budget.
+            self.assertLess(elapsed, 20)
+
+    def test_stop_escalates_when_process_ignores_stdin(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.stop_timeout_seconds = 8
+        plugin.stop_stdin_commands = ["save", "exit"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                stop_timeout_seconds=0,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            plugin.data_dir = str(root / "world")
+            plugin.logs_dir = str(root / "logs")
+            plugin.working_dir = str(root / "game")
+            (root / "game").mkdir()
+            # Ignore SIGTERM briefly so escalation is observable; exit on SIGKILL.
+            plugin.executable = [
+                sys.executable,
+                "-c",
+                (
+                    "import signal, time\n"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    "time.sleep(60)\n"
+                ),
+            ]
+            mgr = ProcessManager(plugin, cfg)
+            mgr.start(reason="boot")
+            self.assertTrue(mgr.running)
+            mgr.stop()
+            self.assertFalse(mgr.running)
+            self.assertTrue(mgr.intentional_stop)
+
+
 class LogBridgeTests(unittest.TestCase):
     def test_recent_line_deduper(self) -> None:
         deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
@@ -1167,6 +1263,7 @@ class SteamCMDHelperTests(unittest.TestCase):
             env=None,
             run_uid=None,
             run_gid=None,
+            stop_event=None,
         ):
             idx = min(calls["n"], len(outputs) - 1)
             calls["n"] += 1

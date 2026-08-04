@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.19
+
+- Orderly stop: on HA/Docker SIGTERM, ask Necesse to `save`/`exit` and wait for a voluntary quit before SIGTERM/SIGKILL; use most of the 300s add-on stop grace for the game (240s) so supervisor cleanup can still finish; exit 0 on intentional stop; abort in-flight SteamCMD when stop is requested
+
 ## 2.1.18
 
 - Ingress: **Start new empty world** — same confirm → stop → optional pre-restore safety copy → clear world files → restart flow as restore, but with no archive (game creates a fresh world)
