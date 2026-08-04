@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.29
+
+- Documentation cleanup: concise get-started guides (repo README, Necesse README/DOCS, packaging guide)
+- Clarify Configuration help text for by-kind world backups
+
 ## 2.1.28
 
 - Backups follow the active world **kind** from `world_save` (same as upload restore):
