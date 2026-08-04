@@ -140,71 +140,54 @@ def load_options_json(path: Path | None = None) -> dict[str, Any]:
     return {}
 
 
-def _env_overrides() -> dict[str, Any]:
-    keys = [
-        "UPDATE_ON_START",
-        "AUTO_UPDATE_INTERVAL_MINUTES",
-        "AUTO_UPDATE_CHECK_HOUR",
-        "UPDATE_WHEN_EMPTY_ONLY",
-        "UPDATE_ON_VERSION_MISMATCH",
-        "UPDATE_WINDOW_START_HOUR",
-        "UPDATE_WINDOW_END_HOUR",
-        "STEAMCMD_RETRIES",
-        "STEAMCMD_RETRY_DELAY_SECONDS",
-        "RESTART_ON_CRASH",
-        "CRASH_RESTART_DELAY_SECONDS",
-        "MAX_CRASH_RESTARTS_PER_HOUR",
-        "STOP_TIMEOUT_SECONDS",
-        "RUN_AS_USER",
-        "DROP_PRIVILEGES",
-        "STATUS_HTTP_ENABLED",
-        "STATUS_HTTP_HOST",
-        "STATUS_HTTP_PORT",
-        "HA_NOTIFICATIONS",
-        "DEBUG_MODE",
-        "BACKUP_ENABLED",
-        "BACKUP_INTERVAL_MINUTES",
-        "BACKUP_DIR",
-        "BACKUP_ON_UPDATE",
-        "BACKUP_MIN_SOURCE_BYTES",
-        "BACKUP_RETENTION",
-        "BACKUP_MAX_BACKOFF_MINUTES",
-        "MIN_FREE_DISK_MB",
-        "STEAMCMD_DIR",
-        "INSTALL_DIR",
-        "STATE_DIR",
-        # Common / Docker-compose game option keys (any game may use a subset).
-        "WORLD_NAME",
-        "WORLD_TYPE",
-        "SERVER_NAME",
-        "SERVER_PASSWORD",
-        "SERVER_SLOTS",
-        "SERVER_PORT",
-        "UPDATE_PORT",
-        "SERVER_OWNER",
-        "SERVER_MOTD",
-        "SERVER_VISIBLE",
-        "SERVER_AUTH_SECRET",
-        "PAUSE_WHEN_EMPTY",
-        "AUTO_PAUSE",
-        "AUTO_SAVE",
-        "SAVE_INTERVAL",
-        "UPNP_ENABLED",
-        "USE_STEAM_P2P",
-        "DIFFICULTY",
-        "START_CONDITION",
-        "START_LOCATION",
-        "GIVE_CLIENTS_POWER",
-        "ENABLE_LOGGING",
-        "ZIP_SAVES",
-        "SERVER_LANGUAGE",
-        "BIND_IP",
-        "MAX_CLIENT_LATENCY",
-        "JAVA_OPTS",
-        "SETTINGS_FILE",
-        "DATA_DIR",
-        "LOGS_DIR",
-    ]
+# Supervisor-only env knobs. Game option env vars come from each game plugin
+# (see GamePlugin.docker_env_keys) so titles do not leak into this module.
+SUPERVISOR_ENV_KEYS = (
+    "UPDATE_ON_START",
+    "AUTO_UPDATE_INTERVAL_MINUTES",
+    "AUTO_UPDATE_CHECK_HOUR",
+    "UPDATE_WHEN_EMPTY_ONLY",
+    "UPDATE_ON_VERSION_MISMATCH",
+    "UPDATE_WINDOW_START_HOUR",
+    "UPDATE_WINDOW_END_HOUR",
+    "STEAMCMD_RETRIES",
+    "STEAMCMD_RETRY_DELAY_SECONDS",
+    "RESTART_ON_CRASH",
+    "CRASH_RESTART_DELAY_SECONDS",
+    "MAX_CRASH_RESTARTS_PER_HOUR",
+    "STOP_TIMEOUT_SECONDS",
+    "RUN_AS_USER",
+    "DROP_PRIVILEGES",
+    "STATUS_HTTP_ENABLED",
+    "STATUS_HTTP_HOST",
+    "STATUS_HTTP_PORT",
+    "HA_NOTIFICATIONS",
+    "DEBUG_MODE",
+    "BACKUP_ENABLED",
+    "BACKUP_INTERVAL_MINUTES",
+    "BACKUP_DIR",
+    "BACKUP_ON_UPDATE",
+    "BACKUP_MIN_SOURCE_BYTES",
+    "BACKUP_RETENTION",
+    "BACKUP_MAX_BACKOFF_MINUTES",
+    "MIN_FREE_DISK_MB",
+    "STEAMCMD_DIR",
+    "INSTALL_DIR",
+    "STATE_DIR",
+)
+
+
+def _env_overrides(extra_keys: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+    """Read supervisor env knobs plus game-contributed option keys."""
+
+    keys = list(SUPERVISOR_ENV_KEYS)
+    seen = {k.upper() for k in keys}
+    for key in extra_keys:
+        name = str(key or "").strip().upper()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        keys.append(name)
     out: dict[str, Any] = {}
     for key in keys:
         if key in os.environ:
@@ -212,13 +195,24 @@ def _env_overrides() -> dict[str, Any]:
     return out
 
 
-def load_config() -> SupervisorConfig:
+def load_config(
+    *,
+    game_env_keys: list[str] | tuple[str, ...] | None = None,
+) -> SupervisorConfig:
+    """Load supervisor + game options from options.json and env.
+
+    ``game_env_keys`` should be UPPER_SNAKE names contributed by the loaded
+    game plugin (typically ``plugin.docker_env_keys()``). Without it, only
+    supervisor env knobs are honored — HA ``options.json`` still supplies all
+    game options as usual.
+    """
+
     options = load_options_json()
     normalized: dict[str, Any] = {}
     for key, value in options.items():
         norm = re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
         normalized[norm] = value
-    normalized.update(_env_overrides())
+    normalized.update(_env_overrides(extra_keys=game_env_keys or ()))
 
     supervisor_keys = {
         "update_on_start",

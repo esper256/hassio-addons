@@ -19,7 +19,7 @@ A game add-on is a thin layer:
 3. Runtime packages in **that** add-on’s Dockerfile (Java, etc.)
 4. Home Assistant metadata: `config.yaml`, translations, ports, `README.md` / `DOCS.md`
 
-**Hard rule:** do not put game names, Steam app ids, ports, or runtimes into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer.
+**Hard rule:** do not put game names, Steam app ids, ports, runtimes, or game option env keys into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer. Docker/compose game options are contributed by each plugin via `docker_env_keys()` (derived from `arg_map` / `settings_map` / templates, plus optional `env_options`).
 
 ---
 
@@ -55,6 +55,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
 | `argv_prefix` | Ordered tokens after the executable; `{option}` templates; empty → omitted |
 | `settings_flag` / `settings_map` / `fixed_settings` | Optional `-settings Key Value …` style block (Unity servers, etc.) |
+| `env_options` | Extra UPPER_SNAKE Docker/compose env vars (optional). Keys from `arg_map` / `settings_map` / `{option}` templates are accepted automatically |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
 | `stop_stdin_commands` | Optional graceful stop |
 | `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). |

@@ -111,23 +111,54 @@ class ConfigTests(unittest.TestCase):
             options = load_options_json(path)
             self.assertEqual(options["world_name"], "TestWorld")
 
+            plugin = load_plugin(FIXTURE)
             os.environ["OPTIONS_FILE"] = str(path)
-            os.environ["SERVER_PASSWORD"] = "secret"
+            # Game option env keys come from the plugin (WORLD_NAME via arg_map),
+            # not a hardcoded allowlist in config.py.
+            os.environ["WORLD_NAME"] = "FromEnv"
             try:
-                cfg = load_config()
+                cfg = load_config(game_env_keys=plugin.docker_env_keys())
             finally:
                 os.environ.pop("OPTIONS_FILE", None)
-                os.environ.pop("SERVER_PASSWORD", None)
+                os.environ.pop("WORLD_NAME", None)
 
-            self.assertEqual(cfg.game_options["world_name"], "TestWorld")
+            self.assertEqual(cfg.game_options["world_name"], "FromEnv")
             self.assertEqual(cfg.auto_update_interval_minutes, 15)
             self.assertEqual(cfg.auto_update_check_hour, 5)
             self.assertFalse(cfg.update_on_start)
-            self.assertEqual(cfg.game_options["server_password"], "secret")
             self.assertEqual(cfg.install_dir, "/data/game")
             self.assertEqual(cfg.backup_retention, "extended")
             self.assertEqual(cfg.retention().keep_monthly, 24)
             self.assertEqual(format_bool(True, "one_zero"), "1")
+
+    def test_game_env_keys_not_accepted_without_plugin(self) -> None:
+        os.environ["WORLD_TYPE"] = "Lunar"
+        os.environ["STATUS_HTTP_PORT"] = "8101"
+        try:
+            cfg = load_config()
+        finally:
+            os.environ.pop("WORLD_TYPE", None)
+            os.environ.pop("STATUS_HTTP_PORT", None)
+        self.assertNotIn("world_type", cfg.game_options)
+        self.assertEqual(cfg.status_http_port, 8101)
+
+    def test_plugin_docker_env_keys_cover_cli_surface(self) -> None:
+        stationeers = load_plugin(STATIONEERS_PLUGIN)
+        keys = set(stationeers.docker_env_keys())
+        self.assertIn("WORLD_NAME", keys)
+        self.assertIn("WORLD_TYPE", keys)
+        self.assertIn("SERVER_NAME", keys)
+        self.assertIn("UPDATE_PORT", keys)
+        self.assertIn("DIFFICULTY", keys)
+        self.assertNotIn("JAVA_OPTS", keys)
+
+        necesse = load_plugin(NECESSE_PLUGIN)
+        necesse_keys = set(necesse.docker_env_keys())
+        self.assertIn("WORLD_NAME", necesse_keys)
+        self.assertIn("SERVER_PASSWORD", necesse_keys)
+        self.assertIn("JAVA_OPTS", necesse_keys)
+        self.assertNotIn("WORLD_TYPE", necesse_keys)
+        self.assertNotIn("START_CONDITION", necesse_keys)
 
 
 class PluginTests(unittest.TestCase):

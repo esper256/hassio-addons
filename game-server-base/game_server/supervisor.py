@@ -1240,7 +1240,9 @@ def main(argv: list[str] | None = None) -> int:
     plugin_path = resolve_plugin_path(args.plugin)
     LOG.info("Loading game plugin from %s", plugin_path)
     plugin = load_plugin(plugin_path)
-    config = load_config()
+    # Game option env keys come from the plugin (arg_map / settings_map /
+    # templates / env_options) — not a hardcoded list in config.py.
+    config = load_config(game_env_keys=plugin.docker_env_keys())
     if not config.install_dir:
         config.install_dir = "/data/game"
 

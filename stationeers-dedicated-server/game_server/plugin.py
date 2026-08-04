@@ -11,6 +11,8 @@ from typing import Any
 
 from .world_save import WorldSaveSpec
 
+_OPTION_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
 
 @dataclass
 class LogPatterns:
@@ -59,6 +61,10 @@ class GamePlugin:
     fixed_settings: dict[str, str] = field(default_factory=dict)
     # option_key → SettingName (skip when the option is empty).
     settings_map: dict[str, str] = field(default_factory=dict)
+    # Extra UPPER_SNAKE env vars to accept as game options in Docker/compose
+    # (e.g. JAVA_OPTS). Keys already declared via arg_map / settings_map /
+    # ``{option}`` templates are picked up automatically — see docker_env_keys().
+    env_options: list[str] = field(default_factory=list)
     bool_style: str = "true_false"  # or "one_zero"
     log_patterns: LogPatterns = field(default_factory=LogPatterns)
     # Optional extra dry-run candidates merged with generic defaults.
@@ -113,6 +119,7 @@ class GamePlugin:
             settings_map={
                 str(k): str(v) for k, v in (data.get("settings_map") or {}).items()
             },
+            env_options=_coerce_env_options(data.get("env_options")),
             bool_style=data.get("bool_style", "true_false"),
             log_patterns=LogPatterns(
                 player_join=list(patterns.get("player_join") or []),
@@ -134,6 +141,61 @@ class GamePlugin:
             world_save=WorldSaveSpec.from_dict(data.get("world_save")),
             ui_theme=_coerce_ui_theme(data.get("ui_theme")),
         )
+
+    def docker_env_keys(self) -> list[str]:
+        """UPPER_SNAKE env var names this game accepts as Docker/compose options.
+
+        Union of explicit ``env_options`` and option keys declared via
+        ``arg_map``, ``settings_map``, ``argv_prefix`` / ``fixed_settings`` /
+        ``world_save`` ``{placeholders}``. Used by ``load_config(game_env_keys=…)``
+        so game-specific names stay out of the base supervisor allowlist.
+        """
+
+        keys: set[str] = set()
+        for raw in self.env_options:
+            name = str(raw or "").strip().upper()
+            if name:
+                keys.add(name)
+        for option_key in self.arg_map:
+            keys.add(str(option_key).strip().upper())
+        for option_key in self.settings_map:
+            keys.add(str(option_key).strip().upper())
+        for token in self.argv_prefix:
+            keys.update(_template_option_env_keys(token))
+        for value in self.fixed_settings.values():
+            keys.update(_template_option_env_keys(value))
+        if self.world_save is not None:
+            for path in self.world_save.paths:
+                keys.update(_template_option_env_keys(path))
+            world_opt = (self.world_save.world_name_option or "").strip()
+            if world_opt:
+                keys.add(world_opt.upper())
+        # ProcessManager only injects java_opts when argv[0] is java.
+        if self.executable and str(self.executable[0]).strip() == "java":
+            java_env = (self.java_opts_env or "JAVA_OPTS").strip().upper()
+            if java_env:
+                keys.add(java_env)
+        return sorted(keys)
+
+
+def _coerce_env_options(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("env_options must be a list of env var names")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = str(item or "").strip().upper()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _template_option_env_keys(text: str) -> set[str]:
+    return {match.group(1).upper() for match in _OPTION_TEMPLATE_RE.finditer(str(text))}
 
 
 def _coerce_ui_theme(raw: Any) -> dict[str, str]:

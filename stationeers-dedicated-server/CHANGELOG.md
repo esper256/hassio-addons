@@ -3,6 +3,7 @@
 ## 1.0.0
 
 - Initial Stationeers dedicated-server add-on (Steam app 600760, Unity Linux binary)
+- Docker/compose env options contributed by this plugin (`arg_map` / `settings_map` / templates → `docker_env_keys`), not the base supervisor
 - Thin game layer over shared `game-server-base` supervisor (no Java)
 - Debian Trixie image for Stationeers’ glibc requirement
 - Ports: UDP 27016 (game) + UDP 27015 (Steam query); Ingress status UI

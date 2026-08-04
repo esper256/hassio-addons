@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.31
+
+- Sync shared supervisor: Docker/compose game option env keys come from each plugin (`docker_env_keys`), not a hardcoded base allowlist
+
 ## 2.1.30
 
 - Sync shared supervisor: generic `argv_prefix` / `settings_map` CLI building for non-Java Steam servers (no Necesse behavior change)
