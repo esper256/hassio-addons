@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from .disk import path_total_bytes
-from .world_save import SCOPE_HEURISTIC, ActiveWorld
+from .world_save import SCOPE_HEURISTIC, ActiveWorld, infer_world_kind
 
 LOG = logging.getLogger("game_server.world_save_heuristic")
 
@@ -71,5 +71,6 @@ def heuristic_locate_world(
                 scope=SCOPE_HEURISTIC,
                 sources=[str(path)],
                 expected_paths=[str(p) for p in candidates],
+                kind=infer_world_kind(path),
             )
     return None

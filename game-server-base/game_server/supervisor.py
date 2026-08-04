@@ -27,10 +27,12 @@ from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
 from .version import app_version
 from .world_save import (
+    apply_world_upload,
     backup_sources_for,
     locate_active_world,
     prepare_world_download,
     world_save_is_downloadable,
+    world_upload_accepts,
 )
 
 LOG = logging.getLogger("game_server.supervisor")
@@ -65,6 +67,7 @@ class GameServerSupervisor:
         self._urgent_update_check_bypass_window = False
         self._urgent_update_check_reason: str | None = None
         self._restore_pending: str | None = None
+        self._upload_pending: Path | None = None
         self._restore_lock = threading.Lock()
         self.last_restore_error: str | None = None
         self.last_restore_at: float | None = None
@@ -202,10 +205,10 @@ class GameServerSupervisor:
                     "error": f"Backup not found or invalid name: {archive_name}",
                 }
         with self._restore_lock:
-            if self._restore_pending:
+            if self._restore_pending or self._upload_pending is not None:
                 return {
                     "ok": False,
-                    "error": f"A restore is already pending ({self._restore_pending})",
+                    "error": "A restore is already pending",
                 }
             if self._update_pending:
                 return {
@@ -242,6 +245,48 @@ class GameServerSupervisor:
             "restore_pending": True,
         }
 
+    def request_world_upload(self, staged_path: str | Path) -> dict[str, Any]:
+        """Schedule replacing the active world from a staged upload file."""
+
+        staged = Path(staged_path)
+        if not staged.is_file() or staged.stat().st_size < 1:
+            return {"ok": False, "error": "uploaded world file is missing or empty"}
+        active = locate_active_world(
+            self.plugin,
+            self.config.game_options,
+            data_dir=self.plugin.data_dir,
+        )
+        meta = world_upload_accepts(active)
+        if not meta["uploadable"]:
+            return {"ok": False, "error": str(meta["hint"])}
+        with self._restore_lock:
+            if self._restore_pending or self._upload_pending is not None:
+                return {"ok": False, "error": "A restore is already pending"}
+            if self._update_pending:
+                return {
+                    "ok": False,
+                    "error": "An update is already pending; wait for it to finish",
+                }
+            self._upload_pending = staged
+        LOG.warning(
+            "World upload restore scheduled (%s bytes, kind=%s, mode=%s)",
+            staged.stat().st_size,
+            meta["kind"],
+            meta["mode"],
+        )
+        return {
+            "ok": True,
+            "message": (
+                "World upload scheduled. The server will stop, save a pre-restore "
+                "safety copy when there is data to keep, replace the active world "
+                "save from your upload, and restart."
+            ),
+            "kind": meta["kind"],
+            "mode": meta["mode"],
+            "restore_pending": True,
+            "upload_pending": True,
+        }
+
     def _create_pre_restore_safety(self) -> Path | None:
         """Safety-copy the live world before any wipe. Required when data exists."""
 
@@ -258,6 +303,68 @@ class GameServerSupervisor:
             )
         LOG.info("Pre-restore safety copy saved as %s", safety.name)
         return safety
+
+    def _apply_world_upload(self, staged: Path) -> None:
+        """Stop → safety backup → apply upload to active world → restart."""
+
+        LOG.info("Applying world upload from %s", staged)
+        self._activity = "restoring"
+        safety: Path | None = None
+        result: dict[str, Any] | None = None
+        try:
+            if self.process.running:
+                self.process.stop()
+            try:
+                safety = self._create_pre_restore_safety()
+                active = locate_active_world(
+                    self.plugin,
+                    self.config.game_options,
+                    data_dir=self.plugin.data_dir,
+                )
+                result = apply_world_upload(
+                    active, staged, data_dir=self.plugin.data_dir
+                )
+                self.backups.apply_retention()
+                self.last_restore_at = time.time()
+                self.last_restore_error = None
+            except Exception as exc:
+                self.last_restore_error = str(exc)
+                LOG.exception("World upload restore failed")
+                self.notifier.notify(
+                    "restore_failed",
+                    f"{self.plugin.name}: world upload failed",
+                    str(exc),
+                    force=True,
+                )
+                if not self.process.running and not self._stop.is_set():
+                    try:
+                        self.monitor.reset_session()
+                        self.process.start(reason="restore_failed")
+                    except OSError:
+                        LOG.exception(
+                            "Failed restarting server after world upload failure"
+                        )
+                raise
+            finally:
+                staged.unlink(missing_ok=True)
+
+            assert result is not None
+            self.monitor.reset_session()
+            self.process.start(reason="restore")
+            safety_note = (
+                f"Previous world kept as {safety.name}."
+                if safety is not None
+                else "No prior world data to keep."
+            )
+            self.notifier.notify(
+                "restored",
+                f"{self.plugin.name}: world upload restored",
+                f"Applied upload to {result.get('path')}. {safety_note}",
+                force=True,
+            )
+            LOG.info("World upload restore complete: %s", result)
+        finally:
+            self._activity = None
 
     def _apply_restore(self, archive_name: str) -> None:
         empty = archive_name == EMPTY_WORLD
@@ -349,7 +456,7 @@ class GameServerSupervisor:
             return "stopping" if self.process.running else "stopped"
         if self._activity in ("installing", "updating", "restoring"):
             return self._activity
-        if self._restore_pending:
+        if self._restore_pending or self._upload_pending is not None:
             return "restoring"
         if self.process.running:
             return "running"
@@ -399,6 +506,7 @@ class GameServerSupervisor:
         world_size["downloadable"] = world_save_is_downloadable(
             active_world, data_dir=self.plugin.data_dir
         )
+        world_size.update(world_upload_accepts(active_world))
         phase = self.lifecycle()
         return {
             "game": self.plugin.name,
@@ -992,6 +1100,8 @@ class GameServerSupervisor:
                 capture_callback=self.capture_logs,
                 update_callback=self.force_update_now,
                 restore_callback=self.request_restore,
+                upload_callback=self.request_world_upload,
+                upload_staging_dir=self.config.backup_dir,
                 backups_provider=lambda: self.backups.list_restorable_archives(),
                 world_download_callback=self.world_save_download,
             )
@@ -1025,6 +1135,18 @@ class GameServerSupervisor:
                         if self._restore_pending == archive_name:
                             self._restore_pending = None
 
+            if self._upload_pending is not None:
+                staged = self._upload_pending
+                try:
+                    self._apply_world_upload(staged)
+                except Exception:
+                    LOG.exception("World upload restore from %s failed", staged)
+                finally:
+                    with self._restore_lock:
+                        if self._upload_pending == staged:
+                            self._upload_pending = None
+                    staged.unlink(missing_ok=True)
+
             if self._urgent_update_check:
                 try:
                     self._run_urgent_update_check()
@@ -1049,7 +1171,11 @@ class GameServerSupervisor:
                 continue
             if self._stop.is_set():
                 break
-            if self._update_pending or self._restore_pending:
+            if (
+                self._update_pending
+                or self._restore_pending
+                or self._upload_pending is not None
+            ):
                 continue
             if self.process.intentional_stop:
                 break

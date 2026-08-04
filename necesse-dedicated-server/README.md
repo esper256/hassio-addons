@@ -94,7 +94,7 @@ Three archive kinds live under `/data/backups`:
 
 Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low. Backup failures create a Home Assistant notification.
 
-**Restore from Ingress:** pick a backup (or **NEW WORLD** at the bottom of the list) → **Restore selected backup** → confirm. The server stops; if any world data exists it is saved as a pre-restore safety copy first; only after that backup succeeds does the selected archive replace the world (or world files are cleared for **NEW WORLD**); then the server restarts. Archives are only deleted by their family’s retention rule.
+**Restore from Ingress:** pick a backup (or **NEW WORLD** at the bottom of the list) → **Restore selected backup** → confirm. Or use **Restore from upload** to push a world save file. The server stops; if any world data exists it is saved as a pre-restore safety copy first; then the world is replaced and the server restarts. Upload apply mode follows how the game stores its world (single file vs folder), from the same `world_save` paths used by the World save card — not from guessing the upload alone. Archives are only deleted by their family’s retention rule.
 
 ### Logs
 
