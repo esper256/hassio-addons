@@ -10,10 +10,10 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from .plugin import GamePlugin
 from .steam_gate import get_gate
+from .privileges import chown_paths, make_preexec
 
 LOG = logging.getLogger("game_server.steamcmd")
 
@@ -98,23 +98,6 @@ def remember_steamcmd_version(output: str) -> str | None:
     return version
 
 
-def _privilege_preexec(
-    run_uid: int | None, run_gid: int | None
-) -> Callable[[], None] | None:
-    """Drop to gameserver (or similar) inside the SteamCMD child process."""
-
-    if run_uid is None and run_gid is None:
-        return None
-
-    def _drop() -> None:
-        if run_gid is not None:
-            os.setgid(run_gid)
-        if run_uid is not None:
-            os.setuid(run_uid)
-
-    return _drop
-
-
 def _run_streaming(
     cmd: list[str],
     *,
@@ -133,7 +116,7 @@ def _run_streaming(
         text=True,
         bufsize=1,
         env=env,
-        preexec_fn=_privilege_preexec(run_uid, run_gid),
+        preexec_fn=make_preexec(run_uid, run_gid),
     )
     lines: list[str] = []
 
@@ -191,20 +174,6 @@ def steam_home_dir() -> Path:
     return Path("/data/steam-home")
 
 
-def _chown_tree(path: Path, uid: int, gid: int) -> None:
-    try:
-        for root, dirs, files in os.walk(path):
-            os.chown(root, uid, gid)
-            for name in dirs + files:
-                try:
-                    os.chown(os.path.join(root, name), uid, gid)
-                except OSError:
-                    pass
-        os.chown(path, uid, gid)
-    except OSError:
-        LOG.warning("Could not chown %s to %s:%s", path, uid, gid, exc_info=True)
-
-
 def prepare_steam_env(
     install_dir: str | Path,
     *,
@@ -228,8 +197,9 @@ def prepare_steam_env(
     # SteamCMD is picky about being able to write logs + install files as the
     # same user. When we drop to gameserver, make sure those trees match.
     if run_uid is not None and run_gid is not None and os.geteuid() == 0:
-        for path in (install_dir, steamapps, home, steam_root, logs):
-            _chown_tree(path, run_uid, run_gid)
+        owned = [install_dir, steamapps, home, steam_root, logs]
+        chown_paths(run_uid, run_gid, owned)
+        for path in owned:
             try:
                 os.chmod(path, 0o755)
             except OSError:

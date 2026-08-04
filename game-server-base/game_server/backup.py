@@ -200,8 +200,16 @@ class BackupManager:
             )
         return True, None
 
-    def create_backup(self, reason: str = "manual", *, pinned: bool = False) -> Path | None:
-        if not self.enabled and not pinned:
+    def create_backup(
+        self, reason: str = "manual", *, outside_rotation: bool = False
+    ) -> Path | None:
+        """Create a world archive under backup_dir.
+
+        ``outside_rotation=True`` writes a ``pre-restore-*.tar.gz`` safety copy
+        that is kept out of generational prune (capped separately).
+        """
+
+        if not self.enabled and not outside_rotation:
             return None
         self.last_skip_reason = None
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +233,7 @@ class BackupManager:
         existing = [s for s in self.sources if s.exists()]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
-        if pinned:
+        if outside_rotation:
             # Outside normal rotation: never matched by backup-*.tar.gz prune.
             archive = self.backup_dir / f"pre-restore-{stamp}-{safe_reason}.tar.gz"
         else:
@@ -247,7 +255,7 @@ class BackupManager:
         self.backup_count += 1
         self.last_error = None
         self.last_skip_reason = None
-        if pinned:
+        if outside_rotation:
             self._prune_pre_restore()
         else:
             self._prune()
