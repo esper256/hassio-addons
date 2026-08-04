@@ -348,42 +348,51 @@ class BackupManager:
             return None
         return path if path.is_file() else None
 
-    def _remove_sources(self) -> list[str]:
-        """Delete configured world sources. Returns paths that existed."""
+    def _clear_source_contents(self) -> list[str]:
+        """Remove world *data* while keeping existing directory inodes.
 
-        removed: list[str] = []
+        Why not delete + recreate the source directory? Backup roots such as
+        ``/data/world`` are prepared once for the non-root game user
+        (``gameserver``). If the supervisor (often root) ``rmtree``s that path
+        and ``mkdir``s a replacement, the new inode is root-owned and the game
+        child can fail with permission errors on the next start. Emptying
+        children in place keeps the original ownership and mode.
+
+        File sources are unlinked (parent directory is left alone). Missing
+        sources are left missing — the supervisor re-chowns after restore/reset
+        if a tree had to be recreated by extract or first-time setup.
+        """
+
+        cleared: list[str] = []
         for source in self.sources:
             if not source.exists():
                 continue
-            LOG.info("Removing current world data: %s", source)
-            if source.is_dir():
-                shutil.rmtree(source)
-            else:
+            if source.is_file():
+                LOG.info("Removing current world file: %s", source)
                 source.unlink()
-            removed.append(str(source))
-        return removed
-
-    def _ensure_source_roots(self) -> None:
-        """Recreate empty directory roots so the game can write a new world."""
-
-        for source in self.sources:
-            if source.exists():
+                cleared.append(str(source))
                 continue
-            # Archive-looking suffixes are treated as files (parent only).
-            if source.suffix.lower() in {".zip", ".tar", ".gz", ".7z", ".rar"}:
-                source.parent.mkdir(parents=True, exist_ok=True)
-            else:
-                source.mkdir(parents=True, exist_ok=True)
+            if not source.is_dir():
+                continue
+            LOG.info("Clearing world data in place (keep dir ownership): %s", source)
+            for child in list(source.iterdir()):
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            cleared.append(str(source))
+        return cleared
 
     def clear_world_sources(self) -> dict[str, Any]:
-        """Wipe configured world sources so the next start is a fresh world.
+        """Wipe configured world data so the next start is a fresh world.
 
         Does not stop/start the game process — caller owns lifecycle.
+        Preserves existing source-directory ownership (see
+        ``_clear_source_contents``).
         """
 
         with self._lock:
-            removed = self._remove_sources()
-            self._ensure_source_roots()
+            removed = self._clear_source_contents()
         return {
             "ok": True,
             "empty": True,
@@ -417,7 +426,10 @@ class BackupManager:
         extract_root = next(iter(parents))
 
         with self._lock:
-            self._remove_sources()
+            # Clear contents in place when the source is a directory so we do not
+            # replace a gameserver-owned inode with a root-owned one before extract.
+            # Extract may still recreate missing trees; caller should re-chown.
+            self._clear_source_contents()
 
             LOG.info("Restoring %s into %s", path.name, extract_root)
             with tarfile.open(path, "r:gz") as tar:

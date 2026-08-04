@@ -253,6 +253,14 @@ class GameServerSupervisor:
                 else:
                     assert archive is not None
                     result = self.backups.restore_archive(archive)
+                # Tar extract (and any missing path creation) can leave root-owned
+                # trees; re-assert gameserver ownership before restart.
+                if self.config.drop_privileges:
+                    paths = [
+                        self.plugin.data_dir,
+                        *[str(p) for p in self.backups.sources],
+                    ]
+                    prepare_owned_paths(self.config.run_as_user, paths)
                 self.last_restore_at = time.time()
                 self.last_restore_error = None
             except Exception as exc:

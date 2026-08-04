@@ -475,6 +475,7 @@ class BackupRetentionTests(unittest.TestCase):
             result = mgr.clear_world_sources()
             self.assertTrue(result["ok"])
             self.assertTrue(result["empty"])
+            # Directory inode kept (ownership/mode); only contents cleared.
             self.assertTrue(source.is_dir())
             self.assertFalse(any(source.iterdir()))
             # Empty world has nothing to validate for a normal backup.
