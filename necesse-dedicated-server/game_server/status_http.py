@@ -23,6 +23,34 @@ LOG = logging.getLogger("game_server.status_http")
 # Home Assistant Ingress proxy source address (Supervisor).
 INGRESS_PEER = "172.30.32.2"
 
+# Default Ingress palette; games override via ``ui_theme`` in games/game.yaml.
+DEFAULT_UI_THEME: dict[str, str] = {
+    "bg": "#1a1d24",
+    "panel": "#242933",
+    "ink": "#e8eaed",
+    "muted": "#9aa3b2",
+    "accent": "#7aa2f7",
+    "good": "#9ece6a",
+    "bad": "#f7768e",
+    "glow": "#2a3344",
+    "wash": "#12151a",
+    "depth": "#1a1714",
+}
+UI_THEME_KEYS = tuple(DEFAULT_UI_THEME.keys())
+
+
+def resolve_ui_theme(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    """Merge game ``ui_theme`` overrides onto the base default palette."""
+
+    theme = dict(DEFAULT_UI_THEME)
+    if not overrides:
+        return theme
+    for key in UI_THEME_KEYS:
+        value = overrides.get(key)
+        if isinstance(value, str) and value.strip():
+            theme[key] = value.strip()
+    return theme
+
 # Phases where the HA watchdog should leave the add-on running.
 _HEALTHY_LIFECYCLES = frozenset(
     {"running", "installing", "updating", "restoring", "starting", "waiting"}
@@ -54,21 +82,21 @@ HTML_PAGE = """<!DOCTYPE html>
   <title>{game} server status</title>
   <style>
     :root {{
-      --bg: #12201a;
-      --panel: #1c3027;
-      --ink: #e7f0ea;
-      --muted: #9bb5a6;
-      --accent: #d4a25a;
-      --good: #6fbf8a;
-      --bad: #d9786a;
+      --bg: {theme_bg};
+      --panel: {theme_panel};
+      --ink: {theme_ink};
+      --muted: {theme_muted};
+      --accent: {theme_accent};
+      --good: {theme_good};
+      --bad: {theme_bad};
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, #243f33 0%, transparent 40%),
-        linear-gradient(160deg, #0e1814, var(--bg) 55%, #1a1710);
+        radial-gradient(circle at top left, {theme_glow} 0%, transparent 40%),
+        linear-gradient(160deg, {theme_wash}, var(--bg) 55%, {theme_depth});
       color: var(--ink);
       min-height: 100vh;
       padding: 2rem;
@@ -106,7 +134,7 @@ HTML_PAGE = """<!DOCTYPE html>
       overflow: auto;
       font-size: 0.78rem;
       line-height: 1.4;
-      border: 1px solid rgba(155,181,166,0.2);
+      border: 1px solid color-mix(in srgb, var(--muted) 20%, transparent);
       max-height: 320px;
     }}
     a {{ color: var(--accent); }}
@@ -117,7 +145,8 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       margin: 0.5rem 0 0.75rem;
     }}
-    .actions a, .actions button {{
+    .actions a, .actions button,
+    .capture-row > a, .capture-row > button {{
       display: inline-block;
       padding: 0.45rem 0.75rem;
       border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -126,6 +155,11 @@ HTML_PAGE = """<!DOCTYPE html>
       text-decoration: none;
       font: inherit;
       cursor: pointer;
+    }}
+    .actions a:disabled, .actions button:disabled,
+    .capture-row > a:disabled, .capture-row > button:disabled {{
+      opacity: 0.5;
+      cursor: not-allowed;
     }}
     .capture-row {{
       display: flex;
@@ -137,7 +171,7 @@ HTML_PAGE = """<!DOCTYPE html>
     select {{
       background: rgba(0,0,0,0.28);
       color: var(--ink);
-      border: 1px solid rgba(155,181,166,0.35);
+      border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
       padding: 0.45rem 0.6rem;
       font: inherit;
       min-width: min(100%, 28rem);
@@ -174,14 +208,14 @@ HTML_PAGE = """<!DOCTYPE html>
     th, td {{
       text-align: left;
       padding: 0.4rem 0.45rem;
-      border-bottom: 1px solid rgba(155,181,166,0.18);
+      border-bottom: 1px solid color-mix(in srgb, var(--muted) 18%, transparent);
       vertical-align: top;
     }}
     th {{ color: var(--muted); font-weight: 600; }}
     .tag {{
       display: inline-block;
       padding: 0.1rem 0.35rem;
-      border: 1px solid rgba(155,181,166,0.35);
+      border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
       margin-right: 0.25rem;
       font-size: 0.72rem;
     }}
@@ -250,18 +284,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restore / empty-world replace the live world only after you confirm, and only
-      after a successful pre-restore safety backup when any world data exists.
-      Archives are deleted only by the configured retention plan.
+      Restore replaces the live world only after you confirm, and only after a
+      successful pre-restore safety backup when any world data exists. Choose
+      <strong>NEW WORLD</strong> in the list for an empty world. Archives are
+      deleted only by the configured retention plan.
     </p>
     <div class="capture-row">
       <label for="backup-select">Saved backups</label>
       <select id="backup-select">{backup_options}</select>
       <button type="button" id="btn-restore" onclick="return restoreBackup(event)">
         Restore selected backup
-      </button>
-      <button type="button" id="btn-empty-world" onclick="return resetEmptyWorld(event)">
-        Start new empty world
       </button>
     </div>
 
@@ -331,64 +363,46 @@ HTML_PAGE = """<!DOCTYPE html>
         return false;
       }}
       const name = select.value;
+      const emptyWorld = name === '{empty_world_token}';
       const ok = window.confirm(
-        'Restore this backup over the live world?\\n\\n' +
-        name + '\\n\\n' +
-        'The game server will stop. If any world data exists, it is saved first ' +
-        'as a pre-restore safety copy. Only after that backup succeeds does the ' +
-        'selected archive replace the world; then the server restarts.\\n\\n' +
-        'Anyone playing will be disconnected.'
+        emptyWorld
+          ? (
+            'Start a new empty world?\\n\\n' +
+            'The game server will stop. If any world data exists, it is saved first ' +
+            'as a pre-restore safety copy. Only after that backup succeeds are world ' +
+            'files cleared so the game can create a fresh world on restart.\\n\\n' +
+            'Anyone playing will be disconnected.'
+          )
+          : (
+            'Restore this backup over the live world?\\n\\n' +
+            name + '\\n\\n' +
+            'The game server will stop. If any world data exists, it is saved first ' +
+            'as a pre-restore safety copy. Only after that backup succeeds does the ' +
+            'selected archive replace the world; then the server restarts.\\n\\n' +
+            'Anyone playing will be disconnected.'
+          )
       );
       if (!ok) return false;
       const btn = document.getElementById('btn-restore');
       if (btn) btn.disabled = true;
       try {{
+        const body = emptyWorld
+          ? {{ empty: true, confirm: true }}
+          : {{ archive: name, confirm: true }};
         const res = await fetch('api/backups/restore', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ archive: name, confirm: true }}),
+          body: JSON.stringify(body),
         }});
         const data = await res.json();
         if (data.ok) {{
-          alert(data.message || 'Restore scheduled.');
+          alert(data.message || (emptyWorld ? 'Empty-world reset scheduled.' : 'Restore scheduled.'));
           softRefresh();
         }} else {{
-          alert(data.error || 'Could not schedule restore.');
+          alert(data.error || (emptyWorld ? 'Could not schedule empty-world reset.' : 'Could not schedule restore.'));
         }}
       }} catch (e) {{
-        alert('Could not schedule restore.');
-      }} finally {{
-        if (btn) btn.disabled = false;
-      }}
-      return false;
-    }}
-    async function resetEmptyWorld(ev) {{
-      ev.preventDefault();
-      const ok = window.confirm(
-        'Start a new empty world?\\n\\n' +
-        'The game server will stop. If any world data exists, it is saved first ' +
-        'as a pre-restore safety copy. Only after that backup succeeds are world ' +
-        'files cleared so the game can create a fresh world on restart.\\n\\n' +
-        'Anyone playing will be disconnected.'
-      );
-      if (!ok) return false;
-      const btn = document.getElementById('btn-empty-world');
-      if (btn) btn.disabled = true;
-      try {{
-        const res = await fetch('api/backups/restore', {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ empty: true, confirm: true }}),
-        }});
-        const data = await res.json();
-        if (data.ok) {{
-          alert(data.message || 'Empty-world reset scheduled.');
-          softRefresh();
-        }} else {{
-          alert(data.error || 'Could not schedule empty-world reset.');
-        }}
-      }} catch (e) {{
-        alert('Could not schedule empty-world reset.');
+        alert(emptyWorld ? 'Could not schedule empty-world reset.' : 'Could not schedule restore.');
       }} finally {{
         if (btn) btn.disabled = false;
       }}
@@ -503,6 +517,7 @@ class StatusServer:
         *,
         health_provider: Callable[[], dict[str, Any]] | None = None,
         game_name: str = "Game",
+        ui_theme: dict[str, str] | None = None,
         log_toolbox=None,
         capture_callback: Callable[[str], dict[str, Any]] | None = None,
         update_callback: Callable[[], dict[str, Any]] | None = None,
@@ -514,6 +529,7 @@ class StatusServer:
         self.status_provider = status_provider
         self.health_provider = health_provider
         self.game_name = game_name
+        self.ui_theme = resolve_ui_theme(ui_theme)
         self.log_toolbox = log_toolbox
         self.capture_callback = capture_callback
         self.update_callback = update_callback
@@ -526,6 +542,7 @@ class StatusServer:
         provider = self.status_provider
         health = self.health_provider
         game_name = self.game_name
+        ui_theme = self.ui_theme
         toolbox = self.log_toolbox
         capture_cb = self.capture_callback
         update_cb = self.update_callback
@@ -675,7 +692,7 @@ class StatusServer:
                     return
 
                 if path == "/api/ui":
-                    self._json(200, _ui_view(status, game_name))
+                    self._json(200, _ui_view(status, game_name, ui_theme=ui_theme))
                     return
 
                 if path == "/api/backups":
@@ -777,7 +794,7 @@ class StatusServer:
                     return
 
                 if path in ("/", "/index.html", "/ingress"):
-                    view = _ui_view(status, game_name)
+                    view = _ui_view(status, game_name, ui_theme=ui_theme)
                     html = render_status_html(
                         view, base_href=self._ingress_base()
                     ).encode("utf-8")
@@ -956,47 +973,44 @@ def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
 
     info = status.get("disk") or {}
     free = info.get("free_mb")
-    minimum = info.get("min_free_disk_mb")
     ok = bool(info.get("ok"))
     try:
         free_mb = float(free) if free is not None else None
     except (TypeError, ValueError):
         free_mb = None
-    try:
-        min_mb = int(minimum) if minimum is not None else 0
-    except (TypeError, ValueError):
-        min_mb = 0
     if free_mb is None:
-        return "Unknown", "", f"Min {min_mb} MiB"
+        return "Unknown", "", ""
     if free_mb >= 1024:
         value = f"{free_mb / 1024:.1f} GiB"
     else:
         value = f"{free_mb:.0f} MiB"
-    hint = f"Min {min_mb} MiB free required"
-    return value, ("good" if ok else "bad"), hint
+    # Min free threshold is enforced for backups/updates; omit from the hero card.
+    return value, ("good" if ok else "bad"), ""
 
 
 def _format_backup_options(status: dict[str, Any]) -> str:
     info = status.get("backups") or {}
     archives = info.get("restorable") or []
-    if not isinstance(archives, list) or not archives:
-        return '<option value="">No backups yet</option>'
     options: list[str] = []
-    for item in archives:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        kind = str(item.get("kind") or "backup")
-        mtime = item.get("mtime")
-        age = _fmt_ago(mtime) if mtime else "unknown age"
-        label = f"{name} ({kind}, {age})"
-        options.append(
-            f'<option value="{_html_escape(name)}">{_html_escape(label)}</option>'
-        )
+    if isinstance(archives, list):
+        for item in archives:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            kind = str(item.get("kind") or "backup")
+            mtime = item.get("mtime")
+            age = _fmt_ago(mtime) if mtime else "unknown age"
+            label = f"{name} ({kind}, {age})"
+            options.append(
+                f'<option value="{_html_escape(name)}">{_html_escape(label)}</option>'
+            )
     if not options:
-        return '<option value="">No backups yet</option>'
+        options.append('<option value="">No backups yet</option>')
+    options.append(
+        f'<option value="{_html_escape(EMPTY_WORLD)}">NEW WORLD</option>'
+    )
     return "\n".join(options)
 
 
@@ -1047,7 +1061,12 @@ def _format_running(status: dict[str, Any]) -> tuple[str, str]:
     return "stopped", "bad"
 
 
-def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
+def _ui_view(
+    status: dict[str, Any],
+    game_name: str,
+    *,
+    ui_theme: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Formatted strings for the status page and soft-refresh JSON."""
 
     monitor = status.get("monitor") or {}
@@ -1085,7 +1104,8 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     world_save, world_save_hint = _format_world_save(status)
     disk, disk_class, disk_hint = _format_disk(status)
     running_label, running_class = _format_running(status)
-    return {
+    theme = resolve_ui_theme(ui_theme)
+    view: dict[str, Any] = {
         "game": game_name,
         "subtitle": _format_subtitle(status),
         "running": running_label,
@@ -1116,7 +1136,11 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "highlights": highlights,
         "capture_options": _format_capture_options(status.get("log_captures") or []),
         "backup_options": _format_backup_options(status),
+        "empty_world_token": EMPTY_WORLD,
     }
+    for key in UI_THEME_KEYS:
+        view[f"theme_{key}"] = theme[key]
+    return view
 
 
 _STATUS_HTML_KEYS = (
@@ -1149,7 +1173,8 @@ _STATUS_HTML_KEYS = (
     "highlights",
     "capture_options",
     "backup_options",
-)
+    "empty_world_token",
+) + tuple(f"theme_{key}" for key in UI_THEME_KEYS)
 
 
 def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
@@ -1159,6 +1184,9 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
     path the HTTP handler uses (catches unescaped ``{...}`` in the template).
     """
 
+    theme = resolve_ui_theme(
+        {key: str(view.get(f"theme_{key}") or "") for key in UI_THEME_KEYS}
+    )
     return HTML_PAGE.format(
         base_href=_html_escape(base_href),
         game=_html_escape(view["game"]),
@@ -1190,6 +1218,17 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         highlights=_html_escape(view["highlights"]),
         capture_options=view["capture_options"],
         backup_options=view["backup_options"],
+        empty_world_token=_html_escape(view.get("empty_world_token") or EMPTY_WORLD),
+        theme_bg=_html_escape(theme["bg"]),
+        theme_panel=_html_escape(theme["panel"]),
+        theme_ink=_html_escape(theme["ink"]),
+        theme_muted=_html_escape(theme["muted"]),
+        theme_accent=_html_escape(theme["accent"]),
+        theme_good=_html_escape(theme["good"]),
+        theme_bad=_html_escape(theme["bad"]),
+        theme_glow=_html_escape(theme["glow"]),
+        theme_wash=_html_escape(theme["wash"]),
+        theme_depth=_html_escape(theme["depth"]),
     )
 
 

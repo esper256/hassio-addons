@@ -89,9 +89,7 @@ Retention is one dropdown:
 
 Backups refuse empty/tiny worlds, back off after failures, and won’t run if free disk is too low. Backup failures create a Home Assistant notification.
 
-**Restore from Ingress:** pick a backup → **Restore selected backup** → confirm. The server stops; if any world data exists it is saved as a pre-restore safety copy first; only after that backup succeeds does the selected archive replace the world; then the server restarts.
-
-**Start empty from Ingress:** **Start new empty world** → confirm. Same safety-backup-before-wipe rule, then world files are cleared so Necesse creates a fresh world on restart. Archives are only deleted by the configured retention plan.
+**Restore from Ingress:** pick a backup (or **NEW WORLD** at the bottom of the list) → **Restore selected backup** → confirm. The server stops; if any world data exists it is saved as a pre-restore safety copy first; only after that backup succeeds does the selected archive replace the world (or world files are cleared for **NEW WORLD**); then the server restarts. Archives are only deleted by the configured retention plan.
 
 ### Logs
 

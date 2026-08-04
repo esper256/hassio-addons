@@ -437,6 +437,10 @@ class GameServerSupervisor:
 
     def _on_version_mismatch(self, line: str) -> None:
         # Only invoked for active patterns (dry-run candidates never call this).
+        # Apply path: bypass quiet-hours window, still wait for empty when
+        # update_when_empty_only (rejected clients never count as online), then
+        # _apply_update → process.stop() (stdin save/exit + stop_timeout_seconds)
+        # → SteamCMD install_or_update → restart.
         try:
             self.capture_logs("version_mismatch")
         except OSError:
@@ -889,6 +893,7 @@ class GameServerSupervisor:
                 self.status,
                 health_provider=self.health,
                 game_name=self.plugin.name,
+                ui_theme=self.plugin.ui_theme,
                 log_toolbox=self.log_tools,
                 capture_callback=self.capture_logs,
                 update_callback=self.force_update_now,
