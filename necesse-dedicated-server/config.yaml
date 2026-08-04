@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "2.1.23"
+version: "2.1.24"
 slug: "necesse_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
 # SteamCMD / Necesse dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
@@ -22,7 +22,7 @@ panel_title: Necesse
 ports:
   14159/udp: 14159
 ports_description:
-  14159/udp: Host UDP port clients use (forwards to container 14159; Necesse always listens on 14159 inside)
+  14159/udp: Port players type in Necesse to join (UDP). Change only if 14159 is already taken on this machine.
 options:
   world_name: "FamilyWorld"
   server_password: ""
