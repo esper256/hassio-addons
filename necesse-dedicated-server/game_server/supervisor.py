@@ -140,12 +140,20 @@ class GameServerSupervisor:
             run_uid=self.run_ids[0] if self.run_ids else None,
             run_gid=self.run_ids[1] if self.run_ids else None,
         )
-        # Backups archive explicit plugin roots (usually the whole data dir).
-        # Active-world size for the UI is resolved separately via world_save.
+        # Backups prefer the active world artifact (by kind): copy a file save
+        # as-is, zip a folder save. backup_paths remain the fallback / legacy
+        # tar.gz restore roots.
         backup_sources = backup_sources_for(plugin, data_dir)
+        world_data_dir = data_dir or plugin.data_dir
         self.backups = BackupManager(
             config.backup_dir,
             backup_sources,
+            world_locator=lambda: locate_active_world(
+                plugin,
+                config.game_options,
+                data_dir=world_data_dir,
+            ),
+            data_dir=world_data_dir,
             interval_minutes=config.backup_interval_minutes,
             enabled=config.backup_enabled,
             retention=config.retention(),

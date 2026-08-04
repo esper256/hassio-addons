@@ -1,8 +1,10 @@
 """Locate the active world save and backup roots from the game plugin.
 
 Happy path: the plugin declares ``world_save.paths`` templates (named_path).
-Backups use explicit ``backup_paths`` and are a separate concern from the
-active-world artifact shown in the status UI.
+Backups prefer that same active-world artifact and its ``kind`` (copy a
+single-file save as-is; zip a folder save). Explicit ``backup_paths`` remain
+the fallback when no named world exists yet, and for restoring legacy
+``.tar.gz`` snapshots of those roots.
 
 Heuristic cross-game guessing lives in ``world_save_heuristic`` and is only
 used when a plugin explicitly opts in.
@@ -36,7 +38,7 @@ SCOPE_HEURISTIC = "heuristic"
 SCOPE_BACKUP_SOURCES = "backup_sources"
 SCOPE_MISSING = "missing"
 
-# How the active world artifact is stored on disk (drives upload apply mode).
+# How the active world artifact is stored on disk (upload + by-kind backups).
 KIND_FILE = "file"
 KIND_DIRECTORY = "directory"
 KIND_UNKNOWN = "unknown"
@@ -92,7 +94,8 @@ class ActiveWorld:
     sources: list[str] = field(default_factory=list)
     expected_paths: list[str] = field(default_factory=list)
     # file | directory | unknown — from live path, else from path naming
-    # (suffix ⇒ file, bare name ⇒ directory). Used for upload restore mode.
+    # (suffix ⇒ file, bare name ⇒ directory). Drives upload restore and
+    # by-kind backups (copy file as-is vs zip folder).
     kind: str = KIND_UNKNOWN
 
     def to_dict(self) -> dict[str, object]:
@@ -108,11 +111,20 @@ class ActiveWorld:
         return payload
 
 
+def effective_world_kind(active: ActiveWorld) -> str:
+    """Resolve file/directory kind from ActiveWorld, falling back to path naming."""
+
+    if active.kind in {KIND_FILE, KIND_DIRECTORY}:
+        return active.kind
+    return infer_world_kind(active.path)
+
+
 def infer_world_kind(path: str | Path | None) -> str:
     """Infer file vs directory from an existing path or a configured path name.
 
     Games declare templates like ``{name}.zip`` (single-file save) or ``{name}``
-    (folder save). Upload restore uses this — not the upload's extension alone.
+    (folder save). Upload restore and by-kind backups use this — not the
+    archive's extension alone.
     """
 
     if path is None or str(path).strip() == "":
@@ -511,13 +523,117 @@ def resolve_upload_target(
     return target, kind
 
 
+def backup_name_suffix(path: str | Path, kind: str) -> str:
+    """File extension for a by-kind backup of ``path`` (includes the dot)."""
+
+    if kind == KIND_DIRECTORY:
+        return ".zip"
+    suffix = Path(path).suffix
+    return suffix if suffix else ".bin"
+
+
+def write_world_backup(
+    path: str | Path,
+    kind: str,
+    dest: str | Path,
+) -> dict[str, Any]:
+    """Write a by-kind backup of a world artifact to ``dest``.
+
+    - ``file`` — byte-for-byte copy (no recompress; a game ``.zip`` save stays
+      a single ``.zip``)
+    - ``directory`` — zip of folder contents (same layout as download/upload)
+    """
+
+    source = Path(path)
+    out = Path(dest)
+    if kind == KIND_FILE:
+        if not source.is_file() or source.stat().st_size < 1:
+            raise RuntimeError(f"world save file missing or empty: {source}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_name(f".{out.name}.partial")
+        try:
+            shutil.copyfile(source, tmp)
+            tmp.replace(out)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {
+            "ok": True,
+            "mode": "copy_file",
+            "kind": kind,
+            "source": str(source),
+            "archive": str(out),
+            "bytes": out.stat().st_size,
+        }
+    if kind == KIND_DIRECTORY:
+        if not source.is_dir():
+            raise RuntimeError(f"world save directory missing: {source}")
+        if path_total_bytes(source) < 1:
+            raise RuntimeError(f"world save directory is empty: {source}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_name(f".{out.name}.partial")
+        try:
+            with zipfile.ZipFile(
+                tmp, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
+                for child in sorted(source.rglob("*")):
+                    if not child.is_file() or child.is_symlink():
+                        continue
+                    zf.write(child, child.relative_to(source).as_posix())
+            tmp.replace(out)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {
+            "ok": True,
+            "mode": "zip_directory",
+            "kind": kind,
+            "source": str(source),
+            "archive": str(out),
+            "bytes": out.stat().st_size,
+        }
+    raise RuntimeError(f"unsupported world kind for backup: {kind}")
+
+
+def clear_world_artifact(
+    active: ActiveWorld,
+    *,
+    data_dir: str | Path,
+) -> dict[str, Any]:
+    """Remove the active world artifact (+ sibling expected paths)."""
+
+    kind = effective_world_kind(active)
+    target = confined_world_path(active.path, data_dir=data_dir)
+    cleared: list[str] = []
+    if target is not None and target.exists():
+        if target.is_file() or target.is_symlink():
+            LOG.info("Removing world save file: %s", target)
+            target.unlink()
+            cleared.append(str(target))
+        elif target.is_dir():
+            LOG.info("Clearing world save directory in place: %s", target)
+            for child in list(target.iterdir()):
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            cleared.append(str(target))
+    if target is not None:
+        _remove_sibling_expected_paths(active, keep=target, data_dir=data_dir)
+    return {
+        "ok": True,
+        "empty": True,
+        "cleared": cleared,
+        "kind": kind,
+        "path": str(target) if target is not None else active.path,
+    }
+
+
 def apply_world_upload(
     active: ActiveWorld,
     upload_path: str | Path,
     *,
     data_dir: str | Path,
 ) -> dict[str, Any]:
-    """Replace the active world artifact from an uploaded file.
+    """Replace the active world artifact from an uploaded file or backup.
 
     Mode is chosen from the **configured/live world kind**, not from guessing
     the upload alone:
@@ -527,9 +643,9 @@ def apply_world_upload(
     - ``directory`` — clear the target directory in place, then extract a zip
       into it (game's folder save)
 
-    Caller owns process stop/start and the pre-restore safety backup of backup
-    sources. This only mutates the active world artifact (+ sibling expected
-    paths that would confuse the locator).
+    Caller owns process stop/start and the pre-restore safety backup. This only
+    mutates the active world artifact (+ sibling expected paths that would
+    confuse the locator).
     """
 
     upload = Path(upload_path)

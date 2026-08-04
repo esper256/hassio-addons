@@ -82,9 +82,11 @@ Optional quiet hours (`update_window_start_hour` / `end`) further limit when a p
 
 Three archive kinds live under `/data/backups`:
 
-1. **Scheduled** (`backup-*.tar.gz`) — daily creates; thinned by the retention profile
-2. **Pre-update** (`pre-update-*.tar.gz`) — one snapshot from the latest game-code update (only the newest is kept)
-3. **Pre-restore** (`pre-restore-*.tar.gz`) — safety copies before restore / new world; age window from the same profile
+1. **Scheduled** (`backup-*`) — daily creates; thinned by the retention profile
+2. **Pre-update** (`pre-update-*`) — one snapshot from the latest game-code update (only the newest is kept)
+3. **Pre-restore** (`pre-restore-*`) — safety copies before restore / new world; age window from the same profile
+
+Necesse stores each world as a single `.zip` under the data dir. Backups **copy that file as-is** (no second compression layer). Folder-based games zip the world directory instead. Older `*.tar.gz` datadir snapshots can still be restored.
 
 | Profile | Scheduled history | Pre-restore keep |
 | --- | --- | --- |

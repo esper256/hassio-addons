@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.28
+
+- Backups follow the active world **kind** from `world_save` (same as upload restore):
+  - Single-file saves (Necesse `.zip`): copied as-is — no wrapping/recompressing into another archive
+  - Folder saves: zipped with the same layout as world download/upload
+- Legacy `*.tar.gz` datadir snapshots remain restorable
+- `backup_paths` stays as the fallback when no named world exists yet
+
 ## 2.1.27
 
 - Ingress: **Restore from upload** — upload a world save; apply mode comes from the active world kind (single-file save vs folder save), not from guessing the upload alone

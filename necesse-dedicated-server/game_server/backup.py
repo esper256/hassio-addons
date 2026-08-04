@@ -1,4 +1,13 @@
-"""World data backups with generational retention and failure backoff."""
+"""World data backups with generational retention and failure backoff.
+
+Backups follow the active world ``kind`` from ``world_save`` when possible:
+
+- ``file`` — copy the save as-is (no recompress; a game ``.zip`` stays one zip)
+- ``directory`` — zip folder contents (same layout as world download/upload)
+
+Explicit ``backup_paths`` remain the fallback when no named world exists yet,
+and legacy ``*.tar.gz`` snapshots of those roots are still restorable.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +17,7 @@ import shutil
 import tarfile
 import threading
 import time
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +25,21 @@ from pathlib import Path
 from typing import Any
 
 from .disk import ensure_free_mb, path_total_bytes
+from .world_save import (
+    KIND_DIRECTORY,
+    KIND_FILE,
+    SCOPE_BACKUP_SOURCES,
+    SCOPE_HEURISTIC,
+    SCOPE_MISSING,
+    SCOPE_NAMED_PATH,
+    ActiveWorld,
+    apply_world_upload,
+    backup_name_suffix,
+    clear_world_artifact,
+    effective_world_kind,
+    infer_world_kind,
+    write_world_backup,
+)
 
 LOG = logging.getLogger("game_server.backup")
 
@@ -22,17 +47,22 @@ LOG = logging.getLogger("game_server.backup")
 #   backup-*       scheduled/manual rolling history (generational retention profile)
 #   pre-update-*   single snapshot from the latest game-code update
 #   pre-restore-*  safety copies before restore/empty-world (age window)
-ROTATION_GLOB = "backup-*.tar.gz"
-PRE_UPDATE_GLOB = "pre-update-*.tar.gz"
-PRE_RESTORE_GLOB = "pre-restore-*.tar.gz"
+ROTATION_GLOB = "backup-*"
+PRE_UPDATE_GLOB = "pre-update-*"
+PRE_RESTORE_GLOB = "pre-restore-*"
+# New by-kind names keep the original save suffix (often .zip) or .zip for
+# folder worlds. Legacy snapshots end in .tar.gz.
 _ARCHIVE_NAME_RE = re.compile(
-    r"^(backup|pre-update|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$"
+    r"^(backup|pre-update|pre-restore)-[A-Za-z0-9._-]+$"
 )
 # Legacy pre-update archives used the rotation prefix with a -pre-update reason.
-_LEGACY_PRE_UPDATE_RE = re.compile(r"^backup-.+-pre-update\.tar\.gz$")
+_LEGACY_PRE_UPDATE_RE = re.compile(r"^backup-.+-pre-update(\.tar\.gz)?$")
+_LEGACY_TAR_GZ_RE = re.compile(r"\.tar\.gz$", re.IGNORECASE)
 
 # Pending-restore token: wipe world sources and let the game create a fresh world.
 EMPTY_WORLD = "__empty__"
+
+_NAMED_SCOPES = frozenset({SCOPE_NAMED_PATH, SCOPE_HEURISTIC, SCOPE_MISSING})
 
 
 @dataclass
@@ -102,12 +132,25 @@ def retention_from_profile(name: str | None) -> RetentionPolicy:
     return RETENTION_PROFILES[key]
 
 
+@dataclass(frozen=True)
+class _BackupSubject:
+    """What create/clear/restore should operate on."""
+
+    kind: str  # file | directory | roots
+    path: Path | None
+    paths: list[Path]
+    active: ActiveWorld | None
+    named: bool
+
+
 class BackupManager:
     def __init__(
         self,
         backup_dir: str | Path,
         sources: list[str | Path],
         *,
+        world_locator: Callable[[], ActiveWorld] | None = None,
+        data_dir: str | Path | None = None,
         interval_minutes: int = 1440,
         enabled: bool = True,
         retention: RetentionPolicy | None = None,
@@ -117,6 +160,8 @@ class BackupManager:
     ) -> None:
         self.backup_dir = Path(backup_dir)
         self.sources = [Path(s) for s in sources]
+        self._world_locator = world_locator
+        self.data_dir = Path(data_dir) if data_dir is not None else None
         # Create cadence for scheduled backups (HA exposes retention profile only;
         # default daily so create rate matches keep_daily slots).
         self.interval_seconds = max(0, interval_minutes) * 60
@@ -181,8 +226,8 @@ class BackupManager:
                     self._register_failure(self.last_error)
                 else:
                     self.consecutive_failures = 0
-            except (OSError, tarfile.TarError) as exc:
-                # Disk/tar problems are environmental; back off and keep trying.
+            except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
+                # Disk/archive problems are environmental; back off and keep trying.
                 self.last_error = str(exc)
                 self._register_failure(str(exc))
                 LOG.exception("Scheduled backup failed")
@@ -205,51 +250,131 @@ class BackupManager:
             except Exception:  # noqa: BLE001
                 LOG.exception("Backup failure callback failed")
 
+    def _locate_active(self) -> ActiveWorld | None:
+        if self._world_locator is None:
+            return None
+        try:
+            return self._world_locator()
+        except Exception:  # noqa: BLE001
+            LOG.exception("world_locator failed; falling back to backup_paths")
+            return None
+
+    def _subject(self) -> _BackupSubject | None:
+        """Prefer the named world artifact; else fall back to backup_paths."""
+
+        active = self._locate_active()
+        if active is not None:
+            kind = effective_world_kind(active)
+            if (
+                active.scope in _NAMED_SCOPES
+                and kind in {KIND_FILE, KIND_DIRECTORY}
+                and active.path
+            ):
+                path = Path(active.path)
+                if self._path_has_data(path):
+                    return _BackupSubject(
+                        kind=kind,
+                        path=path,
+                        paths=[path],
+                        active=active,
+                        named=True,
+                    )
+            if active.scope == SCOPE_BACKUP_SOURCES and active.sources:
+                paths = [Path(p) for p in active.sources if Path(p).exists()]
+                subject = self._subject_from_paths(paths, active=active, named=False)
+                if subject is not None:
+                    return subject
+
+        existing = [s for s in self.sources if s.exists()]
+        return self._subject_from_paths(existing, active=active, named=False)
+
+    @staticmethod
+    def _path_has_data(path: Path) -> bool:
+        if not path.exists():
+            return False
+        if path.is_file():
+            try:
+                return path.stat().st_size > 0
+            except OSError:
+                return False
+        if path.is_dir():
+            return path_total_bytes(path) > 0
+        return False
+
+    def _subject_from_paths(
+        self,
+        paths: list[Path],
+        *,
+        active: ActiveWorld | None,
+        named: bool,
+    ) -> _BackupSubject | None:
+        existing = [p for p in paths if self._path_has_data(p)]
+        if not existing:
+            return None
+        if len(existing) == 1:
+            kind = infer_world_kind(existing[0])
+            if kind in {KIND_FILE, KIND_DIRECTORY}:
+                return _BackupSubject(
+                    kind=kind,
+                    path=existing[0],
+                    paths=existing,
+                    active=active,
+                    named=named,
+                )
+        return _BackupSubject(
+            kind="roots",
+            path=None,
+            paths=existing,
+            active=active,
+            named=named,
+        )
+
     def source_bytes(self) -> int:
-        return sum(path_total_bytes(source) for source in self.sources)
+        subject = self._subject()
+        if subject is None:
+            return 0
+        if subject.path is not None:
+            return path_total_bytes(subject.path)
+        return sum(path_total_bytes(path) for path in subject.paths)
 
     def sources_have_any_data(self) -> bool:
-        """True if any non-empty file exists under configured backup sources.
+        """True if any non-empty world artifact / backup source exists.
 
         Used before destructive world ops. Unlike ``validate_sources``, this does
         not apply ``min_source_bytes`` — a small save is still a save.
         """
 
-        for source in self.sources:
-            if not source.exists():
-                continue
-            if source.is_file():
-                try:
-                    if source.stat().st_size > 0:
-                        return True
-                except OSError:
-                    continue
-                continue
-            if not source.is_dir():
-                continue
-            try:
-                for path in source.rglob("*"):
-                    if path.is_file() and not path.is_symlink():
-                        try:
-                            if path.stat().st_size > 0:
-                                return True
-                        except OSError:
-                            continue
-            except OSError:
-                continue
-        return False
+        return self._subject() is not None
 
     def validate_sources(self) -> tuple[bool, str | None]:
-        existing = [s for s in self.sources if s.exists()]
-        if not existing:
-            return False, f"no backup sources exist yet: {self.sources}"
-        total = sum(path_total_bytes(source) for source in existing)
+        subject = self._subject()
+        if subject is None:
+            return False, "no world save or backup sources exist yet"
+        total = self.source_bytes()
         if self.min_source_bytes and total < self.min_source_bytes:
             return (
                 False,
-                f"backup sources only {total} bytes (< {self.min_source_bytes}); refusing empty/tiny world",
+                f"world save only {total} bytes (< {self.min_source_bytes}); "
+                "refusing empty/tiny world",
             )
         return True, None
+
+    def _archive_dest(
+        self,
+        *,
+        reason: str,
+        outside_rotation: bool,
+        suffix: str,
+    ) -> Path:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
+        if outside_rotation:
+            name = f"pre-restore-{stamp}-{safe_reason}{suffix}"
+        elif reason == "pre-update":
+            name = f"pre-update-{stamp}{suffix}"
+        else:
+            name = f"backup-{stamp}-{safe_reason}{suffix}"
+        return self.backup_dir / name
 
     def create_backup(
         self,
@@ -259,13 +384,13 @@ class BackupManager:
         allow_tiny: bool = False,
         prune_after: bool = True,
     ) -> Path | None:
-        """Create a world archive under backup_dir.
+        """Create a by-kind world backup under backup_dir.
 
-        ``outside_rotation=True`` writes a ``pre-restore-*.tar.gz`` safety copy
+        ``outside_rotation=True`` writes a ``pre-restore-*`` safety copy
         (age-pruned via the retention profile's ``pre_restore_keep_days``).
 
-        ``reason="pre-update"`` writes ``pre-update-*.tar.gz`` (only the newest
-        of that family is kept).
+        ``reason="pre-update"`` writes ``pre-update-*`` (only the newest of that
+        family is kept).
 
         ``allow_tiny=True`` skips ``min_source_bytes`` (required for pre-wipe
         safety copies — a small world is still worth keeping).
@@ -302,22 +427,40 @@ class BackupManager:
                 LOG.warning("Skipping backup: %s", reason_text)
                 return None
 
-        existing = [s for s in self.sources if s.exists()]
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
-        if outside_rotation:
-            archive = self.backup_dir / f"pre-restore-{stamp}-{safe_reason}.tar.gz"
-        elif reason == "pre-update":
-            archive = self.backup_dir / f"pre-update-{stamp}.tar.gz"
+        subject = self._subject()
+        if subject is None:
+            self.last_skip_reason = "no world data to back up"
+            self.last_error = self.last_skip_reason
+            return None
+
+        if subject.kind in {KIND_FILE, KIND_DIRECTORY} and subject.path is not None:
+            suffix = backup_name_suffix(subject.path, subject.kind)
+            archive = self._archive_dest(
+                reason=reason, outside_rotation=outside_rotation, suffix=suffix
+            )
+            LOG.info(
+                "Creating by-kind backup %s from %s (kind=%s)",
+                archive.name,
+                subject.path,
+                subject.kind,
+            )
+            write_world_backup(subject.path, subject.kind, archive)
         else:
-            archive = self.backup_dir / f"backup-{stamp}-{safe_reason}.tar.gz"
-        LOG.info("Creating backup %s from %s", archive.name, existing)
-        with tarfile.open(archive, "w:gz") as tar:
-            for source in existing:
-                tar.add(source, arcname=source.name)
+            archive = self._archive_dest(
+                reason=reason, outside_rotation=outside_rotation, suffix=".zip"
+            )
+            LOG.info("Creating roots zip backup %s from %s", archive.name, subject.paths)
+            self._write_roots_zip(subject.paths, archive)
 
         # Reject accidental empty archives (never keep a useless file).
-        if archive.stat().st_size < 64:
+        # File copies of tiny saves may be <64 bytes when allow_tiny; only
+        # reject truly empty outputs.
+        if archive.stat().st_size < 1:
+            archive.unlink(missing_ok=True)
+            self.last_skip_reason = "archive was empty after creation"
+            self.last_error = self.last_skip_reason
+            return None
+        if not allow_tiny and archive.stat().st_size < 64 and subject.kind != KIND_FILE:
             archive.unlink(missing_ok=True)
             self.last_skip_reason = "archive was empty/tiny after creation"
             self.last_error = self.last_skip_reason
@@ -331,6 +474,29 @@ class BackupManager:
         if prune_after:
             self.apply_retention()
         return archive
+
+    @staticmethod
+    def _write_roots_zip(paths: list[Path], dest: Path) -> None:
+        """Zip one or more fallback backup roots (top-level folder per source)."""
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(f".{dest.name}.partial")
+        try:
+            with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for source in paths:
+                    if source.is_file():
+                        zf.write(source, source.name)
+                        continue
+                    if not source.is_dir():
+                        continue
+                    for child in sorted(source.rglob("*")):
+                        if not child.is_file() or child.is_symlink():
+                            continue
+                        arc = f"{source.name}/{child.relative_to(source).as_posix()}"
+                        zf.write(child, arc)
+            tmp.replace(dest)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def create_safety_backup(self, reason: str = "safety") -> Path | None:
         """Pre-wipe safety copy: any non-empty world data, no immediate prune."""
@@ -352,9 +518,21 @@ class BackupManager:
         self._prune_pre_update_keep_newest()
         self._prune_pre_restore_by_age()
 
+    def _iter_family(self, glob_pat: str) -> list[Path]:
+        if not self.backup_dir.exists():
+            return []
+        found: list[Path] = []
+        for path in self.backup_dir.glob(glob_pat):
+            if not path.is_file():
+                continue
+            if not _ARCHIVE_NAME_RE.fullmatch(path.name):
+                continue
+            found.append(path)
+        return found
+
     def _prune_scheduled_generational(self) -> None:
         archives = sorted(
-            self.backup_dir.glob(ROTATION_GLOB),
+            self._iter_family(ROTATION_GLOB),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -401,31 +579,27 @@ class BackupManager:
     def list_archives(self) -> list[Path]:
         """Return scheduled/manual backup archives oldest → newest."""
 
-        if not self.backup_dir.exists():
-            return []
         archives = [
             p
-            for p in self.backup_dir.glob(ROTATION_GLOB)
+            for p in self._iter_family(ROTATION_GLOB)
             if not _LEGACY_PRE_UPDATE_RE.match(p.name)
         ]
         return sorted(archives, key=lambda p: p.stat().st_mtime)
 
     def list_pre_update_archives(self) -> list[Path]:
-        if not self.backup_dir.exists():
-            return []
-        found = list(self.backup_dir.glob(PRE_UPDATE_GLOB))
+        found = self._iter_family(PRE_UPDATE_GLOB)
         found.extend(
             p
-            for p in self.backup_dir.glob(ROTATION_GLOB)
+            for p in self._iter_family(ROTATION_GLOB)
             if _LEGACY_PRE_UPDATE_RE.match(p.name)
         )
-        return sorted(found, key=lambda p: p.stat().st_mtime)
+        # De-dupe while preserving mtime sort below.
+        unique = {p.resolve(): p for p in found}
+        return sorted(unique.values(), key=lambda p: p.stat().st_mtime)
 
     def list_pre_restore_archives(self) -> list[Path]:
-        if not self.backup_dir.exists():
-            return []
         return sorted(
-            self.backup_dir.glob(PRE_RESTORE_GLOB),
+            self._iter_family(PRE_RESTORE_GLOB),
             key=lambda p: p.stat().st_mtime,
         )
 
@@ -461,6 +635,8 @@ class BackupManager:
         raw = str(name or "").strip()
         if not raw or not _ARCHIVE_NAME_RE.fullmatch(raw):
             return None
+        if "/" in raw or "\\" in raw or raw in {".", ".."}:
+            return None
         root = self.backup_dir.resolve()
         path = (self.backup_dir / raw).resolve()
         try:
@@ -489,7 +665,7 @@ class BackupManager:
             raise RuntimeError(
                 f"refusing to delete live world data; cannot stat safety backup: {exc}"
             ) from exc
-        if size < 64:
+        if size < 1:
             raise RuntimeError(
                 f"refusing to delete live world data; safety backup is empty: {path.name}"
             )
@@ -514,9 +690,6 @@ class BackupManager:
 
         File sources are unlinked (parent directory is left alone). Missing
         sources are left missing — do not recreate them here.
-
-        Callers must pass the wipe-gate in ``clear_world_sources`` /
-        ``restore_archive`` first.
         """
 
         cleared: list[str] = []
@@ -542,7 +715,10 @@ class BackupManager:
     def clear_world_sources(
         self, *, prior_safety_backup: Path | None
     ) -> dict[str, Any]:
-        """Wipe configured world data so the next start is a fresh world.
+        """Wipe live world data so the next start is a fresh world.
+
+        Prefers clearing the named world artifact (by kind). Falls back to
+        emptying ``backup_paths`` when no named save is present.
 
         Does not stop/start the game process — caller owns lifecycle.
         If any world data exists, ``prior_safety_backup`` must be a successful
@@ -551,6 +727,19 @@ class BackupManager:
 
         with self._lock:
             self._require_safety_backup_before_wipe(prior_safety_backup)
+            subject = self._subject()
+            if (
+                subject is not None
+                and subject.named
+                and subject.active is not None
+                and self.data_dir is not None
+            ):
+                result = clear_world_artifact(subject.active, data_dir=self.data_dir)
+                result["safety_backup"] = (
+                    prior_safety_backup.name if prior_safety_backup is not None else None
+                )
+                result["sources"] = [str(s) for s in self.sources]
+                return result
             removed = self._clear_source_contents()
         return {
             "ok": True,
@@ -568,7 +757,11 @@ class BackupManager:
         *,
         prior_safety_backup: Path | None,
     ) -> dict[str, Any]:
-        """Extract a backup over configured world sources.
+        """Restore a backup over the live world.
+
+        - Legacy ``*.tar.gz`` — extract into ``backup_paths`` parents (old layout)
+        - By-kind backups — apply onto the active world via the same path as
+          world upload (file copy as-is, or zip extract into a folder save)
 
         Does not stop/start the game process — caller owns lifecycle.
         If any world data exists, ``prior_safety_backup`` must be a successful
@@ -585,6 +778,96 @@ class BackupManager:
         except ValueError as exc:
             raise ValueError(f"archive outside backup dir: {archive}") from exc
 
+        with self._lock:
+            self._require_safety_backup_before_wipe(prior_safety_backup)
+            if _LEGACY_TAR_GZ_RE.search(path.name):
+                return self._restore_legacy_tar(
+                    path, prior_safety_backup=prior_safety_backup
+                )
+            return self._restore_by_kind(
+                path, prior_safety_backup=prior_safety_backup
+            )
+
+    def _restore_by_kind(
+        self,
+        path: Path,
+        *,
+        prior_safety_backup: Path | None,
+    ) -> dict[str, Any]:
+        active = self._locate_active()
+        data_dir = self.data_dir
+        if (
+            active is not None
+            and data_dir is not None
+            and effective_world_kind(active) in {KIND_FILE, KIND_DIRECTORY}
+            and active.path
+            and active.scope in _NAMED_SCOPES
+        ):
+            LOG.info(
+                "Restoring by-kind backup %s onto %s (kind=%s)",
+                path.name,
+                active.path,
+                effective_world_kind(active),
+            )
+            result = apply_world_upload(active, path, data_dir=data_dir)
+            result["archive"] = path.name
+            result["safety_backup"] = (
+                prior_safety_backup.name if prior_safety_backup is not None else None
+            )
+            return result
+
+        # Fallback: extract a zip into a single directory backup root.
+        dirs = [s for s in self.sources if s.is_dir() or not s.exists()]
+        files = [s for s in self.sources if s.is_file()]
+        if len(self.sources) == 1 and (
+            self.sources[0].is_file()
+            or infer_world_kind(self.sources[0]) == KIND_FILE
+        ):
+            target = self.sources[0]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() and target.is_dir():
+                shutil.rmtree(target)
+            tmp = target.with_name(f".{target.name}.restore-tmp")
+            try:
+                shutil.copyfile(path, tmp)
+                tmp.replace(target)
+            finally:
+                tmp.unlink(missing_ok=True)
+            return {
+                "ok": True,
+                "mode": "replace_file",
+                "archive": path.name,
+                "path": str(target),
+                "safety_backup": (
+                    prior_safety_backup.name if prior_safety_backup is not None else None
+                ),
+            }
+        if len(dirs) == 1 and not files:
+            target = dirs[0]
+            self._clear_source_contents()
+            target.mkdir(parents=True, exist_ok=True)
+            LOG.info("Restoring zip backup %s into %s", path.name, target)
+            self._extract_zip_into_directory(path, target)
+            return {
+                "ok": True,
+                "mode": "extract_zip_into_directory",
+                "archive": path.name,
+                "path": str(target),
+                "safety_backup": (
+                    prior_safety_backup.name if prior_safety_backup is not None else None
+                ),
+            }
+        raise RuntimeError(
+            "cannot restore by-kind backup without a named world path or a "
+            "single backup_paths root"
+        )
+
+    def _restore_legacy_tar(
+        self,
+        path: Path,
+        *,
+        prior_safety_backup: Path | None,
+    ) -> dict[str, Any]:
         # Archives store each source under arcname=source.name (e.g. "world/...").
         # Extract into each source's parent so "world/" lands on the real world root.
         parents = {source.parent.resolve() for source in self.sources}
@@ -594,22 +877,21 @@ class BackupManager:
             )
         extract_root = next(iter(parents))
 
-        with self._lock:
-            self._require_safety_backup_before_wipe(prior_safety_backup)
-            # Clear contents in place when the source is a directory so we do not
-            # replace a gameserver-owned inode with a root-owned one before extract.
-            self._clear_source_contents()
+        # Clear contents in place when the source is a directory so we do not
+        # replace a gameserver-owned inode with a root-owned one before extract.
+        self._clear_source_contents()
 
-            LOG.info("Restoring %s into %s", path.name, extract_root)
-            with tarfile.open(path, "r:gz") as tar:
-                # Python 3.12+: filter='data' blocks unsafe paths when available.
-                try:
-                    tar.extractall(extract_root, filter="data")  # type: ignore[call-arg]
-                except TypeError:
-                    self._extract_safe(tar, extract_root)
+        LOG.info("Restoring legacy tar.gz %s into %s", path.name, extract_root)
+        with tarfile.open(path, "r:gz") as tar:
+            # Python 3.12+: filter='data' blocks unsafe paths when available.
+            try:
+                tar.extractall(extract_root, filter="data")  # type: ignore[call-arg]
+            except TypeError:
+                self._extract_safe(tar, extract_root)
 
         return {
             "ok": True,
+            "mode": "legacy_tar_gz",
             "archive": path.name,
             "extract_root": str(extract_root),
             "sources": [str(s) for s in self.sources],
@@ -617,6 +899,14 @@ class BackupManager:
                 prior_safety_backup.name if prior_safety_backup is not None else None
             ),
         }
+
+    @staticmethod
+    def _extract_zip_into_directory(archive: Path, target: Path) -> None:
+        """Extract zip members under ``target``, rejecting path traversal."""
+
+        from .world_save import _extract_zip_into_directory as extract
+
+        extract(archive, target)
 
     @staticmethod
     def _extract_safe(tar: tarfile.TarFile, extract_root: Path) -> None:

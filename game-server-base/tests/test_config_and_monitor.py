@@ -58,6 +58,7 @@ from game_server.status_http import (  # noqa: E402
     resolve_ui_theme,
 )
 from game_server.world_save import (  # noqa: E402
+    ActiveWorld,
     WorldSaveSpec,
     backup_sources_for,
     locate_active_world,
@@ -525,15 +526,17 @@ class BackupRetentionTests(unittest.TestCase):
             safety = mgr.create_backup(reason="safety", outside_rotation=True)
             self.assertIsNotNone(safety)
             assert safety is not None
-            # Safety copies must survive rotation prune of backup-*.tar.gz.
+            # Safety copies must survive rotation prune of backup-*.
             self.assertTrue(safety.name.startswith("pre-restore-"))
+            self.assertTrue(safety.name.endswith(".zip"))
+            self.assertTrue(archive.name.endswith(".zip"))
             for i in range(30):
-                fake = backup_dir / f"backup-20260101T{i:06d}Z-schedule.tar.gz"
+                fake = backup_dir / f"backup-20260101T{i:06d}Z-schedule.zip"
                 fake.write_bytes(b"z" * 80)
                 os.utime(fake, (1_700_000_000 + i, 1_700_000_000 + i))
             mgr._prune()
             self.assertTrue(safety.is_file())
-            self.assertIsNone(mgr.resolve_archive("../evil.tar.gz"))
+            self.assertIsNone(mgr.resolve_archive("../evil.zip"))
             mgr.restore_archive(archive.name, prior_safety_backup=safety)
             self.assertEqual(
                 (source / "save.bin").read_bytes(),
@@ -615,9 +618,9 @@ class BackupRetentionTests(unittest.TestCase):
                 os.utime(path, (stale, stale))
                 old.append(path)
             # Creating safety copies must not prune yet (prune_after=False).
-            self.assertEqual(len(list(backup_dir.glob("pre-restore-*.tar.gz"))), 5)
+            self.assertEqual(len(list(backup_dir.glob("pre-restore-*.zip"))), 5)
             mgr.apply_retention()
-            remaining = {p.name for p in backup_dir.glob("pre-restore-*.tar.gz")}
+            remaining = {p.name for p in backup_dir.glob("pre-restore-*.zip")}
             self.assertEqual(remaining, {p.name for p in recent})
             for path in old:
                 self.assertFalse(path.is_file())
@@ -643,7 +646,7 @@ class BackupRetentionTests(unittest.TestCase):
             assert first is not None and second is not None
             self.assertTrue(first.name.startswith("pre-update-"))
             self.assertTrue(second.name.startswith("pre-update-"))
-            remaining = list(backup_dir.glob("pre-update-*.tar.gz"))
+            remaining = list(backup_dir.glob("pre-update-*.zip"))
             self.assertEqual(len(remaining), 1)
             self.assertEqual(remaining[0].name, second.name)
             # Legacy naming is also pruned down to one newest pre-update.
@@ -685,6 +688,85 @@ class BackupRetentionTests(unittest.TestCase):
             # Empty world has nothing to validate for a normal backup.
             valid, _reason = mgr.validate_sources()
             self.assertFalse(valid)
+
+    def test_file_world_backup_copies_bytes_without_recompress(self) -> None:
+        """Named single-file saves (e.g. Necesse .zip) are copied as-is."""
+
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "world"
+            worlds = data / "saves" / "worlds"
+            worlds.mkdir(parents=True)
+            payload = b"PK\x03\x04-NECESSE-WORLD-BYTES" * 64
+            world_zip = worlds / "FamilyWorld.zip"
+            world_zip.write_bytes(payload)
+            backup_dir = root / "backups"
+
+            def locate() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "FamilyWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            mgr = BackupManager(
+                backup_dir,
+                [data],
+                world_locator=locate,
+                data_dir=data,
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            archive = mgr.create_backup(reason="schedule")
+            self.assertIsNotNone(archive)
+            assert archive is not None
+            self.assertTrue(archive.name.endswith(".zip"))
+            self.assertEqual(archive.read_bytes(), payload)
+            # Restoring must put the same bytes back on the world path.
+            world_zip.write_bytes(b"CHANGED")
+            safety = mgr.create_safety_backup(reason="safety")
+            self.assertIsNotNone(safety)
+            assert safety is not None
+            mgr.restore_archive(archive.name, prior_safety_backup=safety)
+            self.assertEqual(world_zip.read_bytes(), payload)
+            # Empty-world clear removes the save file, not the whole data dir.
+            other = data / "cfg.bin"
+            other.write_bytes(b"keep-me")
+            safety2 = mgr.create_safety_backup(reason="before-empty")
+            assert safety2 is not None
+            mgr.clear_world_sources(prior_safety_backup=safety2)
+            self.assertFalse(world_zip.exists())
+            self.assertTrue(other.is_file())
+
+    def test_legacy_tar_gz_restore_still_works(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"LEGACY-LIVE" * 16)
+            # Build a legacy tar.gz the old supervisor would have written.
+            import tarfile
+
+            archive = backup_dir / "backup-20260101T000000Z-schedule.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                tar.add(source, arcname=source.name)
+            (source / "save.bin").write_bytes(b"CHANGED!!!!" * 16)
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            safety = mgr.create_safety_backup(reason="safety")
+            self.assertIsNotNone(safety)
+            assert safety is not None
+            mgr.restore_archive(archive.name, prior_safety_backup=safety)
+            self.assertEqual((source / "save.bin").read_bytes(), b"LEGACY-LIVE" * 16)
 
     def test_profiles(self) -> None:
         standard = retention_from_profile("standard")
@@ -1421,7 +1503,7 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(world.is_dir())
             self.assertFalse(any(world.iterdir()))
             self.assertIsNone(supervisor.last_restore_error)
-            safety_copies = list((root / "backups").glob("pre-restore-*.tar.gz"))
+            safety_copies = list((root / "backups").glob("pre-restore-*"))
             self.assertEqual(len(safety_copies), 1)
 
     def test_status_read_does_not_mutate_build_id_or_lie_about_starting(self) -> None:
