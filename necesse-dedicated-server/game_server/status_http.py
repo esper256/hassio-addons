@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -20,6 +21,27 @@ LOG = logging.getLogger("game_server.status_http")
 
 # Home Assistant Ingress proxy source address (Supervisor).
 INGRESS_PEER = "172.30.32.2"
+
+# Phases where the HA watchdog should leave the add-on running.
+_HEALTHY_LIFECYCLES = frozenset(
+    {"running", "installing", "updating", "restoring", "starting", "waiting"}
+)
+
+
+def healthz_ok(snapshot: dict[str, Any]) -> bool:
+    """Whether /healthz should report ok for this status/health snapshot."""
+
+    if "ok" in snapshot:
+        return bool(snapshot["ok"])
+    phase = str(snapshot.get("lifecycle") or "")
+    if phase:
+        return phase in _HEALTHY_LIFECYCLES
+    # Legacy fallback before lifecycle existed.
+    return bool(snapshot.get("running")) or bool(snapshot.get("starting"))
+
+
+def _html_escape(text: str) -> str:
+    return html.escape(str(text), quote=True)
 
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -442,6 +464,7 @@ class StatusServer:
         port: int,
         status_provider: Callable[[], dict[str, Any]],
         *,
+        health_provider: Callable[[], dict[str, Any]] | None = None,
         game_name: str = "Game",
         log_toolbox=None,
         capture_callback: Callable[[str], dict[str, Any]] | None = None,
@@ -452,6 +475,7 @@ class StatusServer:
         self.host = host
         self.port = port
         self.status_provider = status_provider
+        self.health_provider = health_provider
         self.game_name = game_name
         self.log_toolbox = log_toolbox
         self.capture_callback = capture_callback
@@ -463,6 +487,7 @@ class StatusServer:
 
     def start(self) -> None:
         provider = self.status_provider
+        health = self.health_provider
         game_name = self.game_name
         toolbox = self.log_toolbox
         capture_cb = self.capture_callback
@@ -565,13 +590,16 @@ class StatusServer:
                 parsed = urlparse(self.path)
                 path = parsed.path
                 query = parse_qs(parsed.query)
-                status = provider()
 
                 if path in ("/healthz", "/health"):
-                    ok = bool(status.get("running")) or bool(status.get("starting"))
+                    # Cheap path: avoid full status() disk/manifest scans.
+                    snapshot = health() if health is not None else provider()
+                    ok = healthz_ok(snapshot)
                     payload = b"ok\n" if ok else b"degraded\n"
                     self._send(200 if ok else 503, payload, "text/plain; charset=utf-8")
                     return
+
+                status = provider()
 
                 if path in ("/api/status", "/status.json"):
                     self._json(200, status)
@@ -885,33 +913,6 @@ def _format_update_check_hint(status: dict[str, Any]) -> str:
     return "Not checked yet"
 
 
-def _format_install_updated(status: dict[str, Any]) -> tuple[str, str]:
-    """Return (value, hint) for when game server files were last updated on disk."""
-
-    install_ts = status.get("install_last_updated_at")
-    applied_ts = status.get("last_update_applied_at")
-    build = status.get("local_build_id")
-    if install_ts:
-        value = _fmt_ago(install_ts)
-        hint = (
-            f"Steam build {build} (game server files)"
-            if build
-            else "From Steam install stamp"
-        )
-        return value, hint
-    if applied_ts:
-        value = _fmt_ago(applied_ts)
-        hint = (
-            f"Supervisor last applied · build {build}"
-            if build
-            else "Supervisor last applied an update"
-        )
-        return value, hint
-    if build:
-        return "Unknown age", f"Steam build {build} (game server files)"
-    return "Unknown", "No Steam install stamp yet"
-
-
 def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
     """Return (value, css class, hint) for free disk under the backup volume."""
 
@@ -986,6 +987,28 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     return value, "World data"
 
 
+def _format_running(status: dict[str, Any]) -> tuple[str, str]:
+    """Hero server label from lifecycle (falls back to running bool)."""
+
+    phase = str(status.get("lifecycle") or "").strip()
+    labels = {
+        "running": ("running", "good"),
+        "installing": ("installing", "accent"),
+        "updating": ("updating", "accent"),
+        "restoring": ("restoring", "accent"),
+        "waiting": ("waiting", "accent"),
+        "starting": ("starting", "accent"),
+        "stopping": ("stopping", "accent"),
+        "failed": ("failed", "bad"),
+        "stopped": ("stopped", "bad"),
+    }
+    if phase in labels:
+        return labels[phase]
+    if status.get("running"):
+        return "running", "good"
+    return "stopped", "bad"
+
+
 def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     """Formatted strings for the status page and soft-refresh JSON."""
 
@@ -1023,11 +1046,12 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
     backups, backups_oldest, backups_newest = _format_backups(status)
     world_save, world_save_hint = _format_world_save(status)
     disk, disk_class, disk_hint = _format_disk(status)
+    running_label, running_class = _format_running(status)
     return {
         "game": game_name,
         "subtitle": _format_subtitle(status),
-        "running": "running" if status.get("running") else "stopped",
-        "running_class": "good" if status.get("running") else "bad",
+        "running": running_label,
+        "running_class": running_class,
         "players": players,
         "players_hint": players_hint,
         "uptime": uptime,
@@ -1055,15 +1079,6 @@ def _ui_view(status: dict[str, Any], game_name: str) -> dict[str, Any]:
         "capture_options": _format_capture_options(status.get("log_captures") or []),
         "backup_options": _format_backup_options(status),
     }
-
-
-def _html_escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
 
 
 def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:

@@ -15,6 +15,7 @@ from typing import Callable
 from .config import SupervisorConfig, format_bool
 from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .plugin import GamePlugin
+from .privileges import make_preexec
 
 LOG = logging.getLogger("game_server.process")
 
@@ -54,8 +55,11 @@ class ProcessManager:
 
     def build_command(self) -> list[str]:
         cmd = list(self.plugin.executable)
+        java_env = self.plugin.java_opts_env or "JAVA_OPTS"
         java_opts = str(
-            self.config.game_options.get("java_opts") or os.environ.get("JAVA_OPTS") or ""
+            self.config.game_options.get("java_opts")
+            or os.environ.get(java_env)
+            or ""
         )
         if java_opts and cmd and cmd[0] == "java":
             opts = [part for part in java_opts.split() if part]
@@ -85,12 +89,6 @@ class ProcessManager:
             else:
                 cmd.extend([flag, rendered])
         return cmd
-
-    def _preexec(self) -> None:
-        if self.run_uid is None or self.run_gid is None:
-            return
-        os.setgid(self.run_gid)
-        os.setuid(self.run_uid)
 
     def start(self, reason: str = "boot") -> None:
         with self._lock:
@@ -130,7 +128,7 @@ class ProcessManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                preexec_fn=self._preexec if self.run_uid is not None else None,
+                preexec_fn=make_preexec(self.run_uid, self.run_gid),
             )
             self.last_started_at = time.time()
             self._reader = threading.Thread(

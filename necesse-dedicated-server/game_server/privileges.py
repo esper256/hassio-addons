@@ -1,4 +1,4 @@
-"""Optional privilege drop for running game/SteamCMD as a non-root user."""
+"""Prepare filesystem ownership and child-process identity (games / SteamCMD)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 import os
 import pwd
 from pathlib import Path
+from typing import Callable
 
 LOG = logging.getLogger("game_server.privileges")
 
@@ -16,6 +17,8 @@ def resolve_user(username: str) -> tuple[int, int, str]:
 
 
 def chown_paths(uid: int, gid: int, paths: list[str | Path]) -> None:
+    """Best-effort recursive chown so a non-root child can write these trees."""
+
     for raw in paths:
         path = Path(raw)
         if not path.exists():
@@ -33,11 +36,36 @@ def chown_paths(uid: int, gid: int, paths: list[str | Path]) -> None:
             LOG.warning("chown failed for %s: %s", path, exc)
 
 
-def prepare_drop(
+def make_preexec(
+    uid: int | None, gid: int | None
+) -> Callable[[], None] | None:
+    """Return a ``preexec_fn`` that setgid/setuid in a child process, or None.
+
+    Used when launching SteamCMD or the game so file ownership matches the
+    persistent ``/data`` trees. Prefer this over a permanent supervisor drop.
+    """
+
+    if uid is None and gid is None:
+        return None
+
+    def _drop() -> None:
+        if gid is not None:
+            os.setgid(gid)
+        if uid is not None:
+            os.setuid(uid)
+
+    return _drop
+
+
+def prepare_owned_paths(
     username: str,
     paths: list[str | Path],
 ) -> tuple[int, int] | None:
-    """Ensure target user owns key paths. Returns (uid, gid) or None if unavailable."""
+    """Create paths and chown them for ``username``.
+
+    Returns ``(uid, gid)`` for child launches, or None when not root / user
+    missing (caller continues as the current process user).
+    """
 
     if os.geteuid() != 0:
         LOG.info("Not root; skipping privilege preparation")
@@ -54,11 +82,5 @@ def prepare_drop(
     return uid, gid
 
 
-def drop_to(uid: int, gid: int) -> None:
-    """Permanently drop supervisor privileges (best-effort)."""
-
-    if os.geteuid() != 0:
-        return
-    os.setgid(gid)
-    os.setuid(uid)
-    LOG.info("Dropped privileges to %s:%s", uid, gid)
+# Older name kept so callers/tests mid-rename stay clear; prefer prepare_owned_paths.
+prepare_drop = prepare_owned_paths
