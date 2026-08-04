@@ -2,7 +2,7 @@
 
 ## 2.1.21
 
-- Activate Necesse `version_mismatch` log pattern for `Client "…" had wrong version (…)` — schedules a Steam update that bypasses quiet hours, still waits for an empty server, then orderly `save`/`exit` stop (240s budget) before SteamCMD
+- Activate Necesse `version_mismatch` log pattern for `Client "…" had wrong version (…)` — probes Steam for a newer build first; only then schedules stop/apply (bypass quiet hours, wait for empty, orderly `save`/`exit` with 240s budget, SteamCMD)
 - Ingress theme colors come from per-game `ui_theme` in `games/game.yaml` (Necesse keeps green/amber)
 - World restore UI: style restore like other action buttons; drop separate empty-world button; add **NEW WORLD** at the bottom of the backup selector
 - Free disk hero no longer shows the “Min 512 MiB” hint (threshold still enforced for backups/updates)

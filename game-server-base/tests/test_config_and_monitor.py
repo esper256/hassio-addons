@@ -1212,10 +1212,14 @@ class StatusFormatTests(unittest.TestCase):
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
 
-    def test_version_mismatch_schedules_window_bypass_then_waits_for_empty(
+    def test_version_mismatch_checks_steam_before_scheduling_stop(
         self,
     ) -> None:
-        """Mismatch forces apply past quiet hours; still honors empty-only."""
+        """Mismatch probes Steam first; only schedules apply when an update exists."""
+
+        from unittest import mock
+
+        from game_server.steamcmd import UpdateCheckResult
 
         plugin = load_plugin(NECESSE_PLUGIN)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1251,6 +1255,34 @@ class StatusFormatTests(unittest.TestCase):
             supervisor._on_version_mismatch(
                 '[2026-08-04 08:45:04] Client "1" had wrong version (1.3.0).'
             )
+            # Must not schedule a stop/apply until Steam confirms a newer build.
+            self.assertFalse(supervisor._update_pending)
+            self.assertTrue(supervisor._urgent_update_check)
+
+            with mock.patch(
+                "game_server.supervisor.steamcmd.update_available",
+                return_value=UpdateCheckResult(
+                    update_available=False,
+                    local_build_id="100",
+                    remote_build_id="100",
+                ),
+            ):
+                supervisor._run_urgent_update_check()
+            self.assertFalse(supervisor._update_pending)
+            self.assertFalse(supervisor._urgent_update_check)
+
+            supervisor._on_version_mismatch(
+                '[2026-08-04 08:45:05] Client "1" had wrong version (1.3.0).'
+            )
+            with mock.patch(
+                "game_server.supervisor.steamcmd.update_available",
+                return_value=UpdateCheckResult(
+                    update_available=True,
+                    local_build_id="100",
+                    remote_build_id="101",
+                ),
+            ):
+                supervisor._run_urgent_update_check()
             self.assertTrue(supervisor._update_pending)
             self.assertEqual(supervisor._update_reason, "version_mismatch")
             self.assertTrue(supervisor._update_bypass_window)

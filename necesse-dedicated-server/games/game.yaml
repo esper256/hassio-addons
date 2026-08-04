@@ -63,9 +63,9 @@ ui_theme:
 # Do NOT activate “Found N saved players” or “empty server” GC lines as player_count —
 # those are not online counts; join/leave tracking decides when the server is empty
 # enough to restart for an update.
-# version_mismatch: active — rejected clients schedule a Steam update (bypass quiet
-# hours; still waits for empty when update_when_empty_only is on). Apply path stops
-# the game with save/exit and stop_timeout_seconds before SteamCMD.
+# version_mismatch: active — rejected clients queue a Steam update *check* first;
+# the server is only stopped when Steam reports a newer build (then bypass quiet
+# hours, wait for empty, orderly save/exit + stop_timeout, SteamCMD app_update).
 log_patterns:
   ready:
     - '\bStarted server using port\s+(?P<port>\d+)\b'
