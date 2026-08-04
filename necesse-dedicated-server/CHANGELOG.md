@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.27
+
+- Ingress: **Restore from upload** — upload a world save; apply mode comes from the active world kind (single-file save vs folder save), not from guessing the upload alone
+  - File worlds (e.g. a game that stores the world as one `.zip`): replace that file as-is
+  - Folder worlds: require a `.zip` and extract into the save directory
+- Generic `world_save` locator exposes `kind` / upload hints for any game plugin
+
 ## 2.1.26
 
 - Fix NEW WORLD / restore from Ingress: when the POST body is dropped (missing Content-Length), accept `confirm` / `empty` / `archive` from the query string so the second “confirmation required” alert no longer blocks the action

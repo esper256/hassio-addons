@@ -383,6 +383,14 @@ HTML_PAGE = """<!DOCTYPE html>
         Restore selected backup
       </button>
     </div>
+    <div class="capture-row {world_upload_class}" id="world-upload-row">
+      <label for="world-upload">Upload world save</label>
+      <input type="file" id="world-upload" accept="{world_upload_accept}" />
+      <button type="button" id="btn-world-upload" onclick="return uploadWorld(event)">
+        Restore from upload
+      </button>
+    </div>
+    <p class="sub" id="world-upload-hint">{world_upload_hint}</p>
 
     <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
       <summary>Game server log watching pattern hits</summary>
@@ -423,6 +431,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
         <li><a href="api/world/download">Download active world save</a></li>
+        <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
         <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
@@ -496,6 +505,50 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
       }} catch (e) {{
         alert(emptyWorld ? 'Could not schedule empty-world reset.' : 'Could not schedule restore.');
+      }} finally {{
+        if (btn) btn.disabled = false;
+      }}
+      return false;
+    }}
+    async function uploadWorld(ev) {{
+      ev.preventDefault();
+      const input = document.getElementById('world-upload');
+      if (!input || !input.files || !input.files[0]) {{
+        alert('Choose a world save file to upload');
+        return false;
+      }}
+      const file = input.files[0];
+      const ok = window.confirm(
+        'Restore the live world from this upload?\\n\\n' +
+        file.name + ' (' + file.size + ' bytes)\\n\\n' +
+        'The game server will stop. If any world data exists, it is saved first ' +
+        'as a pre-restore safety copy. How your file is applied depends on how this ' +
+        'game stores its world (single file vs folder), not on the upload name alone.\\n\\n' +
+        'Anyone playing will be disconnected.'
+      );
+      if (!ok) return false;
+      const btn = document.getElementById('btn-world-upload');
+      if (btn) btn.disabled = true;
+      try {{
+        const res = await fetch(
+          'api/world/upload?confirm=1&filename=' + encodeURIComponent(file.name),
+          {{
+            method: 'POST',
+            headers: {{
+              'Content-Type': file.type || 'application/octet-stream',
+            }},
+            body: file,
+          }}
+        );
+        const data = await res.json();
+        if (data.ok) {{
+          alert(data.message || 'World upload scheduled.');
+          softRefresh();
+        }} else {{
+          alert(data.error || 'Could not schedule world upload.');
+        }}
+      }} catch (e) {{
+        alert('Could not schedule world upload.');
       }} finally {{
         if (btn) btn.disabled = false;
       }}
@@ -579,6 +632,15 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
         setText('v-world', u.world_save);
         setHtml('h-world', u.world_save_hint);
+        setText('world-upload-hint', u.world_upload_hint);
+        const uploadRow = document.getElementById('world-upload-row');
+        if (uploadRow) {{
+          uploadRow.classList.toggle('hidden', !!u.world_upload_hidden);
+        }}
+        const uploadInput = document.getElementById('world-upload');
+        if (uploadInput && u.world_upload_accept) {{
+          uploadInput.accept = u.world_upload_accept;
+        }}
         const disk = document.getElementById('v-disk');
         if (disk) {{
           disk.textContent = u.disk;
@@ -623,6 +685,8 @@ class StatusServer:
         capture_callback: Callable[[str], dict[str, Any]] | None = None,
         update_callback: Callable[[], dict[str, Any]] | None = None,
         restore_callback: Callable[[str], dict[str, Any]] | None = None,
+        upload_callback: Callable[[Path], dict[str, Any]] | None = None,
+        upload_staging_dir: str | Path | None = None,
         backups_provider: Callable[[], list[dict[str, Any]]] | None = None,
         world_download_callback: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
@@ -636,6 +700,8 @@ class StatusServer:
         self.capture_callback = capture_callback
         self.update_callback = update_callback
         self.restore_callback = restore_callback
+        self.upload_callback = upload_callback
+        self.upload_staging_dir = Path(upload_staging_dir) if upload_staging_dir else None
         self.backups_provider = backups_provider
         self.world_download_callback = world_download_callback
         self._httpd: ThreadingHTTPServer | None = None
@@ -650,6 +716,8 @@ class StatusServer:
         capture_cb = self.capture_callback
         update_cb = self.update_callback
         restore_cb = self.restore_callback
+        upload_cb = self.upload_callback
+        upload_dir = self.upload_staging_dir
         backups_cb = self.backups_provider
         world_dl_cb = self.world_download_callback
 
@@ -732,6 +800,105 @@ class StatusServer:
                         self._json(501, {"ok": False, "error": "manual update unavailable"})
                         return
                     result = update_cb()
+                    self._json(200 if result.get("ok") else 409, result)
+                    return
+                if path == "/api/world/upload":
+                    if upload_cb is None or upload_dir is None:
+                        self._json(
+                            501, {"ok": False, "error": "world upload unavailable"}
+                        )
+                        return
+                    parsed = urlparse(self.path)
+                    query = parse_qs(parsed.query)
+                    if not _as_confirm_flag((query.get("confirm") or [""])[0]):
+                        self._json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "Could not confirm the upload request. "
+                                    "Try again from OPEN WEB UI."
+                                ),
+                            },
+                        )
+                        return
+                    length_header = self.headers.get("Content-Length")
+                    if length_header is None or str(length_header).strip() == "":
+                        self._json(
+                            411,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "Content-Length required for world upload "
+                                    "(Ingress must forward the file body)"
+                                ),
+                            },
+                        )
+                        return
+                    try:
+                        length = int(length_header)
+                    except (TypeError, ValueError):
+                        length = -1
+                    if length <= 0:
+                        self._json(
+                            400, {"ok": False, "error": "empty world upload"}
+                        )
+                        return
+                    # Hard cap: 8 GiB. Disk free is still checked by backup manager.
+                    max_upload = 8 * 1024 * 1024 * 1024
+                    if length > max_upload:
+                        self._json(
+                            413,
+                            {
+                                "ok": False,
+                                "error": f"upload too large (max {max_upload} bytes)",
+                            },
+                        )
+                        return
+                    upload_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+                    filename = (query.get("filename") or ["world-upload.bin"])[0]
+                    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).name)
+                    safe = safe.strip("._") or "world-upload.bin"
+                    staged = upload_dir / f"upload-pending-{stamp}-{safe}"
+                    tmp = staged.with_suffix(staged.suffix + ".partial")
+                    remaining = length
+                    try:
+                        with tmp.open("wb") as out:
+                            while remaining > 0:
+                                chunk = self.rfile.read(min(1024 * 1024, remaining))
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                                remaining -= len(chunk)
+                        if remaining != 0:
+                            tmp.unlink(missing_ok=True)
+                            self._json(
+                                400,
+                                {
+                                    "ok": False,
+                                    "error": "upload ended before Content-Length bytes",
+                                },
+                            )
+                            return
+                        tmp.replace(staged)
+                    except OSError as exc:
+                        tmp.unlink(missing_ok=True)
+                        staged.unlink(missing_ok=True)
+                        self._json(
+                            500, {"ok": False, "error": f"failed to stage upload: {exc}"}
+                        )
+                        return
+                    try:
+                        result = upload_cb(staged)
+                    except Exception as exc:  # noqa: BLE001
+                        staged.unlink(missing_ok=True)
+                        self._json(
+                            500, {"ok": False, "error": f"upload schedule failed: {exc}"}
+                        )
+                        return
+                    if not result.get("ok"):
+                        staged.unlink(missing_ok=True)
                     self._json(200 if result.get("ok") else 409, result)
                     return
                 if path == "/api/backups/restore":
@@ -1214,6 +1381,23 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     return value, _html_escape(hint_text)
 
 
+def _format_world_upload(status: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (hint, accept attribute, row css class) for upload restore UI."""
+
+    info = status.get("world_save") or {}
+    uploadable = bool(info.get("uploadable"))
+    hint = str(info.get("hint") or "").strip()
+    accept = str(info.get("accept") or "").strip()
+    if not uploadable:
+        return (
+            hint
+            or "World upload is unavailable until the game plugin declares a named save path.",
+            "",
+            "hidden",
+        )
+    return hint, accept or ".zip,application/zip", ""
+
+
 def _format_running(status: dict[str, Any]) -> tuple[str, str]:
     """Hero server label from lifecycle (falls back to running bool)."""
 
@@ -1303,6 +1487,9 @@ def _ui_view(
     )
     backups, backups_oldest, backups_newest = _format_backups(status)
     world_save, world_save_hint = _format_world_save(status)
+    world_upload_hint, world_upload_accept, world_upload_class = _format_world_upload(
+        status
+    )
     disk, disk_class, disk_hint = _format_disk(status)
     running_label, running_class = _format_running(status)
     theme = resolve_ui_theme(ui_theme)
@@ -1329,6 +1516,10 @@ def _ui_view(
         "crashes_hint": _format_crashes_hint(status),
         "world_save": world_save,
         "world_save_hint": world_save_hint,
+        "world_upload_hint": world_upload_hint,
+        "world_upload_accept": world_upload_accept,
+        "world_upload_class": world_upload_class,
+        "world_upload_hidden": world_upload_class == "hidden",
         "disk": disk,
         "disk_class": disk_class,
         "disk_hint": disk_hint,
@@ -1370,6 +1561,9 @@ _STATUS_HTML_KEYS = (
     "crashes_hint",
     "world_save",
     "world_save_hint",
+    "world_upload_hint",
+    "world_upload_accept",
+    "world_upload_class",
     "disk",
     "disk_class",
     "disk_hint",
@@ -1418,6 +1612,9 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         world_save=_html_escape(view["world_save"]),
         # Hint may include a download <a>; _format_world_save already escapes text.
         world_save_hint=view["world_save_hint"],
+        world_upload_hint=_html_escape(view.get("world_upload_hint") or ""),
+        world_upload_accept=_html_escape(view.get("world_upload_accept") or ""),
+        world_upload_class=_html_escape(view.get("world_upload_class") or ""),
         disk=_html_escape(view["disk"]),
         disk_class=_html_escape(view["disk_class"]),
         disk_hint=_html_escape(view["disk_hint"]),

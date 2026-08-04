@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
@@ -34,6 +35,11 @@ SCOPE_NAMED_PATH = "named_path"
 SCOPE_HEURISTIC = "heuristic"
 SCOPE_BACKUP_SOURCES = "backup_sources"
 SCOPE_MISSING = "missing"
+
+# How the active world artifact is stored on disk (drives upload apply mode).
+KIND_FILE = "file"
+KIND_DIRECTORY = "directory"
+KIND_UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,9 @@ class ActiveWorld:
     scope: str
     sources: list[str] = field(default_factory=list)
     expected_paths: list[str] = field(default_factory=list)
+    # file | directory | unknown — from live path, else from path naming
+    # (suffix ⇒ file, bare name ⇒ directory). Used for upload restore mode.
+    kind: str = KIND_UNKNOWN
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -94,8 +103,74 @@ class ActiveWorld:
             "scope": self.scope,
             "sources": list(self.sources),
             "expected_paths": list(self.expected_paths),
+            "kind": self.kind,
         }
         return payload
+
+
+def infer_world_kind(path: str | Path | None) -> str:
+    """Infer file vs directory from an existing path or a configured path name.
+
+    Games declare templates like ``{name}.zip`` (single-file save) or ``{name}``
+    (folder save). Upload restore uses this — not the upload's extension alone.
+    """
+
+    if path is None or str(path).strip() == "":
+        return KIND_UNKNOWN
+    p = Path(path)
+    try:
+        if p.is_file():
+            return KIND_FILE
+        if p.is_dir():
+            return KIND_DIRECTORY
+    except OSError:
+        pass
+    # Missing / not created yet: basename with a suffix ⇒ file artifact.
+    name = p.name
+    if not name or name in {".", ".."}:
+        return KIND_UNKNOWN
+    if p.suffix:
+        return KIND_FILE
+    return KIND_DIRECTORY
+
+
+def world_upload_accepts(active: ActiveWorld) -> dict[str, object]:
+    """UI hints for whether / how an HTTP world upload can be applied."""
+
+    kind = active.kind if active.kind in {KIND_FILE, KIND_DIRECTORY} else infer_world_kind(
+        active.path
+    )
+    uploadable = (
+        kind in {KIND_FILE, KIND_DIRECTORY}
+        and active.scope in {SCOPE_NAMED_PATH, SCOPE_HEURISTIC, SCOPE_MISSING}
+        and bool(active.path)
+    )
+    if kind == KIND_DIRECTORY:
+        accept = ".zip,application/zip"
+        mode = "extract_zip_into_directory"
+        hint = "Upload a .zip of the world folder contents (extracted into the save directory)."
+    elif kind == KIND_FILE:
+        suffix = Path(active.path or "").suffix.lower()
+        if suffix == ".zip":
+            accept = ".zip,application/zip"
+            mode = "replace_file"
+            hint = "Upload the world save file (this game stores the world as a single .zip)."
+        else:
+            accept = f"{suffix},application/octet-stream" if suffix else "*/*"
+            mode = "replace_file"
+            hint = "Upload the world save file (replaces the configured save file as-is)."
+    else:
+        accept = ""
+        mode = "unavailable"
+        hint = "World upload needs a named file or folder save path from the game plugin."
+        uploadable = False
+    return {
+        "uploadable": uploadable,
+        "kind": kind,
+        "mode": mode,
+        "accept": accept,
+        "hint": hint,
+    }
 
 
 def backup_sources_for(plugin: Any, data_dir: str | None = None) -> list[str]:
@@ -152,6 +227,7 @@ def locate_active_world(
             scope=SCOPE_MISSING,
             sources=[],
             expected_paths=[],
+            kind=KIND_UNKNOWN,
         )
 
     # strategy == backup_sources (or unknown handled at parse time)
@@ -223,6 +299,7 @@ def _locate_named_path(
                 scope=SCOPE_NAMED_PATH,
                 sources=[str(path)],
                 expected_paths=expected,
+                kind=infer_world_kind(path),
             )
     return None
 
@@ -255,6 +332,7 @@ def _missing_named(
             scope=SCOPE_MISSING,
             sources=[],
             expected_paths=expected,
+            kind=infer_world_kind(expected[0]),
         )
     if _any_exists(backup_sources):
         LOG.debug(
@@ -268,6 +346,7 @@ def _missing_named(
         scope=SCOPE_MISSING,
         sources=[],
         expected_paths=[],
+        kind=KIND_UNKNOWN,
     )
 
 
@@ -287,14 +366,18 @@ def _from_backup_sources(sources: list[str]) -> ActiveWorld:
             scope=SCOPE_MISSING,
             sources=[],
             expected_paths=[],
+            kind=KIND_UNKNOWN,
         )
+    single = existing[0] if len(existing) == 1 else None
     return ActiveWorld(
         bytes=total,
-        path=existing[0] if len(existing) == 1 else None,
+        path=single,
         label="world data",
         scope=SCOPE_BACKUP_SOURCES,
         sources=existing,
         expected_paths=[],
+        # Whole backup roots are not a named save artifact — refuse upload apply.
+        kind=KIND_UNKNOWN,
     )
 
 
@@ -409,3 +492,179 @@ def prepare_world_download(
             cleanup_path=tmp_path,
         )
     return None
+
+
+def resolve_upload_target(
+    active: ActiveWorld,
+    *,
+    data_dir: str | Path,
+) -> tuple[Path, str]:
+    """Return ``(target_path, kind)`` for an HTTP world upload, or raise."""
+
+    meta = world_upload_accepts(active)
+    if not meta["uploadable"]:
+        raise RuntimeError(str(meta["hint"]))
+    kind = str(meta["kind"])
+    target = confined_world_path(active.path, data_dir=data_dir)
+    if target is None:
+        raise RuntimeError("world upload target is outside the data directory")
+    return target, kind
+
+
+def apply_world_upload(
+    active: ActiveWorld,
+    upload_path: str | Path,
+    *,
+    data_dir: str | Path,
+) -> dict[str, Any]:
+    """Replace the active world artifact from an uploaded file.
+
+    Mode is chosen from the **configured/live world kind**, not from guessing
+    the upload alone:
+
+    - ``file`` — write upload bytes to the target path (game's single-file save,
+      which may itself be a ``.zip``)
+    - ``directory`` — clear the target directory in place, then extract a zip
+      into it (game's folder save)
+
+    Caller owns process stop/start and the pre-restore safety backup of backup
+    sources. This only mutates the active world artifact (+ sibling expected
+    paths that would confuse the locator).
+    """
+
+    upload = Path(upload_path)
+    if not upload.is_file() or upload.stat().st_size < 1:
+        raise RuntimeError("uploaded world file is missing or empty")
+
+    target, kind = resolve_upload_target(active, data_dir=data_dir)
+    LOG.info(
+        "Applying world upload %s → %s (kind=%s, mode=%s)",
+        upload.name,
+        target,
+        kind,
+        world_upload_accepts(active)["mode"],
+    )
+
+    if kind == KIND_FILE:
+        _remove_sibling_expected_paths(active, keep=target, data_dir=data_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
+        tmp = target.with_name(f".{target.name}.upload-tmp")
+        try:
+            shutil.copyfile(upload, tmp)
+            tmp.replace(target)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {
+            "ok": True,
+            "mode": "replace_file",
+            "path": str(target),
+            "bytes": target.stat().st_size,
+            "kind": kind,
+        }
+
+    if kind == KIND_DIRECTORY:
+        if not zipfile.is_zipfile(upload):
+            raise RuntimeError(
+                "this game uses a folder world save; upload a .zip of that folder"
+            )
+        _remove_sibling_expected_paths(active, keep=target, data_dir=data_dir)
+        target.mkdir(parents=True, exist_ok=True)
+        # Clear contents in place (preserve directory ownership/mode).
+        for child in list(target.iterdir()):
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        _extract_zip_into_directory(upload, target)
+        return {
+            "ok": True,
+            "mode": "extract_zip_into_directory",
+            "path": str(target),
+            "bytes": path_total_bytes(target),
+            "kind": kind,
+        }
+
+    raise RuntimeError(f"unsupported world kind for upload: {kind}")
+
+
+def _remove_sibling_expected_paths(
+    active: ActiveWorld,
+    *,
+    keep: Path,
+    data_dir: str | Path,
+) -> None:
+    """Drop alternate expected artifacts (e.g. zip ↔ folder) so locate stays clean."""
+
+    keep_resolved = keep.resolve()
+    for raw in active.expected_paths:
+        other = confined_world_path(raw, data_dir=data_dir)
+        if other is None:
+            continue
+        try:
+            if other.resolve() == keep_resolved:
+                continue
+        except OSError:
+            continue
+        if not other.exists():
+            continue
+        LOG.info("Removing alternate world path before upload apply: %s", other)
+        if other.is_dir() and not other.is_symlink():
+            shutil.rmtree(other)
+        else:
+            other.unlink()
+
+
+def _extract_zip_into_directory(archive: Path, target: Path) -> None:
+    """Extract zip members under ``target``, rejecting path traversal."""
+
+    root = target.resolve()
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = [n for n in zf.namelist() if n and not n.endswith("/")]
+        if not names:
+            raise RuntimeError("uploaded zip has no files")
+        strip_prefix = _single_top_level_dir_prefix(zf.namelist())
+        for info in zf.infolist():
+            name = info.filename
+            if not name or name.endswith("/"):
+                continue
+            member = name
+            if strip_prefix and member.startswith(strip_prefix):
+                member = member[len(strip_prefix) :]
+            if not member or member.startswith("/") or ".." in Path(member).parts:
+                raise ValueError(f"refusing unsafe zip member: {name}")
+            out = (target / member).resolve()
+            try:
+                out.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"refusing zip member outside target: {name}") from exc
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, out.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+
+def _single_top_level_dir_prefix(names: list[str]) -> str | None:
+    """If every entry lives under one top-level folder, return that prefix."""
+
+    tops: set[str] = set()
+    for name in names:
+        cleaned = name.lstrip("/").replace("\\", "/")
+        if not cleaned or cleaned in {".", ".."}:
+            continue
+        first = cleaned.split("/", 1)[0]
+        if first in {".", ".."}:
+            return None
+        tops.add(first)
+        if len(tops) > 1:
+            return None
+    if len(tops) != 1:
+        return None
+    top = next(iter(tops))
+    # Only strip when it is a directory prefix (not a single file at root).
+    has_nested = any(
+        n.replace("\\", "/").lstrip("/").startswith(top + "/") for n in names
+    )
+    if not has_nested:
+        return None
+    return top + "/"
