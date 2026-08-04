@@ -158,39 +158,102 @@ class ProcessManager:
                     self.on_line = None
 
     def stop(self, timeout: float | None = None) -> None:
+        """Stop the game process as gracefully as the timeout allows.
+
+        Sequence (all within ``timeout``):
+        1. Send plugin stdin stop commands (``save`` / ``exit``) when configured
+        2. Wait for a voluntary exit
+        3. Escalate to SIGTERM, then SIGKILL only if still running
+
+        Home Assistant uses the add-on ``timeout`` (max 300s) as the Docker
+        stop grace period. Keep this game-stop budget below that so supervisor
+        cleanup after the game exits can still finish before SIGKILL.
+        """
+
         timeout = (
             float(timeout)
             if timeout is not None
             else float(
-                self.config.stop_timeout_seconds or self.plugin.stop_timeout_seconds or 60
+                self.config.stop_timeout_seconds
+                or self.plugin.stop_timeout_seconds
+                or 60
             )
         )
+        timeout = max(5.0, timeout)
         with self._lock:
             self.intentional_stop = True
             proc = self.proc
         if proc is None:
             return
-        if proc.poll() is None:
-            LOG.info("Stopping server pid=%s gracefully", proc.pid)
-            # Optional console save/exit commands before SIGTERM.
-            if proc.stdin and self.plugin.stop_stdin_commands:
+        if proc.poll() is not None:
+            self.last_exit_code = proc.returncode
+            self.last_stopped_at = time.time()
+            with self._lock:
+                self.proc = None
+            return
+
+        deadline = time.time() + timeout
+        # Spend most of the budget waiting for save/exit. Escalate late so HA's
+        # Docker stop grace (add-on timeout, ≤300s) is not burned on SIGKILL.
+        term_budget = min(30.0, max(5.0, timeout * 0.12))
+        kill_budget = min(10.0, max(3.0, timeout * 0.05))
+        escalate_budget = term_budget + kill_budget
+        if escalate_budget > timeout * 0.45:
+            escalate_budget = max(3.0, timeout * 0.4)
+            term_budget = escalate_budget * 0.7
+            kill_budget = escalate_budget - term_budget
+        graceful_deadline = deadline - escalate_budget
+
+        LOG.info(
+            "Stopping server pid=%s gracefully (timeout=%.0fs)",
+            proc.pid,
+            timeout,
+        )
+        if proc.stdin and self.plugin.stop_stdin_commands:
+            try:
+                for command in self.plugin.stop_stdin_commands:
+                    LOG.info("Sending stop command via stdin: %s", command)
+                    proc.stdin.write(command + "\n")
+                    proc.stdin.flush()
+                    # Brief pause so save can start before exit is sent.
+                    time.sleep(1)
                 try:
-                    for command in self.plugin.stop_stdin_commands:
-                        LOG.info("Sending stop command via stdin: %s", command)
-                        proc.stdin.write(command + "\n")
-                        proc.stdin.flush()
-                        time.sleep(1)
-                except (BrokenPipeError, OSError):
-                    LOG.warning("Failed writing stop commands to stdin", exc_info=True)
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            except (BrokenPipeError, OSError):
+                LOG.warning("Failed writing stop commands to stdin", exc_info=True)
+
+        # Prefer voluntary exit after stdin commands (no signal yet).
+        remaining = max(0.1, graceful_deadline - time.time())
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            LOG.warning(
+                "Server still running after graceful wait; sending SIGTERM"
+            )
             try:
                 proc.send_signal(signal.SIGTERM)
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                LOG.warning("Server did not exit after SIGTERM; killing")
-                proc.kill()
-                proc.wait(timeout=10)
             except ProcessLookupError:
                 pass
+            term_wait = max(0.5, min(term_budget, deadline - time.time() - kill_budget))
+            try:
+                proc.wait(timeout=term_wait)
+            except subprocess.TimeoutExpired:
+                LOG.warning("Server did not exit after SIGTERM; killing")
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=max(0.5, min(kill_budget, deadline - time.time())))
+                except subprocess.TimeoutExpired:
+                    LOG.error("Server did not exit after SIGKILL")
+            except ProcessLookupError:
+                pass
+        except ProcessLookupError:
+            pass
+
         self.last_exit_code = proc.returncode
         self.last_stopped_at = time.time()
         with self._lock:

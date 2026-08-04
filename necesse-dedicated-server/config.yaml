@@ -83,5 +83,6 @@ backup_exclude:
   - "game/**"
 watchdog: http://[HOST]:[PORT:8099]/healthz
 # Supervisor hard-caps timeout at 300. Values above that make the app vanish from the store.
-# First SteamCMD download can still take longer; the process keeps running after start.
+# Used for Docker start *and* stop grace (SIGTERM → wait → SIGKILL). Keep game
+# stop_timeout_seconds below this so post-quit supervisor cleanup can finish.
 timeout: 300
