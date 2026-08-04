@@ -7,7 +7,7 @@
   - Folder worlds: require a `.zip` and extract into the save directory
   - Upload controls styled like other action buttons and placed with backup restore
 - Generic `world_save` locator exposes `kind` / upload hints for any game plugin
-- Remove the “restart waits until nobody is online” banner when player tracking is already working
+- Remove the Ingress update “waits until nobody is online” note (and related copy) entirely
 
 ## 2.1.26
 

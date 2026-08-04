@@ -271,7 +271,7 @@ HTML_PAGE = """<!DOCTYPE html>
       text-overflow: ellipsis;
       white-space: nowrap;
     }}
-    .sub:empty, .sub.warn:empty {{ display: none; margin: 0; }}
+    .sub:empty {{ display: none; margin: 0; }}
     select {{
       background: rgba(0,0,0,0.28);
       color: var(--ink);
@@ -326,7 +326,6 @@ HTML_PAGE = """<!DOCTYPE html>
     .tag.active {{ border-color: var(--good); color: var(--good); }}
     .tag.dry_run {{ border-color: var(--accent); color: var(--accent); }}
     .tag.stale {{ border-color: var(--bad); color: var(--bad); }}
-    .warn {{ color: var(--accent); }}
     code {{ color: var(--ink); }}
     .hidden {{ display: none !important; }}
     .recent-matches {{
@@ -393,7 +392,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-disk">{disk_hint}</div>
       </div>
     </div>
-    <p class="sub warn" id="update-players-note">{update_players_note}</p>
     <div class="actions" id="update-actions">
       <button type="button" id="btn-force-update" onclick="return forceUpdate(event)">
         Update game server now
@@ -692,10 +690,6 @@ HTML_PAGE = """<!DOCTYPE html>
           disk.className = 'value ' + (u.disk_class || '');
         }}
         setText('h-disk', u.disk_hint);
-        const note = document.getElementById('update-players-note');
-        if (note) {{
-          note.textContent = u.update_players_note || '';
-        }}
         setHtml('pattern-rows', u.pattern_rows);
         setText('highlights', u.highlights);
         const sel = document.getElementById('capture-select');
@@ -1499,7 +1493,6 @@ def _ui_view(
         if players_known
         else "Unknown until player patterns are promoted"
     )
-    waits = status.get("waits_for_empty_server") or status.get("player_gating")
     debug_mode = bool(status.get("debug_mode"))
     # Hero "Number of players" only when an *active* player_count pattern exists
     # (or debug mode). Active join/leave still drive update-when-empty; they do
@@ -1508,23 +1501,6 @@ def _ui_view(
     has_active_player_count = "player_count" in active_categories
     players_card_hidden = (not debug_mode) and (not has_active_player_count)
     log_watch_hidden = not debug_mode
-    # Only surface a note when empty-server waiting cannot work yet.
-    # When join/leave tracking is healthy, stay quiet (no internal-mechanics copy).
-    if waits in ("no_player_tracking", "inactive_no_active_patterns"):
-        if log_watch_hidden:
-            update_players_note = (
-                "Updates will not wait for an empty server until player join/leave "
-                "log patterns are configured. Enable Debug mode to inspect dry-run "
-                "pattern hits, or promote patterns in the game plugin."
-            )
-        else:
-            update_players_note = (
-                "Updates will not wait for players to leave until join/leave "
-                "log patterns are promoted from dry-run highlights into the "
-                "game plugin. Steam still checks for newer builds on its schedule."
-            )
-    else:
-        update_players_note = ""
     uptime, uptime_hint = _format_uptime(status)
     game_version, game_version_build, game_version_installed = _format_game_version(
         status
@@ -1567,7 +1543,6 @@ def _ui_view(
         "disk": disk,
         "disk_class": disk_class,
         "disk_hint": disk_hint,
-        "update_players_note": update_players_note,
         # Collapse once any active pattern exists (setup complete enough).
         "log_watch_open": "" if has_active else " open",
         "log_watch_class": "hidden" if log_watch_hidden else "",
@@ -1611,7 +1586,6 @@ _STATUS_HTML_KEYS = (
     "disk",
     "disk_class",
     "disk_hint",
-    "update_players_note",
     "log_watch_open",
     "log_watch_class",
     "pattern_rows",
@@ -1662,7 +1636,6 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         disk=_html_escape(view["disk"]),
         disk_class=_html_escape(view["disk_class"]),
         disk_hint=_html_escape(view["disk_hint"]),
-        update_players_note=_html_escape(view["update_players_note"]),
         log_watch_open=view["log_watch_open"],
         log_watch_class=_html_escape(view.get("log_watch_class") or ""),
         pattern_rows=view["pattern_rows"],

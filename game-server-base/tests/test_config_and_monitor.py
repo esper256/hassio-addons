@@ -1177,21 +1177,6 @@ class StatusFormatTests(unittest.TestCase):
         self.assertTrue(installed.startswith("Installed "))
         self.assertIn("ago", installed)
 
-    def test_update_players_note_avoids_gating_jargon(self) -> None:
-        # Healthy player tracking: no mechanics banner.
-        waiting = _ui_view({"waits_for_empty_server": "yes"}, "Necesse")
-        self.assertEqual(waiting["update_players_note"], "")
-        unknown = _ui_view(
-            {"waits_for_empty_server": "no_player_tracking"}, "Necesse"
-        )
-        self.assertIn("will not wait", unknown["update_players_note"])
-        self.assertNotIn("gating", unknown["update_players_note"].lower())
-        # Legacy player_gating values still map to the same copy.
-        legacy = _ui_view(
-            {"player_gating": "inactive_no_active_patterns"}, "Necesse"
-        )
-        self.assertIn("will not wait", legacy["update_players_note"])
-
     def test_lifecycle_healthz_and_running_label(self) -> None:
         self.assertTrue(healthz_ok({"lifecycle": "running"}))
         self.assertTrue(healthz_ok({"lifecycle": "installing"}))
