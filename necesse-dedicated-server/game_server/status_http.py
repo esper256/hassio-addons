@@ -1405,8 +1405,6 @@ def _format_world_save(status: dict[str, Any]) -> tuple[str, str]:
     value = format_bytes(size)
     if scope == "named_path" and label:
         hint_text = label
-    elif scope == "heuristic" and label:
-        hint_text = f"{label} (heuristic)"
     elif scope == "backup_sources":
         hint_text = label or "World data directory"
     elif label:

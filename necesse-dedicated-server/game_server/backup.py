@@ -29,7 +29,6 @@ from .world_save import (
     KIND_DIRECTORY,
     KIND_FILE,
     SCOPE_BACKUP_SOURCES,
-    SCOPE_HEURISTIC,
     SCOPE_MISSING,
     SCOPE_NAMED_PATH,
     ActiveWorld,
@@ -62,7 +61,7 @@ _LEGACY_TAR_GZ_RE = re.compile(r"\.tar\.gz$", re.IGNORECASE)
 # Pending-restore token: wipe world sources and let the game create a fresh world.
 EMPTY_WORLD = "__empty__"
 
-_NAMED_SCOPES = frozenset({SCOPE_NAMED_PATH, SCOPE_HEURISTIC, SCOPE_MISSING})
+_NAMED_SCOPES = frozenset({SCOPE_NAMED_PATH, SCOPE_MISSING})
 
 
 @dataclass

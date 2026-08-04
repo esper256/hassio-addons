@@ -4,6 +4,7 @@
 
 - Initial Stationeers dedicated-server add-on (Steam app 600760, Unity Linux binary)
 - Docker/compose env options contributed by this plugin (`arg_map` / `settings_map` / templates → `docker_env_keys`), not the base supervisor
+- Shared supervisor has no cross-game world-path heuristic; this plugin declares `world_save.paths`
 - Thin game layer over shared `game-server-base` supervisor (no Java)
 - Debian Trixie image for Stationeers’ glibc requirement
 - Ports: UDP 27016 (game) + UDP 27015 (Steam query); Ingress status UI

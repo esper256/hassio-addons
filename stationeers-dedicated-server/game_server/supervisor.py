@@ -572,7 +572,7 @@ class GameServerSupervisor:
         # Only invoked for active patterns (dry-run candidates never call this).
         # Do NOT stop the game yet — ask Steam whether a newer build exists first.
         # Main loop runs the check, and only then may request_update → orderly
-        # stop (save/exit + stop_timeout) → SteamCMD app_update → restart.
+        # stop (plugin stop_stdin_commands + stop_timeout) → SteamCMD → restart.
         try:
             self.capture_logs("version_mismatch")
         except OSError:
@@ -1067,8 +1067,8 @@ class GameServerSupervisor:
     def run(self) -> int:
         def _signal_handler(signum: int, _frame: Any) -> None:
             # HA/Docker stop: SIGTERM, then SIGKILL after add-on ``timeout`` (≤300s).
-            # Start the game graceful stop immediately so save/exit can use that budget
-            # even if the main loop is blocked in wait()/SteamCMD.
+            # Start the game graceful stop immediately so stdin stop commands
+            # can use that budget even if the main loop is blocked in wait()/SteamCMD.
             LOG.info("Received signal %s; shutting down", signum)
             self._stop.set()
             try:

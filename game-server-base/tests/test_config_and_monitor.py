@@ -65,7 +65,6 @@ from game_server.world_save import (  # noqa: E402
     prepare_world_download,
     world_save_is_downloadable,
 )
-from game_server.world_save_heuristic import heuristic_locate_world  # noqa: E402
 from game_server.steamcmd import (  # noqa: E402
     UpdateCheckResult,
     _app_info_cmd,
@@ -416,10 +415,9 @@ class WorldSaveLocatorTests(unittest.TestCase):
             self.assertEqual(located.bytes, 100)
             self.assertEqual(located.label, "world data")
 
-    def test_heuristic_is_opt_in_only(self) -> None:
+    def test_named_path_does_not_guess_alternate_layouts(self) -> None:
         plugin = load_plugin(FIXTURE)
-        # Default named_path must not consult the heuristic module when templates miss
-        # a non-template layout.
+        # A save outside declared templates must stay missing — no path guessing.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             odd = root / "worlds" / "FamilyWorld.zip"
@@ -432,23 +430,21 @@ class WorldSaveLocatorTests(unittest.TestCase):
             )
             self.assertEqual(located.scope, "missing")
 
-            plugin.world_save = WorldSaveSpec(
-                strategy="named_path",
-                paths=["{data_dir}/saves/worlds/{world_name}.zip"],
-                allow_heuristic_fallback=True,
-            )
-            located = locate_active_world(
-                plugin,
-                {"world_name": "FamilyWorld"},
-                data_dir=str(root),
-            )
-            self.assertEqual(located.scope, "heuristic")
-            self.assertEqual(located.label, "FamilyWorld.zip")
-
-            direct = heuristic_locate_world(root, "FamilyWorld")
-            self.assertIsNotNone(direct)
-            assert direct is not None
-            self.assertEqual(direct.scope, "heuristic")
+            with self.assertRaises(ValueError):
+                WorldSaveSpec.from_dict(
+                    {
+                        "strategy": "heuristic",
+                        "paths": ["{data_dir}/saves/{world_name}"],
+                    }
+                )
+            with self.assertRaises(ValueError):
+                WorldSaveSpec.from_dict(
+                    {
+                        "strategy": "named_path",
+                        "paths": ["{data_dir}/saves/worlds/{world_name}.zip"],
+                        "allow_heuristic_fallback": True,
+                    }
+                )
 
 
 class MonitorTests(unittest.TestCase):

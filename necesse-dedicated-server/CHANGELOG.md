@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.32
+
+- Sync shared supervisor: remove cross-game world-save path heuristic (Necesse already declares `world_save.paths`)
+
 ## 2.1.31
 
 - Sync shared supervisor: Docker/compose game option env keys come from each plugin (`docker_env_keys`), not a hardcoded base allowlist
