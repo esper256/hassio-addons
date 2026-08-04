@@ -1173,12 +1173,12 @@ def _ui_view(
     )
     waits = status.get("waits_for_empty_server") or status.get("player_gating")
     debug_mode = bool(status.get("debug_mode"))
-    player_tracking = bool(log_patterns.get("player_tracking_enabled"))
-    if waits in ("no_player_tracking", "inactive_no_active_patterns"):
-        player_tracking = False
-    # Players card: hide while player_count/join/leave are still dry-run only,
-    # unless debug mode is on (operator is tuning patterns).
-    players_card_hidden = (not debug_mode) and (not player_tracking)
+    # Hero "Number of players" only when an *active* player_count pattern exists
+    # (or debug mode). Active join/leave still drive update-when-empty; they do
+    # not by themselves keep this card visible — that matched the dry-run
+    # player_count discovery UX.
+    has_active_player_count = "player_count" in active_categories
+    players_card_hidden = (not debug_mode) and (not has_active_player_count)
     log_watch_hidden = not debug_mode
     if waits in ("no_player_tracking", "inactive_no_active_patterns"):
         update_players_note = (
