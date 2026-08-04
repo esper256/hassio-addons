@@ -1,40 +1,38 @@
 # esper256 Home Assistant add-ons
 
-Steam-powered dedicated game servers for **Home Assistant OS** (and plain Docker/Portainer).  
-Each game add-on keeps itself updated through SteamCMD, backs up worlds, and restarts after crashes — so a family server does not go stale after a client patch.
+Steam dedicated game servers for **Home Assistant OS** (and plain Docker).  
+Each game app updates through SteamCMD, backs up the world, and can restart after crashes.
 
-## I want to run a game
+## Run a game
 
-Pick the game and follow that guide. Everything you need to install and run it is there.
-
-| Game | Start here |
+| Game | Guide |
 | --- | --- |
 | **Necesse** | [necesse-dedicated-server/README.md](necesse-dedicated-server/README.md) |
 
-### Home Assistant in one line
-
-Recent HAOS calls these **Apps** (formerly Add-ons):
+### Add this repository in Home Assistant
 
 **Settings → Apps → App store → ⋮ → Repositories** → add:
 
-`https://github.com/esper256/hassio-addons`
+```text
+https://github.com/esper256/hassio-addons
+```
 
-Then install the game app from that repository and continue in the game’s README.
+Install the game app from that repository, then follow its README (configure → start → port-forward → join).
 
-Only game folders that contain `config.yaml` appear in the store. `game-server-base/` is shared library code and is **not** an installable app.
+Only folders with `config.yaml` appear in the store. `game-server-base/` is shared supervisor code, not an installable app.
 
-**Architecture:** Necesse is **amd64 only** (SteamCMD). On aarch64 HAOS (many Pis / Home Assistant Green) the store correctly hides it.
+**Architecture:** current Steam games here are **amd64 only**. On aarch64 HAOS the store correctly hides them.
 
-## I want to package a different Steam game
+## Add another Steam game
 
-This repo’s shared supervisor (`game-server-base`) is game-agnostic. Use it when you want another dedicated server on the same update/backup/status machinery.
+The shared supervisor is game-agnostic. Copy an existing game add-on, point `games/game.yaml` at your dedicated server, and keep game identity out of `game-server-base/`.
 
-→ [How to build on game-server-base](game-server-base/README.md)
+→ [How to package a game](game-server-base/README.md)
 
-## Repository layout (optional reading)
+## Layout
 
-| Path | What it is |
+| Path | Role |
 | --- | --- |
-| `necesse-dedicated-server/` | Necesse HA add-on + Docker image (what most people install) |
-| `game-server-base/` | Shared SteamCMD supervisor (no game identity); `sync-into-addons.sh` copies it into game add-ons after base changes |
-| `tests/` | Repo-level checks (HA app `config.yaml` Supervisor rules) |
+| `necesse-dedicated-server/` | Necesse app (what most people install) |
+| `game-server-base/` | Shared SteamCMD supervisor; sync into game apps with `sync-into-addons.sh` |
+| `tests/` | Repo checks for HA app `config.yaml` rules |
