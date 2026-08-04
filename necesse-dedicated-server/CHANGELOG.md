@@ -1,11 +1,14 @@
 # Changelog
 
+## 2.1.17
+
+- Baseline cleanup: explicit `lifecycle` for status/healthz (crash-loop no longer looks healthy forever); `/healthz` uses a cheap snapshot; status reads no longer mutate `local_build_id`; shared privilege helpers; `outside_rotation` safety backups; `html.escape`; dead install-age formatter removed; UI tests assert goals rather than exact copy
+
 ## 2.1.16
 
 - Ingress: restore a world backup with confirm → stop server → save current world as a pre-restore safety copy (outside normal rotation) → replace world → restart
 - Status hero again shows **World save** and **Free disk** cards, grouped at the end
 - Home Assistant notification when backups fail (interval unchanged)
-- Baseline cleanup: explicit `lifecycle` for status/healthz (crash-loop no longer looks healthy forever); `/healthz` uses a cheap snapshot; status reads no longer mutate `local_build_id`; shared privilege helpers; `outside_rotation` safety backups; `html.escape`; dead install-age formatter removed; UI tests assert goals rather than exact copy
 
 ## 2.1.15
 
