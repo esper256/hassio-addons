@@ -218,7 +218,8 @@ HTML_PAGE = """<!DOCTYPE html>
       margin: 0.5rem 0 0.75rem;
     }}
     .actions a, .actions button,
-    .capture-row > a, .capture-row > button {{
+    .capture-row > a, .capture-row > button,
+    label.file-btn {{
       display: inline-block;
       padding: 0.45rem 0.75rem;
       border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -227,6 +228,11 @@ HTML_PAGE = """<!DOCTYPE html>
       text-decoration: none;
       font: inherit;
       cursor: pointer;
+    }}
+    .actions a:hover, .actions button:hover,
+    .capture-row > a:hover, .capture-row > button:hover,
+    label.file-btn:hover {{
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
     }}
     .actions a:disabled, .actions button:disabled,
     .capture-row > a:disabled, .capture-row > button:disabled {{
@@ -238,8 +244,33 @@ HTML_PAGE = """<!DOCTYPE html>
       flex-wrap: wrap;
       gap: 0.6rem;
       align-items: center;
-      margin: 0.5rem 0 1rem;
+      margin: 0.5rem 0 0.65rem;
     }}
+    .capture-row > label:not(.file-btn) {{
+      color: var(--muted);
+      font-size: 0.9rem;
+      min-width: 7.5rem;
+    }}
+    /* Hide native file control; label.file-btn is the visible picker. */
+    .file-input {{
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }}
+    .file-name {{
+      color: var(--muted);
+      font-size: 0.88rem;
+      max-width: min(100%, 18rem);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .sub:empty, .sub.warn:empty {{ display: none; margin: 0; }}
     select {{
       background: rgba(0,0,0,0.28);
       color: var(--ink);
@@ -372,20 +403,23 @@ HTML_PAGE = """<!DOCTYPE html>
     <p class="sub">
       Restore replaces the live world only after you confirm, and only after a
       successful pre-restore safety backup when any world data exists. Choose
-      <strong>NEW WORLD</strong> in the list for an empty world. Archives are
-      deleted only by their family rules: retention profile (scheduled), keep
-      newest (pre-update), or age window (pre-restore).
+      <strong>NEW WORLD</strong> in the list for an empty world, or upload a save
+      below. Archives are deleted only by their family rules: retention profile
+      (scheduled), keep newest (pre-update), or age window (pre-restore).
     </p>
     <div class="capture-row">
-      <label for="backup-select">Saved backups</label>
+      <label for="backup-select">Saved backup</label>
       <select id="backup-select">{backup_options}</select>
       <button type="button" id="btn-restore" onclick="return restoreBackup(event)">
         Restore selected backup
       </button>
     </div>
     <div class="capture-row {world_upload_class}" id="world-upload-row">
-      <label for="world-upload">Upload world save</label>
-      <input type="file" id="world-upload" accept="{world_upload_accept}" />
+      <label for="world-upload-btn">Upload save</label>
+      <input type="file" id="world-upload" class="file-input" accept="{world_upload_accept}"
+             onchange="onWorldUploadChosen()" />
+      <label class="file-btn" id="world-upload-btn" for="world-upload">Choose file</label>
+      <span class="file-name" id="world-upload-name">No file chosen</span>
       <button type="button" id="btn-world-upload" onclick="return uploadWorld(event)">
         Restore from upload
       </button>
@@ -509,6 +543,16 @@ HTML_PAGE = """<!DOCTYPE html>
         if (btn) btn.disabled = false;
       }}
       return false;
+    }}
+    function onWorldUploadChosen() {{
+      const input = document.getElementById('world-upload');
+      const name = document.getElementById('world-upload-name');
+      if (!name) return;
+      if (input && input.files && input.files[0]) {{
+        name.textContent = input.files[0].name;
+      }} else {{
+        name.textContent = 'No file chosen';
+      }}
     }}
     async function uploadWorld(ev) {{
       ev.preventDefault();
@@ -647,7 +691,10 @@ HTML_PAGE = """<!DOCTYPE html>
           disk.className = 'value ' + (u.disk_class || '');
         }}
         setText('h-disk', u.disk_hint);
-        setText('update-players-note', u.update_players_note);
+        const note = document.getElementById('update-players-note');
+        if (note) {{
+          note.textContent = u.update_players_note || '';
+        }}
         setHtml('pattern-rows', u.pattern_rows);
         setText('highlights', u.highlights);
         const sel = document.getElementById('capture-select');
@@ -1460,27 +1507,23 @@ def _ui_view(
     has_active_player_count = "player_count" in active_categories
     players_card_hidden = (not debug_mode) and (not has_active_player_count)
     log_watch_hidden = not debug_mode
+    # Only surface a note when empty-server waiting cannot work yet.
+    # When join/leave tracking is healthy, stay quiet (no internal-mechanics copy).
     if waits in ("no_player_tracking", "inactive_no_active_patterns"):
-        update_players_note = (
-            "Updates will not wait for players to leave until join/leave "
-            "log patterns are promoted from dry-run highlights into the "
-            "game plugin. Steam still checks for newer builds on its schedule."
-        )
+        if log_watch_hidden:
+            update_players_note = (
+                "Updates will not wait for an empty server until player join/leave "
+                "log patterns are configured. Enable Debug mode to inspect dry-run "
+                "pattern hits, or promote patterns in the game plugin."
+            )
+        else:
+            update_players_note = (
+                "Updates will not wait for players to leave until join/leave "
+                "log patterns are promoted from dry-run highlights into the "
+                "game plugin. Steam still checks for newer builds on its schedule."
+            )
     else:
-        update_players_note = (
-            "When a newer build is available, the restart waits until nobody "
-            "is online so players are not interrupted."
-        )
-    if log_watch_hidden and waits in (
-        "no_player_tracking",
-        "inactive_no_active_patterns",
-    ):
-        # Non-debug operators cannot see dry-run highlights; keep the note short.
-        update_players_note = (
-            "Updates will not wait for an empty server until player join/leave "
-            "log patterns are configured. Enable Debug mode to inspect dry-run "
-            "pattern hits, or promote patterns in the game plugin."
-        )
+        update_players_note = ""
     uptime, uptime_hint = _format_uptime(status)
     game_version, game_version_build, game_version_installed = _format_game_version(
         status

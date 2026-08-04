@@ -1178,9 +1178,9 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("ago", installed)
 
     def test_update_players_note_avoids_gating_jargon(self) -> None:
+        # Healthy player tracking: no mechanics banner.
         waiting = _ui_view({"waits_for_empty_server": "yes"}, "Necesse")
-        self.assertIn("nobody is online", waiting["update_players_note"])
-        self.assertNotIn("gating", waiting["update_players_note"].lower())
+        self.assertEqual(waiting["update_players_note"], "")
         unknown = _ui_view(
             {"waits_for_empty_server": "no_player_tracking"}, "Necesse"
         )
