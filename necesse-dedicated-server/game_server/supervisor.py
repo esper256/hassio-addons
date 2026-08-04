@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import steamcmd
-from .backup import BackupManager
+from .backup import BackupManager, EMPTY_WORLD
 from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
 from .log_bridge import configure_logging
@@ -161,14 +161,17 @@ class GameServerSupervisor:
         )
 
     def request_restore(self, archive_name: str) -> dict[str, Any]:
-        """Schedule a world restore from Ingress (runs on the supervisor loop)."""
+        """Schedule a world restore or empty-world reset from Ingress."""
 
-        archive = self.backups.resolve_archive(archive_name)
-        if archive is None:
-            return {
-                "ok": False,
-                "error": f"Backup not found or invalid name: {archive_name}",
-            }
+        empty = str(archive_name or "").strip() == EMPTY_WORLD
+        archive_path: Path | None = None
+        if not empty:
+            archive_path = self.backups.resolve_archive(archive_name)
+            if archive_path is None:
+                return {
+                    "ok": False,
+                    "error": f"Backup not found or invalid name: {archive_name}",
+                }
         with self._restore_lock:
             if self._restore_pending:
                 return {
@@ -180,43 +183,82 @@ class GameServerSupervisor:
                     "ok": False,
                     "error": "An update is already pending; wait for it to finish",
                 }
-            self._restore_pending = archive.name
-        LOG.warning("World restore scheduled from archive %s", archive.name)
+            self._restore_pending = EMPTY_WORLD if empty else archive_path.name
+        if empty:
+            LOG.warning("Empty-world reset scheduled (wipe live world)")
+            return {
+                "ok": True,
+                "message": (
+                    "Empty-world reset scheduled. The server will stop, save the "
+                    "current world as a pre-restore safety copy when there is data "
+                    "to keep, clear the world files, and restart so the game can "
+                    "create a fresh world."
+                ),
+                "archive": None,
+                "empty": True,
+                "restore_pending": True,
+            }
+        assert archive_path is not None
+        LOG.warning("World restore scheduled from archive %s", archive_path.name)
         return {
             "ok": True,
             "message": (
-                f"Restore of {archive.name} scheduled. The server will stop, "
+                f"Restore of {archive_path.name} scheduled. The server will stop, "
                 "save the current world as a pre-restore safety copy (kept outside "
                 "normal backup rotation), replace the world from the archive, "
                 "and restart."
             ),
-            "archive": archive.name,
+            "archive": archive_path.name,
+            "empty": False,
             "restore_pending": True,
         }
 
+    def _create_pre_restore_safety(self) -> Path | None:
+        """Safety-copy the live world before any wipe. Required when data exists."""
+
+        if not self.backups.sources_have_any_data():
+            LOG.info("No world data present; skipping pre-restore safety copy")
+            return None
+        # Bypass min_source_bytes and defer retention prune until after wipe.
+        safety = self.backups.create_safety_backup(reason="safety")
+        if safety is None:
+            raise RuntimeError(
+                self.backups.last_error
+                or self.backups.last_skip_reason
+                or "could not create pre-restore safety backup"
+            )
+        LOG.info("Pre-restore safety copy saved as %s", safety.name)
+        return safety
+
     def _apply_restore(self, archive_name: str) -> None:
-        archive = self.backups.resolve_archive(archive_name)
-        if archive is None:
+        empty = archive_name == EMPTY_WORLD
+        archive = None if empty else self.backups.resolve_archive(archive_name)
+        if not empty and archive is None:
             raise FileNotFoundError(f"backup archive not found: {archive_name}")
 
-        LOG.info("Applying world restore from %s", archive.name)
+        if empty:
+            LOG.info("Applying empty-world reset (clear live world files)")
+        else:
+            assert archive is not None
+            LOG.info("Applying world restore from %s", archive.name)
         self._activity = "restoring"
         try:
             if self.process.running:
                 self.process.stop()
 
             try:
-                safety = self.backups.create_backup(
-                    reason="safety", outside_rotation=True
-                )
-                if safety is None:
-                    raise RuntimeError(
-                        self.backups.last_error
-                        or self.backups.last_skip_reason
-                        or "could not create pre-restore safety backup"
+                safety = self._create_pre_restore_safety()
+                if empty:
+                    result = self.backups.clear_world_sources(
+                        prior_safety_backup=safety
                     )
-                LOG.info("Pre-restore safety copy saved as %s", safety.name)
-                result = self.backups.restore_archive(archive)
+                else:
+                    assert archive is not None
+                    result = self.backups.restore_archive(
+                        archive, prior_safety_backup=safety
+                    )
+                # Retention only after the live world is safely archived + replaced.
+                self.backups.apply_retention()
                 self.last_restore_at = time.time()
                 self.last_restore_error = None
             except Exception as exc:
@@ -238,16 +280,31 @@ class GameServerSupervisor:
 
             self.monitor.reset_session()
             self.process.start(reason="restore")
-            self.notifier.notify(
-                "restored",
-                f"{self.plugin.name}: world restored",
-                (
-                    f"Restored {archive.name}. "
-                    "Previous world kept as a pre-restore safety copy outside "
-                    "normal rotation."
-                ),
-                force=True,
-            )
+            if empty:
+                safety_note = (
+                    f"Previous world kept as {safety.name}."
+                    if safety is not None
+                    else "No prior world data to keep."
+                )
+                self.notifier.notify(
+                    "restored",
+                    f"{self.plugin.name}: empty world reset",
+                    f"Live world cleared for a fresh start. {safety_note}",
+                    force=True,
+                )
+            else:
+                assert archive is not None
+                safety_note = (
+                    f"Previous world kept as {safety.name}."
+                    if safety is not None
+                    else "No prior world data to keep."
+                )
+                self.notifier.notify(
+                    "restored",
+                    f"{self.plugin.name}: world restored",
+                    f"Restored {archive.name}. {safety_note}",
+                    force=True,
+                )
             LOG.info("World restore complete: %s", result)
         finally:
             self._activity = None

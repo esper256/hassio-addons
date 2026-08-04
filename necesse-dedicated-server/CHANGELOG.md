@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.18
+
+- Ingress: **Start new empty world** — same confirm → stop → optional pre-restore safety copy → clear world files → restart flow as restore, but with no archive (game creates a fresh world)
+- Save-game safety: refuse to wipe/replace live world data without a successful safety backup on disk; safety copies skip the "tiny world" skip; retention is the only archive deletion path (removed keep-5 pre-restore prune); restore API requires `confirm:true`
+
 ## 2.1.17
 
 - Baseline cleanup: explicit `lifecycle` for status/healthz (crash-loop no longer looks healthy forever); `/healthz` uses a cheap snapshot; status reads no longer mutate `local_build_id`; shared privilege helpers; `outside_rotation` safety backups; `html.escape`; dead install-age formatter removed; UI tests assert goals rather than exact copy

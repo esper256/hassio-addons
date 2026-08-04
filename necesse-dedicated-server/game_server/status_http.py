@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 from .disk import format_bytes
 from .log_bridge import strip_ansi
 from .version import app_version
+from .backup import EMPTY_WORLD
 
 LOG = logging.getLogger("game_server.status_http")
 
@@ -249,14 +250,18 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restore replaces the live world. The current world is saved first as a
-      pre-restore safety copy kept outside normal backup rotation.
+      Restore / empty-world replace the live world only after you confirm, and only
+      after a successful pre-restore safety backup when any world data exists.
+      Archives are deleted only by the configured retention plan.
     </p>
     <div class="capture-row">
       <label for="backup-select">Saved backups</label>
       <select id="backup-select">{backup_options}</select>
       <button type="button" id="btn-restore" onclick="return restoreBackup(event)">
         Restore selected backup
+      </button>
+      <button type="button" id="btn-empty-world" onclick="return resetEmptyWorld(event)">
+        Start new empty world
       </button>
     </div>
 
@@ -298,7 +303,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
         <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
-        <li>POST <code>api/backups/restore</code> — restore selected archive</li>
+        <li>POST <code>api/backups/restore</code> — <code>{"archive":"…","confirm":true}</code> or <code>{"empty":true,"confirm":true}</code></li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
@@ -329,9 +334,9 @@ HTML_PAGE = """<!DOCTYPE html>
       const ok = window.confirm(
         'Restore this backup over the live world?\\n\\n' +
         name + '\\n\\n' +
-        'The game server will stop. The current world is saved first as a ' +
-        'pre-restore safety copy (kept outside normal backup rotation), then ' +
-        'the selected backup replaces the world and the server restarts.\\n\\n' +
+        'The game server will stop. If any world data exists, it is saved first ' +
+        'as a pre-restore safety copy. Only after that backup succeeds does the ' +
+        'selected archive replace the world; then the server restarts.\\n\\n' +
         'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
@@ -341,7 +346,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const res = await fetch('api/backups/restore', {{
           method: 'POST',
           headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ archive: name }}),
+          body: JSON.stringify({{ archive: name, confirm: true }}),
         }});
         const data = await res.json();
         if (data.ok) {{
@@ -352,6 +357,38 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
       }} catch (e) {{
         alert('Could not schedule restore.');
+      }} finally {{
+        if (btn) btn.disabled = false;
+      }}
+      return false;
+    }}
+    async function resetEmptyWorld(ev) {{
+      ev.preventDefault();
+      const ok = window.confirm(
+        'Start a new empty world?\\n\\n' +
+        'The game server will stop. If any world data exists, it is saved first ' +
+        'as a pre-restore safety copy. Only after that backup succeeds are world ' +
+        'files cleared so the game can create a fresh world on restart.\\n\\n' +
+        'Anyone playing will be disconnected.'
+      );
+      if (!ok) return false;
+      const btn = document.getElementById('btn-empty-world');
+      if (btn) btn.disabled = true;
+      try {{
+        const res = await fetch('api/backups/restore', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ empty: true, confirm: true }}),
+        }});
+        const data = await res.json();
+        if (data.ok) {{
+          alert(data.message || 'Empty-world reset scheduled.');
+          softRefresh();
+        }} else {{
+          alert(data.error || 'Could not schedule empty-world reset.');
+        }}
+      }} catch (e) {{
+        alert('Could not schedule empty-world reset.');
       }} finally {{
         if (btn) btn.disabled = false;
       }}
@@ -573,9 +610,41 @@ class StatusServer:
                     archive = str(
                         payload.get("archive") or payload.get("name") or ""
                     ).strip()
+                    empty = bool(payload.get("empty"))
+                    # Explicit confirm flag — UI confirm() alone is not enough if a
+                    # script POSTs without thinking; require confirm:true in body.
+                    if payload.get("confirm") is not True:
+                        self._json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": (
+                                    "confirmation required: set confirm:true after "
+                                    "the operator acknowledges the world will be replaced"
+                                ),
+                            },
+                        )
+                        return
+                    if empty and archive:
+                        self._json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": "pass either empty:true or an archive name, not both",
+                            },
+                        )
+                        return
+                    if empty:
+                        result = restore_cb(EMPTY_WORLD)
+                        self._json(200 if result.get("ok") else 409, result)
+                        return
                     if not archive:
                         self._json(
-                            400, {"ok": False, "error": "missing archive name"}
+                            400,
+                            {
+                                "ok": False,
+                                "error": "missing archive name (or set empty:true)",
+                            },
                         )
                         return
                     result = restore_cb(archive)
