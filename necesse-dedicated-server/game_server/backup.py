@@ -18,11 +18,18 @@ from .disk import ensure_free_mb, path_total_bytes
 
 LOG = logging.getLogger("game_server.backup")
 
-# Two archive families under backup_dir. Both are only deleted by the configured
-# generational retention plan (never by an ad-hoc "keep N" cap).
+# Three archive families under backup_dir — each pruned by its own rule:
+#   backup-*       scheduled/manual rolling history (generational retention profile)
+#   pre-update-*   single snapshot from the latest game-code update
+#   pre-restore-*  safety copies before restore/empty-world (age window)
 ROTATION_GLOB = "backup-*.tar.gz"
+PRE_UPDATE_GLOB = "pre-update-*.tar.gz"
 PRE_RESTORE_GLOB = "pre-restore-*.tar.gz"
-_ARCHIVE_NAME_RE = re.compile(r"^(backup|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$")
+_ARCHIVE_NAME_RE = re.compile(
+    r"^(backup|pre-update|pre-restore)-[A-Za-z0-9._-]+\.tar\.gz$"
+)
+# Legacy pre-update archives used the rotation prefix with a -pre-update reason.
+_LEGACY_PRE_UPDATE_RE = re.compile(r"^backup-.+-pre-update\.tar\.gz$")
 
 # Pending-restore token: wipe world sources and let the game create a fresh world.
 EMPTY_WORLD = "__empty__"
@@ -30,13 +37,17 @@ EMPTY_WORLD = "__empty__"
 
 @dataclass
 class RetentionPolicy:
-    """Cascading retention: daily → weekly → monthly (optional yearly)."""
+    """Cascading retention: daily → weekly → monthly (optional yearly).
+
+    Also carries how long pre-restore safety copies are kept (days).
+    """
 
     keep_recent: int = 0
     keep_daily: int = 7
     keep_weekly: int = 4
     keep_monthly: int = 12
     keep_yearly: int = 0
+    pre_restore_keep_days: int = 7
     profile: str = "standard"
 
     def describe(self) -> str:
@@ -47,18 +58,21 @@ class RetentionPolicy:
         ]
         if self.keep_yearly:
             parts.append(f"{self.keep_yearly} yearly")
+        parts.append(f"{self.pre_restore_keep_days}d pre-restore")
         return f"{self.profile} ({', '.join(parts)})"
 
 
 # Simple UX: one named profile instead of tuning each tier.
 # Standard matches the common NAS pattern: dailies for a week, weeklies for a
-# month, then monthlies for about a year.
+# month, then monthlies for about a year. Pre-restore safety copies use the
+# same profile: minimal=1d, standard=7d, extended=30d.
 RETENTION_PROFILES: dict[str, RetentionPolicy] = {
     "minimal": RetentionPolicy(
         keep_daily=3,
         keep_weekly=2,
         keep_monthly=3,
         keep_yearly=0,
+        pre_restore_keep_days=1,
         profile="minimal",
     ),
     "standard": RetentionPolicy(
@@ -66,6 +80,7 @@ RETENTION_PROFILES: dict[str, RetentionPolicy] = {
         keep_weekly=4,
         keep_monthly=12,
         keep_yearly=0,
+        pre_restore_keep_days=7,
         profile="standard",
     ),
     "extended": RetentionPolicy(
@@ -73,6 +88,7 @@ RETENTION_PROFILES: dict[str, RetentionPolicy] = {
         keep_weekly=8,
         keep_monthly=24,
         keep_yearly=2,
+        pre_restore_keep_days=30,
         profile="extended",
     ),
 }
@@ -92,7 +108,7 @@ class BackupManager:
         backup_dir: str | Path,
         sources: list[str | Path],
         *,
-        interval_minutes: int = 180,
+        interval_minutes: int = 1440,
         enabled: bool = True,
         retention: RetentionPolicy | None = None,
         min_source_bytes: int = 1024,
@@ -101,6 +117,8 @@ class BackupManager:
     ) -> None:
         self.backup_dir = Path(backup_dir)
         self.sources = [Path(s) for s in sources]
+        # Create cadence for scheduled backups (HA exposes retention profile only;
+        # default daily so create rate matches keep_daily slots).
         self.interval_seconds = max(0, interval_minutes) * 60
         self.enabled = enabled
         self.retention = retention or RetentionPolicy()
@@ -244,7 +262,10 @@ class BackupManager:
         """Create a world archive under backup_dir.
 
         ``outside_rotation=True`` writes a ``pre-restore-*.tar.gz`` safety copy
-        (separate filename family; still pruned only via the retention plan).
+        (age-pruned via the retention profile's ``pre_restore_keep_days``).
+
+        ``reason="pre-update"`` writes ``pre-update-*.tar.gz`` (only the newest
+        of that family is kept).
 
         ``allow_tiny=True`` skips ``min_source_bytes`` (required for pre-wipe
         safety copies — a small world is still worth keeping).
@@ -253,7 +274,7 @@ class BackupManager:
         wipe still depends on the archive that was just created).
         """
 
-        if not self.enabled and not outside_rotation:
+        if not self.enabled and not outside_rotation and reason != "pre-update":
             return None
         self.last_skip_reason = None
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +307,8 @@ class BackupManager:
         safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
         if outside_rotation:
             archive = self.backup_dir / f"pre-restore-{stamp}-{safe_reason}.tar.gz"
+        elif reason == "pre-update":
+            archive = self.backup_dir / f"pre-update-{stamp}.tar.gz"
         else:
             archive = self.backup_dir / f"backup-{stamp}-{safe_reason}.tar.gz"
         LOG.info("Creating backup %s from %s", archive.name, existing)
@@ -320,27 +343,53 @@ class BackupManager:
         )
 
     def apply_retention(self) -> None:
-        """Delete archives that fall outside the configured retention plan.
+        """Delete archives that fall outside each family's retention rule.
 
         This is the only intentional bulk-delete of backup archives.
         """
 
-        self._prune_glob(ROTATION_GLOB)
-        self._prune_glob(PRE_RESTORE_GLOB)
+        self._prune_scheduled_generational()
+        self._prune_pre_update_keep_newest()
+        self._prune_pre_restore_by_age()
 
-    def _prune_glob(self, pattern: str) -> None:
+    def _prune_scheduled_generational(self) -> None:
         archives = sorted(
-            self.backup_dir.glob(pattern),
+            self.backup_dir.glob(ROTATION_GLOB),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
+        # Legacy pre-update files are managed by the pre-update keeper, not here.
+        archives = [p for p in archives if not _LEGACY_PRE_UPDATE_RE.match(p.name)]
         keep = select_generational_keepers(archives, self.retention)
+        self._unlink_except(archives, keep, label="scheduled retention")
+
+    def _prune_pre_update_keep_newest(self) -> None:
+        archives = self.list_pre_update_archives()
+        if len(archives) <= 1:
+            return
+        # Newest last from list_*; keep only the last one.
+        newest = archives[-1]
+        self._unlink_except(archives, {newest}, label="pre-update keep-one")
+
+    def _prune_pre_restore_by_age(self) -> None:
+        archives = self.list_pre_restore_archives()
+        keep_days = max(0, int(self.retention.pre_restore_keep_days))
+        if keep_days <= 0:
+            self._unlink_except(archives, set(), label="pre-restore age")
+            return
+        cutoff = time.time() - (keep_days * 86400)
+        keep = {p for p in archives if p.stat().st_mtime >= cutoff}
+        self._unlink_except(archives, keep, label="pre-restore age")
+
+    def _unlink_except(
+        self, archives: list[Path], keep: set[Path], *, label: str
+    ) -> None:
         for stale in archives:
             if stale in keep:
                 continue
             try:
                 stale.unlink()
-                LOG.info("Pruned old backup %s (retention)", stale.name)
+                LOG.info("Pruned old backup %s (%s)", stale.name, label)
             except OSError:
                 LOG.warning("Failed to prune %s", stale)
 
@@ -350,14 +399,27 @@ class BackupManager:
         self.apply_retention()
 
     def list_archives(self) -> list[Path]:
-        """Return rotatable backup archives oldest → newest."""
+        """Return scheduled/manual backup archives oldest → newest."""
 
         if not self.backup_dir.exists():
             return []
-        return sorted(
-            self.backup_dir.glob(ROTATION_GLOB),
-            key=lambda p: p.stat().st_mtime,
+        archives = [
+            p
+            for p in self.backup_dir.glob(ROTATION_GLOB)
+            if not _LEGACY_PRE_UPDATE_RE.match(p.name)
+        ]
+        return sorted(archives, key=lambda p: p.stat().st_mtime)
+
+    def list_pre_update_archives(self) -> list[Path]:
+        if not self.backup_dir.exists():
+            return []
+        found = list(self.backup_dir.glob(PRE_UPDATE_GLOB))
+        found.extend(
+            p
+            for p in self.backup_dir.glob(ROTATION_GLOB)
+            if _LEGACY_PRE_UPDATE_RE.match(p.name)
         )
+        return sorted(found, key=lambda p: p.stat().st_mtime)
 
     def list_pre_restore_archives(self) -> list[Path]:
         if not self.backup_dir.exists():
@@ -368,23 +430,28 @@ class BackupManager:
         )
 
     def list_restorable_archives(self) -> list[dict[str, Any]]:
-        """Archives the UI may offer for restore (rotation + recent pre-restore)."""
+        """Archives the UI may offer for restore (all three families)."""
 
         items: list[dict[str, Any]] = []
-        for path in list(self.list_archives()) + list(self.list_pre_restore_archives()):
-            try:
-                st = path.stat()
-            except OSError:
-                continue
-            kind = "pre-restore" if path.name.startswith("pre-restore-") else "backup"
-            items.append(
-                {
-                    "name": path.name,
-                    "kind": kind,
-                    "bytes": st.st_size,
-                    "mtime": st.st_mtime,
-                }
-            )
+        families = (
+            (self.list_archives(), "backup"),
+            (self.list_pre_update_archives(), "pre-update"),
+            (self.list_pre_restore_archives(), "pre-restore"),
+        )
+        for paths, kind in families:
+            for path in paths:
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                items.append(
+                    {
+                        "name": path.name,
+                        "kind": kind,
+                        "bytes": st.st_size,
+                        "mtime": st.st_mtime,
+                    }
+                )
         items.sort(key=lambda item: float(item["mtime"]), reverse=True)
         return items
 
@@ -603,7 +670,10 @@ class BackupManager:
                 "keep_weekly": self.retention.keep_weekly,
                 "keep_monthly": self.retention.keep_monthly,
                 "keep_yearly": self.retention.keep_yearly,
+                "pre_restore_keep_days": self.retention.pre_restore_keep_days,
             },
+            "pre_update_count": len(self.list_pre_update_archives()),
+            "pre_restore_count": len(self.list_pre_restore_archives()),
             "min_source_bytes": self.min_source_bytes,
             "min_free_disk_mb": self.min_free_disk_mb,
             "last_backup_at": self.last_backup_at,

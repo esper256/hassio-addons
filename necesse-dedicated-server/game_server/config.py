@@ -54,11 +54,14 @@ class SupervisorConfig:
 
     # Backups
     backup_enabled: bool = True
-    backup_interval_minutes: int = 360
+    # Create cadence for scheduled backups. HA exposes retention profile only;
+    # default daily (1440) so create rate matches keep_daily slots. Env override OK.
+    backup_interval_minutes: int = 1440
     backup_dir: str = "/data/backups"
     backup_on_update: bool = True
     backup_min_source_bytes: int = 1024
     # One UX knob: minimal | standard | extended
+    # (also sets pre-restore safety keep days: 1 / 7 / 30)
     backup_retention: str = "standard"
     backup_max_backoff_minutes: int = 1440
 
@@ -279,7 +282,7 @@ def load_config() -> SupervisorConfig:
         debug_mode=_as_bool(normalized.get("debug_mode"), False),
         backup_enabled=_as_bool(normalized.get("backup_enabled"), True),
         backup_interval_minutes=_as_int(
-            normalized.get("backup_interval_minutes"), 360
+            normalized.get("backup_interval_minutes"), 1440
         ),
         backup_dir=str(normalized.get("backup_dir") or "/data/backups"),
         backup_on_update=_as_bool(normalized.get("backup_on_update"), True),

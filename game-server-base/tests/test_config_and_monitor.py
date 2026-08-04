@@ -571,7 +571,7 @@ class BackupRetentionTests(unittest.TestCase):
             mgr.clear_world_sources(prior_safety_backup=safety)
             self.assertFalse(any(source.iterdir()))
 
-    def test_pre_restore_only_deleted_by_retention_plan(self) -> None:
+    def test_pre_restore_pruned_by_age_not_generational(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             backup_dir = root / "backups"
@@ -586,28 +586,74 @@ class BackupRetentionTests(unittest.TestCase):
                 enabled=True,
                 min_source_bytes=1,
                 retention=RetentionPolicy(
-                    keep_recent=2,
+                    keep_recent=1,
                     keep_daily=0,
                     keep_weekly=0,
                     keep_monthly=0,
                     keep_yearly=0,
+                    pre_restore_keep_days=7,
                     profile="test",
                 ),
             )
-            safeties = []
-            for i in range(5):
-                (source / "save.bin").write_bytes(f"DATA-{i}".encode() * 32)
-                path = mgr.create_safety_backup(reason=f"s{i}")
+            now = time.time()
+            recent = []
+            for i in range(3):
+                (source / "save.bin").write_bytes(f"NEW-{i}".encode() * 32)
+                path = mgr.create_safety_backup(reason=f"new{i}")
                 self.assertIsNotNone(path)
                 assert path is not None
-                os.utime(path, (1_700_000_000 + i, 1_700_000_000 + i))
-                safeties.append(path)
-            # Creating safety copies must not prune older ones yet.
+                os.utime(path, (now - i * 60, now - i * 60))
+                recent.append(path)
+            old = []
+            for i in range(2):
+                (source / "save.bin").write_bytes(f"OLD-{i}".encode() * 32)
+                path = mgr.create_safety_backup(reason=f"old{i}")
+                self.assertIsNotNone(path)
+                assert path is not None
+                # Older than the 7-day keep window.
+                stale = now - (10 * 86400) - i
+                os.utime(path, (stale, stale))
+                old.append(path)
+            # Creating safety copies must not prune yet (prune_after=False).
             self.assertEqual(len(list(backup_dir.glob("pre-restore-*.tar.gz"))), 5)
             mgr.apply_retention()
-            remaining = sorted(backup_dir.glob("pre-restore-*.tar.gz"))
-            self.assertEqual(len(remaining), 2)
-            self.assertEqual({p.name for p in remaining}, {safeties[-1].name, safeties[-2].name})
+            remaining = {p.name for p in backup_dir.glob("pre-restore-*.tar.gz")}
+            self.assertEqual(remaining, {p.name for p in recent})
+            for path in old:
+                self.assertFalse(path.is_file())
+
+    def test_pre_update_keeps_only_newest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backup_dir = root / "backups"
+            source = root / "world"
+            source.mkdir()
+            (source / "save.bin").write_bytes(b"DATA" * 64)
+            mgr = BackupManager(
+                backup_dir,
+                [source],
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            first = mgr.create_backup(reason="pre-update")
+            second = mgr.create_backup(reason="pre-update")
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            assert first is not None and second is not None
+            self.assertTrue(first.name.startswith("pre-update-"))
+            self.assertTrue(second.name.startswith("pre-update-"))
+            remaining = list(backup_dir.glob("pre-update-*.tar.gz"))
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0].name, second.name)
+            # Legacy naming is also pruned down to one newest pre-update.
+            legacy = backup_dir / "backup-20200101T000000Z-pre-update.tar.gz"
+            legacy.write_bytes(b"z" * 80)
+            os.utime(legacy, (1_600_000_000, 1_600_000_000))
+            mgr.apply_retention()
+            pre_updates = mgr.list_pre_update_archives()
+            self.assertEqual(len(pre_updates), 1)
+            self.assertEqual(pre_updates[0].name, second.name)
 
     def test_clear_world_sources_resets_to_scratch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -645,6 +691,9 @@ class BackupRetentionTests(unittest.TestCase):
         self.assertEqual(standard.keep_daily, 7)
         self.assertEqual(standard.keep_weekly, 4)
         self.assertEqual(standard.keep_monthly, 12)
+        self.assertEqual(standard.pre_restore_keep_days, 7)
+        self.assertEqual(retention_from_profile("minimal").pre_restore_keep_days, 1)
+        self.assertEqual(retention_from_profile("extended").pre_restore_keep_days, 30)
         self.assertEqual(retention_from_profile("nope").profile, "standard")
 
     def test_generational_keepers(self) -> None:

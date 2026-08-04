@@ -22,6 +22,9 @@ export PYTHONPATH="${PYTHONPATH:-/opt}"
 export INSTALL_DIR="${INSTALL_DIR:-/data/game}"
 # HA Ingress default port; override for plain Docker if needed.
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
+# Necesse always listens on 14159 inside the container so it matches the
+# published UDP mapping (Network tab remaps the *host* port only).
+export SERVER_PORT=14159
 
 mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game /data/steam-home
 # SteamCMD reads HOME for its log directory; keep it on the persistent volume.
