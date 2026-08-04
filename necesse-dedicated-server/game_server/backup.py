@@ -359,8 +359,7 @@ class BackupManager:
         children in place keeps the original ownership and mode.
 
         File sources are unlinked (parent directory is left alone). Missing
-        sources are left missing — the supervisor re-chowns after restore/reset
-        if a tree had to be recreated by extract or first-time setup.
+        sources are left missing — do not recreate them here.
         """
 
         cleared: list[str] = []
@@ -428,7 +427,6 @@ class BackupManager:
         with self._lock:
             # Clear contents in place when the source is a directory so we do not
             # replace a gameserver-owned inode with a root-owned one before extract.
-            # Extract may still recreate missing trees; caller should re-chown.
             self._clear_source_contents()
 
             LOG.info("Restoring %s into %s", path.name, extract_root)
