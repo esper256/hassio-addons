@@ -1207,6 +1207,61 @@ class StatusFormatTests(unittest.TestCase):
         label, css = _format_running({"lifecycle": "updating"})
         self.assertEqual(label, "updating")
         self.assertEqual(css, "accent")
+        label, css = _format_running({"lifecycle": "updating", "running": True})
+        self.assertEqual(label, "stopping for update")
+        label, css = _format_running({"lifecycle": "restoring", "running": True})
+        self.assertEqual(label, "stopping for restore")
+        label, css = _format_running({"lifecycle": "restoring", "running": False})
+        self.assertEqual(label, "restoring world")
+
+    def test_restore_api_accepts_query_when_body_empty(self) -> None:
+        """Ingress sometimes omits Content-Length; query-string must still work."""
+
+        import http.client
+
+        from game_server.backup import EMPTY_WORLD
+        from game_server.status_http import StatusServer
+
+        seen: list[str] = []
+
+        def restore_cb(name: str) -> dict:
+            seen.append(name)
+            return {"ok": True, "message": "scheduled", "empty": True}
+
+        old = os.environ.pop("SUPERVISOR_TOKEN", None)
+        server = StatusServer(
+            "127.0.0.1",
+            0,
+            lambda: {
+                "running": True,
+                "lifecycle": "running",
+                "monitor": {},
+                "log_patterns": {"patterns": []},
+                "log_captures": [],
+                "backups": {"archive_count": 0, "restorable": []},
+            },
+            game_name="Necesse",
+            restore_callback=restore_cb,
+        )
+        try:
+            server.start()
+            assert server._httpd is not None
+            port = server._httpd.server_address[1]
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.putrequest("POST", "/api/backups/restore?empty=1&confirm=1")
+            conn.putheader("Content-Type", "application/json")
+            # Intentionally no Content-Length and no body (Ingress failure mode).
+            conn.endheaders()
+            resp = conn.getresponse()
+            body = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(resp.status, 200, body)
+            self.assertTrue(body.get("ok"))
+            self.assertEqual(seen, [EMPTY_WORLD])
+            conn.close()
+        finally:
+            server.stop()
+            if old is not None:
+                os.environ["SUPERVISOR_TOKEN"] = old
 
     def test_seconds_until_daily_steam_check_hour(self) -> None:
         now = datetime(2026, 8, 3, 4, 30, 0)
