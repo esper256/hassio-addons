@@ -44,6 +44,8 @@ class GameServerSupervisor:
         self._update_pending = False
         self._update_reason: str | None = None
         self._update_bypass_window = False
+        # Manual UI force: apply even when players are online.
+        self._update_ignore_players = False
         self._update_not_before = 0.0
         self._apply_failures = 0
         self._update_lock = threading.Lock()
@@ -342,16 +344,63 @@ class GameServerSupervisor:
         LOG.warning("Scheduling update due to version mismatch: %s", line)
         self.request_update(reason="version_mismatch", bypass_window=True)
 
-    def request_update(self, reason: str, bypass_window: bool = False) -> None:
+    def request_update(
+        self,
+        reason: str,
+        bypass_window: bool = False,
+        *,
+        ignore_players: bool = False,
+    ) -> None:
         with self._update_lock:
             self._update_pending = True
             self._update_reason = reason
             self._update_bypass_window = self._update_bypass_window or bypass_window
+            self._update_ignore_players = (
+                self._update_ignore_players or ignore_players
+            )
         LOG.info(
-            "Update requested (%s)%s",
+            "Update requested (%s)%s%s",
             reason,
             " [bypass window]" if bypass_window else "",
+            " [may interrupt players]" if ignore_players else "",
         )
+
+    def force_update_now(self) -> dict[str, Any]:
+        """Schedule a Steam update from the web UI, even if players are online.
+
+        Respects a long Steam cooldown (rate-limit style) so a button mash cannot
+        hammer Valve. Short spacing between SteamCMD calls still applies when the
+        main loop runs the update.
+        """
+
+        cooldown = self.steam_gate.cooldown_remaining()
+        if cooldown >= 600:
+            return {
+                "ok": False,
+                "error": (
+                    f"Steam is cooling down for about {int(cooldown)}s after a "
+                    "recent failure or rate limit. Try again later."
+                ),
+                "cooldown_seconds": int(cooldown),
+            }
+        # Clear soft "try later" from a previous apply failure; the Steam gate
+        # still enforces spacing / hard cooldowns.
+        self._update_not_before = 0.0
+        self.request_update(
+            reason="manual",
+            bypass_window=True,
+            ignore_players=True,
+        )
+        online = self._players_online()
+        return {
+            "ok": True,
+            "message": (
+                "Update scheduled. The game server will stop, update from Steam, "
+                "and restart. Anyone playing will be disconnected."
+            ),
+            "update_pending": True,
+            "players_online": online,
+        }
 
     def _within_update_window(self) -> bool:
         start = self.config.update_window_start_hour
@@ -385,7 +434,7 @@ class GameServerSupervisor:
             return False
         if not self._update_bypass_window and not self._within_update_window():
             return False
-        if self.config.update_when_empty_only:
+        if self.config.update_when_empty_only and not self._update_ignore_players:
             online = self._players_online()
             if online is None:
                 # Do not block Steam updates forever when player tracking is not
@@ -584,6 +633,7 @@ class GameServerSupervisor:
             self._update_pending = False
             self._update_reason = None
             self._update_bypass_window = False
+            self._update_ignore_players = False
         self.monitor.reset_session()
         self.process.start(reason="update")
         self.notifier.notify(
@@ -720,6 +770,7 @@ class GameServerSupervisor:
                 game_name=self.plugin.name,
                 log_toolbox=self.log_tools,
                 capture_callback=self.capture_logs,
+                update_callback=self.force_update_now,
                 restore_callback=self.request_restore,
                 backups_provider=lambda: self.backups.list_restorable_archives(),
             )

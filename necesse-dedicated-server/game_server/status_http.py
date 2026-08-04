@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -218,6 +219,11 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
     </div>
     <p class="sub warn" id="update-players-note">{update_players_note}</p>
+    <div class="actions" id="update-actions">
+      <button type="button" id="btn-force-update" onclick="return forceUpdate(event)">
+        Update game server now
+      </button>
+    </div>
 
     <h2>World backups</h2>
     <p class="sub">
@@ -268,6 +274,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <ul>
         <li><a href="api/status">Status JSON</a></li>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
+        <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
         <li>POST <code>api/backups/restore</code> — restore selected archive</li>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
@@ -323,6 +330,31 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
       }} catch (e) {{
         alert('Could not schedule restore.');
+      }} finally {{
+        if (btn) btn.disabled = false;
+      }}
+      return false;
+    }}
+    async function forceUpdate(ev) {{
+      ev.preventDefault();
+      const ok = window.confirm(
+        'Update the game server from Steam now?\\n\\n' +
+        'The server will stop, update, and restart. Anyone playing will be disconnected.'
+      );
+      if (!ok) return false;
+      const btn = document.getElementById('btn-force-update');
+      if (btn) btn.disabled = true;
+      try {{
+        const res = await fetch('api/update', {{ method: 'POST' }});
+        const data = await res.json();
+        if (data.ok) {{
+          alert(data.message || 'Update scheduled.');
+          softRefresh();
+        }} else {{
+          alert(data.error || 'Could not schedule update.');
+        }}
+      }} catch (e) {{
+        alert('Could not schedule update.');
       }} finally {{
         if (btn) btn.disabled = false;
       }}
@@ -413,6 +445,7 @@ class StatusServer:
         game_name: str = "Game",
         log_toolbox=None,
         capture_callback: Callable[[str], dict[str, Any]] | None = None,
+        update_callback: Callable[[], dict[str, Any]] | None = None,
         restore_callback: Callable[[str], dict[str, Any]] | None = None,
         backups_provider: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
@@ -422,6 +455,7 @@ class StatusServer:
         self.game_name = game_name
         self.log_toolbox = log_toolbox
         self.capture_callback = capture_callback
+        self.update_callback = update_callback
         self.restore_callback = restore_callback
         self.backups_provider = backups_provider
         self._httpd: ThreadingHTTPServer | None = None
@@ -432,6 +466,7 @@ class StatusServer:
         game_name = self.game_name
         toolbox = self.log_toolbox
         capture_cb = self.capture_callback
+        update_cb = self.update_callback
         restore_cb = self.restore_callback
         backups_cb = self.backups_provider
 
@@ -486,6 +521,13 @@ class StatusServer:
                         self._json(501, {"error": "log capture unavailable"})
                         return
                     self._json(200, capture_cb("manual"))
+                    return
+                if path == "/api/update":
+                    if update_cb is None:
+                        self._json(501, {"ok": False, "error": "manual update unavailable"})
+                        return
+                    result = update_cb()
+                    self._json(200 if result.get("ok") else 409, result)
                     return
                 if path == "/api/backups/restore":
                     if restore_cb is None:
@@ -598,10 +640,13 @@ class StatusServer:
                     return
 
                 if path == "/api/logs/capture":
-                    if capture_cb is None:
-                        self._json(501, {"error": "log capture unavailable"})
-                        return
-                    self._json(200, capture_cb("manual"))
+                    # GET must not mutate state (CSRF / link-prefetch hazard).
+                    self._json(
+                        405,
+                        {
+                            "error": "Use POST /api/logs/capture to create a capture",
+                        },
+                    )
                     return
 
                 if path == "/api/logs/captures":
@@ -621,12 +666,15 @@ class StatusServer:
                         self._json(404, {"error": "capture not found"})
                         return
                     data = archive.read_bytes()
+                    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", capture_id) or "capture"
                     self._send(
                         200,
                         data,
                         "application/gzip",
                         headers={
-                            "Content-Disposition": f'attachment; filename="{capture_id}.tar.gz"'
+                            "Content-Disposition": (
+                                f'attachment; filename="{safe_name}.tar.gz"'
+                            )
                         },
                     )
                     return
