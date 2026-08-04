@@ -67,13 +67,13 @@ configuration:
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
   backup_enabled:
     name: Enable backups
-    description: Periodically archive /data/world into /data/backups on a daily schedule; history is thinned by the retention profile below.
+    description: Daily backup of the active world save into /data/backups (Necesse copies the world .zip as-is). History is thinned by the retention profile below.
   backup_on_update:
     name: Backup before update
-    description: Create one world backup immediately before applying a Steam update. Only the newest pre-update backup is kept (older ones are removed).
+    description: Back up the world save immediately before a Steam update. Only the newest pre-update backup is kept.
   backup_retention:
     name: Backup retention
-    description: "How backup history is kept. Scheduled archives use daily→weekly→monthly thinning; pre-restore safety copies use the same profile (minimal=1 day, standard=7 days, extended=30 days). Only one pre-update backup is kept."
+    description: "Scheduled history uses daily→weekly→monthly thinning; pre-restore safety copies use the same profile (minimal=1 day, standard=7 days, extended=30 days). Only one pre-update backup is kept."
   min_free_disk_mb:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold.

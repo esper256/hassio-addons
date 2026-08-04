@@ -1,10 +1,10 @@
 # Build a game add-on on `game-server-base`
 
-**Not an installable Home Assistant app.** This folder has no `config.yaml` on purpose so the HAOS App store never lists it. Only thin game add-ons (like Necesse) are installable.
+**Not an installable Home Assistant app** — no `config.yaml` on purpose. Only thin game folders (like Necesse) appear in the App store.
 
-Most people visiting this repository want a **specific game**. If that’s you, start at the [repository README](../README.md) and open that game’s guide (for example [Necesse](../necesse-dedicated-server/README.md)).
+Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse](../necesse-dedicated-server/README.md)).
 
-This document is for the other journey: **you want to run a different Steam dedicated server** on the same supervisor (auto-update, backups, crash restart, HA Ingress/status, Steam rate gate).
+This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
 
 ---
 
@@ -12,111 +12,92 @@ This document is for the other journey: **you want to run a different Steam dedi
 
 `game-server-base` is a **game-agnostic** SteamCMD supervisor. It does not know Necesse — or any other title.
 
-A game add-on is a thin layer around it:
+A game add-on is a thin layer:
 
 1. Vendored copy of `game_server/` (keep in sync with the script below)
-2. One plugin file: `games/game.yaml` (Steam app id, launch command, args, optional log patterns)
-3. Runtime packages the game needs (Java, etc.) in **that** add-on’s Dockerfile
-4. Home Assistant metadata: `config.yaml`, translations, ports, docs
+2. Plugin: `games/game.yaml` (Steam app id, launch command, args, `world_save`, log patterns)
+3. Runtime packages in **that** add-on’s Dockerfile (Java, etc.)
+4. Home Assistant metadata: `config.yaml`, translations, ports, `README.md` / `DOCS.md`
 
-**Hard rule:** do not put game names, Steam app ids, ports, or runtimes into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer instead.
+**Hard rule:** do not put game names, Steam app ids, ports, or runtimes into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer.
 
 ---
 
-## Fast path (copy an existing game)
+## Fast path (copy Necesse)
 
-The Necesse add-on is the reference thin layer:
-
-1. Copy `necesse-dedicated-server/` to something like `mygame-dedicated-server/`.
-2. Edit `games/game.yaml` for your Steam dedicated server (app id, executable, args, data/log dirs).
-3. Change the Dockerfile runtime (drop OpenJDK if you don’t need it; add whatever your binary needs).
-4. Update HA `config.yaml`: name, slug, ports, options/schema for your game flags.
-5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join). Don’t leave a stub that only links elsewhere.
-6. From the repo root, after any supervisor change:
+1. Copy `necesse-dedicated-server/` → e.g. `mygame-dedicated-server/`.
+2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
+3. Adjust the Dockerfile runtime for your binary.
+4. Update HA `config.yaml`: name, slug, ports, options/schema.
+5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join).
+6. After any supervisor change, from the repo root:
 
    ```bash
    ./game-server-base/sync-into-addons.sh
    ```
 
-   Maintainer step on the repo checkout (not part of the Docker build). Copies
-   **only** `game_server/` into each sibling add-on that has `config.yaml` +
-   `games/`. It never overwrites `games/*.yaml`.
+   Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/`. Never overwrites `games/*.yaml`. Not part of the Docker build.
 
-7. Install via the HA add-on repo, or run with Docker using a compose file modeled on Necesse’s.
+7. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on Necesse’s.
 
 ---
 
-## Plugin YAML (the game identity)
+## Plugin YAML (game identity)
 
-Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does this for you).
-
-Minimum useful fields:
+Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does this).
 
 | Field | Purpose |
 | --- | --- |
 | `name` | Display / notification label |
-| `steam_app_id` | SteamCMD app id for the dedicated server |
+| `steam_app_id` | SteamCMD app id |
 | `executable` | argv to launch the server |
-| `install_marker` | File that means “install looks present” (e.g. `Server.jar`) |
-| `arg_map` | Map HA/options keys → CLI flags |
+| `install_marker` | File that means “install looks present” |
+| `arg_map` | HA/options keys → CLI flags |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
-| `stop_stdin_commands` | Optional graceful stop (`save` / `exit`, etc.) |
-| `backup_paths` | What to archive (usually the whole data dir) |
-| `world_save` | Active world artifact for status UI (`strategy: named_path` + `paths` templates). Separate from backups. |
-| `log_patterns` | **Active** regexes (`game_version`, player count, version mismatch, …). Prefer empty until proven, except informational captures like `game_version`. |
+| `stop_stdin_commands` | Optional graceful stop |
+| `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). |
+| `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
+| `log_patterns` | Active regexes (ready, players, version, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
 
-Shape reference (synthetic, not a real game):  
-`game-server-base/tests/fixtures/example.game.yaml`
+Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
-### Log patterns without shooting yourself in the foot
+### Log patterns
 
-- Ship with `log_patterns: {}` until you’ve watched real logs.
-- Built-in generic candidates only **highlight** lines in Ingress (`/api/logs/patterns`); they do not gate players or force updates.
-- Promote a regex into `log_patterns` only after it cleanly matches the real event.
-- If active player patterns are missing, updates will not wait for an empty server (Steam `buildid` checks still run).
+- Ship `log_patterns: {}` until you’ve watched real logs.
+- Generic dry-run candidates only **highlight** in Ingress; they do not gate updates.
+- Promote a regex only after it cleanly matches the real event.
+- Without active join/leave patterns, “update only when empty” cannot wait for players to leave.
 
 ---
 
-## What the supervisor already does for you
+## What the supervisor already provides
 
-You should not re-implement these in game-specific scripts:
-
-- Read HA `/data/options.json` (+ env overrides)
-- SteamCMD install/update with a **rate gate** (serialize, spacing, exponential backoff, cooldowns)
+- HA `/data/options.json` (+ env overrides)
+- SteamCMD install/update with a rate gate (serialize, spacing, backoff)
 - Process supervision, crash restarts, privilege drop to `gameserver`
-- World backups with retention profiles
-- HA Core notifications (no MQTT) + `/data/supervisor/status.json`
-- Ingress/status HTTP and log capture toolkit
-- Mirror useful streams to the HA Logs tab (`[game]`, `[game-log]`, `[steamcmd]`)
-
----
-
-## Local base image (optional)
-
-```bash
-docker build -f game-server-base/Dockerfile -t game-server-base .
-```
-
-The base image has SteamCMD + Python only. A real game still needs its runtime and `GAME_PLUGIN` — that’s why game add-ons have their own Dockerfiles.
-
----
-
-## Layout reminder
-
-| Path | Role |
-| --- | --- |
-| `game-server-base/game_server/` | Shared Python package |
-| `game-server-base/Dockerfile` | Generic base image |
-| `game-server-base/tests/` | Unit tests + synthetic plugin fixture |
-| `game-server-base/games/` | Intentionally empty of real games — plugins live in each add-on |
+- By-kind world backups + retention profiles; Ingress restore / NEW WORLD / upload
+- HA Core notifications + `/data/supervisor/status.json`
+- Ingress status HTTP and log capture toolkit
+- Mirrored streams on the HA Logs tab (`[game]`, `[game-log]`, `[steamcmd]`)
 
 ---
 
 ## Tests
 
 ```bash
-PYTHONPATH=game-server-base python3 game-server-base/tests/test_config_and_monitor.py
+PYTHONPATH=game-server-base python3 -m pytest game-server-base/tests -q
 ```
 
-When you change the supervisor, sync, then rebuild/reinstall the game add-on before expecting HAOS to pick up a new version (version bump lives in that add-on’s `config.yaml`).
+After supervisor changes: sync → bump the game add-on version → rebuild/reinstall.
+
+---
+
+## Layout
+
+| Path | Role |
+| --- | --- |
+| `game-server-base/game_server/` | Shared Python package |
+| `game-server-base/Dockerfile` | Generic SteamCMD + Python image |
+| `game-server-base/tests/` | Unit tests + synthetic plugin |
+| `game-server-base/games/` | Empty on purpose — plugins live in each add-on |

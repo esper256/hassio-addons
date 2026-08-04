@@ -1,7 +1,6 @@
 # Necesse Dedicated Server
 
-This is the documentation shown inside Home Assistant for the **Necesse Dedicated Server** add-on.  
-For the same guide on GitHub (including Docker/Portainer), see [README.md](README.md).
+Documentation shown inside Home Assistant. Full guide (including Docker): [README.md](README.md).
 
 ## Requirements
 
@@ -10,86 +9,49 @@ For the same guide on GitHub (including Docker/Portainer), see [README.md](READM
 
 ## Quick start
 
-1. Set **World name** and a **Server password** on the Configuration tab.
-2. **Start** the app.
-3. Forward the Network UDP port (default **14159**) on your router to this Home Assistant host.
-4. In Necesse, join `your-ha-ip` on that same port.
-5. On the Info tab click **OPEN WEB UI** for status, build id, backups, and log tools (optional: **Show in sidebar**).
+1. Set **World name** and a **Server password** on Configuration.
+2. **Start** the app (first Steam download can take several minutes — watch **Logs**).
+3. Forward Network UDP **14159** on your router to this Home Assistant host.
+4. In Necesse, join `your-ha-ip` on that port.
+5. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
 
-The first start downloads the dedicated server through Steam and can take several minutes. The **Logs** tab begins with `Home Assistant app version: …`, then `[steamcmd]` / `[game]` output. On a cold Steam cache the supervisor first waits until Steam app info is ready, then runs `app_update`.
-
-### OPEN WEB UI vs the Ingress chip
-
-- **OPEN WEB UI** (top of Info, only while the app is started) → the status page.
-- The **Ingress** chip that opens “This app supports ingress for secure access.” → just an explanation, not the UI.
-
-Status is served on internal port **8099** through Home Assistant’s authenticated proxy. No host port is published.
+**OPEN WEB UI** (top of Info, while started) is the status page. The **Ingress** chip that only says the app supports ingress is an explanation, not the UI.
 
 ## Settings that matter
 
 | Setting | What it does |
 | --- | --- |
-| World name | Which world file to load/create |
+| World name | Save/world players join |
 | Server password | Join password |
-| Server slots | Max players |
-| Server MOTD | Message shown on join |
-| Pause when empty | Pause the world with nobody online |
+| Server slots / MOTD | Capacity and welcome text |
+| Pause when empty | Pause with nobody online |
 | Java options | Memory etc. (default `-Xms512M -Xmx2G`) |
-| Update on start | Run SteamCMD when the add-on starts (recommended) |
-| Daily Steam check hour | Local hour to ask Steam once a day for a newer build (default **5**) |
-| Auto-update interval | Only used if the daily hour is cleared (`0` = off; values under 15 become 15) |
-| Update only when empty | When a newer build is ready, wait until nobody is online before restarting |
+| Update on start | SteamCMD when the app starts (recommended) |
+| Daily Steam check hour | Once-a-day Steam check (default **5**) |
+| Update only when empty | Restart for updates only when nobody is online |
 | Backup retention | `minimal` / `standard` / `extended` |
-| HA notifications | Persistent notifications on crash / update failure / version mismatch |
+| HA notifications | Crash / update / version-mismatch alerts |
+| Network → UDP port | Host port players use (default 14159) |
 
-Optional quiet hours: `update_window_start_hour` / `update_window_end_hour`. Leave empty to allow a pending update to restart any time once the server is empty.
+## Backups and restore
 
-## After a Necesse client patch
+Scheduled, pre-update, and pre-restore copies live under `/data/backups`. Necesse worlds are `.zip` files and are backed up as a direct copy of that save.
 
-1. Note the **Build** on Ingress.
-2. Let players try to join.
-3. With defaults, the add-on picks up a newer Steam build and updates when the server is empty.
-4. Confirm Ingress shows a new build and a backup was taken.
-
-## Backups
-
-| Profile | Keeps roughly |
-| --- | --- |
-| `minimal` | 3 daily → 2 weekly → 3 monthly |
-| `standard` (default) | 7 daily → 4 weekly → 12 monthly |
-| `extended` | 7 daily → 8 weekly → 24 monthly → 2 yearly |
-
-Empty/tiny worlds are skipped; failures back off; low free disk blocks backup/update work.
+In **OPEN WEB UI**: restore a listed backup, choose **NEW WORLD**, or **Restore from upload**. A safety copy is kept first when world data exists.
 
 ## Logs
 
-| Where | What you’ll see |
+| Where | Contents |
 | --- | --- |
-| App **Logs** tab | Version banner, then supervisor / `[game]` / `[game-log]` / `[steamcmd]` |
-| **OPEN WEB UI** | Status, pattern hits, raw tail, downloadable captures |
+| App **Logs** | Version banner, supervisor, `[game]`, `[steamcmd]` |
+| **OPEN WEB UI** | Status, restore, raw tail, log captures |
 
-## Where files live
+## Data
 
-```
-/data/game/          # Steam install (Server.jar, …)
-/data/world/         # Necesse world / saves / cfg
-/data/logs/          # game log files
-/data/backups/       # world archives
-/data/supervisor/    # status.json, steam_gate.json, log captures
+```text
+/data/game/   /data/world/   /data/logs/   /data/backups/   /data/supervisor/
 ```
 
-## Notifications
+## Changelog
 
-With **HA notifications** enabled (default), the add-on creates Home Assistant persistent notifications for version mismatch, crashes, and Steam/update failures (Core API via Supervisor — not MQTT).
-
-It also writes `/data/supervisor/status.json` continuously.
-
-## Advanced notes
-
-**Steam safeguards.** SteamCMD is serialized, spaced (≥90s), and exponentially backed off on failure so the add-on cannot tight-loop against Valve. Rate-limit-like responses cool down for hours. State: `/data/supervisor/steam_gate.json`.
-
-**Log patterns.** Ready, game version, and player join/leave are active (promoted from real Necesse logs). Join/leave tracking (SteamID64) lets updates wait until nobody is online before restarting. Version-mismatch patterns stay empty until proven; Ingress dry-run highlights still help discover them.
-
-**Docker / Portainer.** See [README.md](README.md#install-with-docker--portainer).
-
-**Changelog.** [CHANGELOG.md](CHANGELOG.md)
+[CHANGELOG.md](CHANGELOG.md)
