@@ -1160,7 +1160,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertLess(world_i, backups_i)
         self.assertLess(backups_i, disk_i)
         self.assertIn("Recent matches (newest first)", html)
-        self.assertNotIn(">Pattern</th>", html)
+        self.assertIn(">Pattern</th>", html)
         # Default (no debug_mode): log-watch hidden; players hidden without tracking.
         self.assertIn('id="log-watch"', html)
         self.assertIn("hidden", view["log_watch_class"])
