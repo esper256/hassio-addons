@@ -331,15 +331,22 @@ HTML_PAGE = """<!DOCTYPE html>
     .recent-matches {{
       font-size: 0.75rem;
       line-height: 1.35;
-      max-height: 6.8rem;
+      max-height: 9.5rem;
       overflow: auto;
-      max-width: 40rem;
+      max-width: 42rem;
     }}
     .recent-matches div {{
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       color: var(--muted);
+    }}
+    .pattern-cell {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+      max-width: 18rem;
+      word-break: break-all;
     }}
   </style>
 </head>
@@ -350,7 +357,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="grid" id="status-grid">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
       <div class="stat {players_card_class}" id="card-players">
-        <div class="label">Number of players</div>
+        <div class="label" id="l-players">{players_label}</div>
         <div class="value" id="v-players">{players}</div>
         <div class="hint" id="h-players">{players_hint}</div>
       </div>
@@ -434,7 +441,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </p>
       <table>
         <thead>
-          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent possible matches</th></tr>
+          <tr><th>Mode</th><th>Category</th><th>Pattern</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
         </thead>
         <tbody id="pattern-rows">
           {pattern_rows}
@@ -649,6 +656,7 @@ HTML_PAGE = """<!DOCTYPE html>
           running.textContent = u.running;
           running.className = 'value ' + (u.running_class || '');
         }}
+        setText('l-players', u.players_label);
         setText('v-players', u.players);
         setText('h-players', u.players_hint);
         const playersCard = document.getElementById('card-players');
@@ -1482,20 +1490,42 @@ def _ui_view(
         monitor.get("highlighted_lines") or [],
         active_categories=active_categories,
     )
-    players_known = monitor.get("players_known")
-    players = str(monitor.get("player_count")) if players_known else "—"
-    players_hint = (
-        "From active join/leave patterns"
-        if players_known
-        else "Unknown until player patterns are promoted"
-    )
+    players_known = bool(monitor.get("players_known"))
+    tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
+    presence_mode = tracking_mode == "presence"
+    if presence_mode:
+        players_label = "Players"
+        if players_known:
+            present = monitor.get("players_present")
+            if present is None:
+                count = monitor.get("player_count")
+                present = None if count is None else int(count) > 0
+            players = "Players Active" if present else "Idle"
+            players_hint = "From join / leave / empty-server patterns"
+        else:
+            players = "—"
+            players_hint = "Unknown until presence patterns hit"
+    else:
+        players_label = "Number of players"
+        players = str(monitor.get("player_count")) if players_known else "—"
+        players_hint = (
+            "From active join/leave patterns"
+            if players_known
+            else "Unknown until player patterns are promoted"
+        )
     debug_mode = bool(status.get("debug_mode"))
-    # Hero "Number of players" only when an *active* player_count pattern exists
-    # (or debug mode). Active join/leave still drive update-when-empty; they do
-    # not by themselves keep this card visible — that matched the dry-run
-    # player_count discovery UX.
+    # Count mode: show the numeric card when an active player_count pattern exists
+    # (or debug). Presence mode: show Idle/Players Active when any player-tracking
+    # category is active (join/leave/empty/count).
     has_active_player_count = "player_count" in active_categories
-    players_card_hidden = (not debug_mode) and (not has_active_player_count)
+    has_active_presence = bool(
+        active_categories
+        & {"player_join", "player_leave", "players_empty", "player_count"}
+    )
+    if presence_mode:
+        players_card_hidden = (not debug_mode) and (not has_active_presence)
+    else:
+        players_card_hidden = (not debug_mode) and (not has_active_player_count)
     log_watch_hidden = not debug_mode
     uptime, uptime_hint = _format_uptime(status)
     game_version, game_version_build, game_version_installed = _format_game_version(
@@ -1514,6 +1544,7 @@ def _ui_view(
         "subtitle": _format_subtitle(status),
         "running": running_label,
         "running_class": running_class,
+        "players_label": players_label,
         "players": players,
         "players_hint": players_hint,
         "players_card_class": "hidden" if players_card_hidden else "",
@@ -1559,6 +1590,7 @@ _STATUS_HTML_KEYS = (
     "subtitle",
     "running",
     "running_class",
+    "players_label",
     "players",
     "players_hint",
     "players_card_class",
@@ -1608,6 +1640,7 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         subtitle=_html_escape(view["subtitle"]),
         running=_html_escape(view["running"]),
         running_class=_html_escape(view["running_class"]),
+        players_label=_html_escape(view.get("players_label") or "Number of players"),
         players=_html_escape(view["players"]),
         players_hint=_html_escape(view["players_hint"]),
         players_card_class=_html_escape(view.get("players_card_class") or ""),
@@ -1660,8 +1693,11 @@ def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:
     }
 
 
+_RECENT_MATCH_LIMIT = 5
+
+
 def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
-    """Up to 3 newest matching lines for one regex (newest first)."""
+    """Up to 5 newest matching lines for one regex (newest first)."""
 
     recent = item.get("recent_lines")
     lines: list[str]
@@ -1672,31 +1708,39 @@ def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
     else:
         lines = []
     # Deque stores oldest→newest; present newest first.
-    return list(reversed(lines[-3:]))
+    return list(reversed(lines[-_RECENT_MATCH_LIMIT:]))
 
 
-def _format_recent_matches_cell(items: list[dict[str, Any]]) -> str:
-    """Render recent hits from each regex in a collapsed category row."""
+def _format_recent_matches_cell(item: dict[str, Any]) -> str:
+    """Render up to 5 newest hits for a single regex."""
 
-    seen: set[str] = set()
     parts: list[str] = []
-    for item in items:
-        for line in _recent_matches_for_pattern(item):
-            text = strip_ansi(line).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            if len(text) > 160:
-                text = text[:160] + "…"
-            parts.append(f"<div>{_html_escape(text)}</div>")
+    seen: set[str] = set()
+    for line in _recent_matches_for_pattern(item):
+        text = strip_ansi(line).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        if len(text) > 160:
+            text = text[:160] + "…"
+        parts.append(f"<div>{_html_escape(text)}</div>")
     if not parts:
         return ""
     return f"<div class='recent-matches'>{''.join(parts)}</div>"
 
 
+def _format_pattern_snippet(pattern: str, *, limit: int = 72) -> str:
+    text = str(pattern or "").strip()
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return _html_escape(text)
+
+
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
+    """One table row per regex so broad patterns can show several recent hits."""
+
     if not patterns:
-        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
+        return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
     active_categories = _active_pattern_categories(patterns)
     # Hide dry-run rows once that category already has an active pattern.
     visible = [
@@ -1708,48 +1752,34 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
         )
     ]
     if not visible:
-        return "<tr><td colspan='4'>(no patterns to show)</td></tr>"
-
-    by_category: dict[str, list[dict[str, Any]]] = {}
-    for item in visible:
-        category = str(item.get("category") or "") or "(unknown)"
-        by_category.setdefault(category, []).append(item)
-
-    groups: list[dict[str, Any]] = []
-    for category, items in by_category.items():
-        modes = {str(i.get("mode") or "dry_run") for i in items}
-        mode = "active" if "active" in modes else "dry_run"
-        hits = sum(int(i.get("hits") or 0) for i in items)
-        stale = any(bool(i.get("stale")) for i in items if int(i.get("hits") or 0) > 0)
-        groups.append(
-            {
-                "category": category,
-                "mode": mode,
-                "hits": hits,
-                "stale": stale,
-                "items": items,
-            }
-        )
+        return "<tr><td colspan='5'>(no patterns to show)</td></tr>"
 
     ordered = sorted(
-        groups,
+        visible,
         key=lambda item: (
-            0 if item.get("hits") else 1,
-            0 if item.get("mode") == "active" else 1,
+            0 if int(item.get("hits") or 0) else 1,
+            0 if (item.get("mode") or "") == "active" else 1,
             str(item.get("category") or ""),
             -int(item.get("hits") or 0),
+            str(item.get("pattern") or ""),
         ),
     )
     rows = []
-    for group in ordered[:40]:
-        mode = group.get("mode") or "dry_run"
-        stale = " <span class='tag stale'>stale</span>" if group.get("stale") else ""
-        recent = _format_recent_matches_cell(list(group.get("items") or []))
+    for item in ordered[:80]:
+        mode = item.get("mode") or "dry_run"
+        stale = (
+            " <span class='tag stale'>stale</span>"
+            if item.get("stale") and int(item.get("hits") or 0) > 0
+            else ""
+        )
+        recent = _format_recent_matches_cell(item)
         rows.append(
             "<tr>"
             f"<td><span class='tag {mode}'>{mode}</span>{stale}</td>"
-            f"<td>{_html_escape(str(group.get('category') or ''))}</td>"
-            f"<td>{int(group.get('hits') or 0)}</td>"
+            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
+            f"<td class='pattern-cell' title='{_html_escape(str(item.get('pattern') or ''))}'>"
+            f"{_format_pattern_snippet(str(item.get('pattern') or ''))}</td>"
+            f"<td>{int(item.get('hits') or 0)}</td>"
             f"<td>{recent}</td>"
             "</tr>"
         )

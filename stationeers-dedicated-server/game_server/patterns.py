@@ -45,6 +45,11 @@ DEFAULT_CANDIDATE_PATTERNS: dict[str, list[str]] = {
         r"\b\d+\s+players?\s+online\b",
         r"players?\s*[:=]\s*\d+",
     ],
+    "players_empty": [
+        r"\bno (clients|players) connected\b",
+        r"\bserver (is )?empty\b",
+        r"\b0 players?\s+online\b",
+    ],
     # Announce lines only — mismatch/outdated belong in version_mismatch.
     "game_version": [
         r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Promote proven log patterns: game version, client connect/disconnect, “No clients connected”
+- `player_tracking_mode: presence` — Ingress shows Idle / Players Active (no numeric count)
+- Shared supervisor: last 5 regex matches per pattern in the log-watch table
+
 ## 1.0.0
 
 - Initial Stationeers dedicated-server add-on (Steam app 600760, Unity Linux binary)

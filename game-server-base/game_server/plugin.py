@@ -14,6 +14,14 @@ from .world_save import WorldSaveSpec
 _OPTION_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 
+# How player occupancy is interpreted for UI + update-when-empty.
+# count — numeric / named join-leave (Necesse-style)
+# presence — idle vs players-active only (Stationeers-style)
+PLAYER_TRACKING_COUNT = "count"
+PLAYER_TRACKING_PRESENCE = "presence"
+PLAYER_TRACKING_MODES = frozenset({PLAYER_TRACKING_COUNT, PLAYER_TRACKING_PRESENCE})
+
+
 @dataclass
 class LogPatterns:
     """Regex patterns used to interpret game server log output."""
@@ -22,6 +30,8 @@ class LogPatterns:
     player_leave: list[str] = field(default_factory=list)
     version_mismatch: list[str] = field(default_factory=list)
     player_count: list[str] = field(default_factory=list)
+    # Definitive "nobody online" lines (useful for presence-mode games).
+    players_empty: list[str] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     # Human-readable game/server version (e.g. "1.3.1"), not Steam build ids.
     game_version: list[str] = field(default_factory=list)
@@ -80,6 +90,8 @@ class GamePlugin:
     world_save: WorldSaveSpec | None = None
     # Optional Ingress status page CSS color overrides (see status_http.DEFAULT_UI_THEME).
     ui_theme: dict[str, str] = field(default_factory=dict)
+    # count (default) or presence — see PLAYER_TRACKING_* constants.
+    player_tracking_mode: str = PLAYER_TRACKING_COUNT
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GamePlugin":
@@ -92,6 +104,14 @@ class GamePlugin:
         install_marker = data.get("install_marker")
         if not install_marker:
             raise ValueError("Game plugin requires install_marker")
+        tracking_mode = str(
+            data.get("player_tracking_mode") or PLAYER_TRACKING_COUNT
+        ).strip().lower()
+        if tracking_mode not in PLAYER_TRACKING_MODES:
+            raise ValueError(
+                f"Unsupported player_tracking_mode {tracking_mode!r}; "
+                f"expected count or presence"
+            )
         return cls(
             name=data["name"],
             steam_app_id=int(data["steam_app_id"]),
@@ -126,6 +146,7 @@ class GamePlugin:
                 player_leave=list(patterns.get("player_leave") or []),
                 version_mismatch=list(patterns.get("version_mismatch") or []),
                 player_count=list(patterns.get("player_count") or []),
+                players_empty=list(patterns.get("players_empty") or []),
                 ready=list(patterns.get("ready") or []),
                 game_version=list(patterns.get("game_version") or []),
             ),
@@ -140,6 +161,7 @@ class GamePlugin:
             runtime_notes=str(data.get("runtime_notes") or ""),
             world_save=WorldSaveSpec.from_dict(data.get("world_save")),
             ui_theme=_coerce_ui_theme(data.get("ui_theme")),
+            player_tracking_mode=tracking_mode,
         )
 
     def docker_env_keys(self) -> list[str]:

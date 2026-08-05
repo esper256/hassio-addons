@@ -60,8 +60,9 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `stop_stdin_commands` | Optional graceful stop |
 | `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). |
 | `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
-| `log_patterns` | Active regexes (ready, players, version, …). Prefer empty until proven. |
+| `log_patterns` | Active regexes (ready, players, version, `players_empty`, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
+| `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs Players Active) |
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 

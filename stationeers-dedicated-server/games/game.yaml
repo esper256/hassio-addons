@@ -79,13 +79,22 @@ ui_theme:
   glow: "#1a3a55"
   wash: "#071420"
   depth: "#0e2436"
-# Empty until proven against real logs. Dry-run candidates only highlight in Ingress.
-log_patterns: {}
+# Idle vs occupied only — Stationeers logs do not emit a reliable numeric count.
+player_tracking_mode: presence
+# Promoted from real Ingress dry-run highlights.
+log_patterns:
+  # Four-part Stationeers build (avoids Unity "Initialize engine version: …f3").
+  game_version:
+    - '\bVersion\s*:\s*(?P<version>\d+\.\d+\.\d+\.\d+)\b'
+  player_join:
+    - 'Client:\s+(?P<player>.+?)\s+\((?P<steam_id>\d+)\)\.\s+Connected'
+  player_leave:
+    - 'Client disconnected:.*\|\s*(?P<player>\S+)'
+  players_empty:
+    - '\bNo clients connected\b'
 log_pattern_candidates:
   ready:
     - '\bstarted Server\s+\d+'
     - '\bregistered with session #\d+'
   player_join:
     - 'Client (?P<player>.+?) \([^)]+\) is ready'
-  player_leave:
-    - 'Client disconnected:.*\|\s*(?P<player>\S+)'
