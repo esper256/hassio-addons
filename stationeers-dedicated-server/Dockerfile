@@ -58,8 +58,9 @@ RUN useradd -m -u 1000 -s /bin/bash gameserver \
 # ../game-server-base/sync-into-addons.sh on the host after base edits; not a
 # build-time fetch from ../game-server-base).
 COPY game_server /opt/game_server
-# Stationeers-only plugin config
+# Stationeers-only plugin config + HA defaults helper (not part of game_server)
 COPY games/game.yaml /opt/games/game.yaml
+COPY haos_defaults.py /opt/haos_defaults.py
 COPY config.yaml /etc/hassio_app_config.yaml
 COPY run.sh /run.sh
 RUN chmod +x /run.sh \

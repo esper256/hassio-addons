@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Default world / map is **Mars2**; public server-browser listing defaults to **off**
+- Server name is optional; blank → stable `HAOS Stationeers ####` per install
+- Start-condition help text lists common kit ids (DefaultStart / Brutal / …)
+
 ## 1.0.1
 
 - Promote proven log patterns: game version, client connect/disconnect, “No clients connected”

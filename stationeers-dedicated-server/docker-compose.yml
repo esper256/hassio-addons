@@ -21,11 +21,12 @@ services:
       GAME_PLUGIN: /opt/games/game.yaml
       INSTALL_DIR: /data/game
       WORLD_NAME: FamilyStation
-      WORLD_TYPE: Lunar
-      SERVER_NAME: Family Stationeers
+      WORLD_TYPE: Mars2
+      # Leave SERVER_NAME unset/blank for a stable "HAOS Stationeers ####" default.
+      # SERVER_NAME: My Station
       SERVER_PASSWORD: changeme
       SERVER_SLOTS: "10"
-      SERVER_VISIBLE: "true"
+      SERVER_VISIBLE: "false"
       AUTO_SAVE: "true"
       SAVE_INTERVAL: "300"
       AUTO_PAUSE: "true"
