@@ -17,11 +17,12 @@ Stationeers’ Linux dedicated server needs a recent **glibc (2.40+)**. This ima
 2. Install **Stationeers Dedicated Server**
 3. **Configuration** — set at least:
    - **Save name** (default `FamilyStation` — no spaces)
-   - **World / map** (default `Lunar`; used when the save does not exist yet)
+   - **World / map** (default `Mars2`; used when the save does not exist yet)
    - **Server password** (recommended)
+   - Leave **Server name** blank for a stable generated `HAOS Stationeers ####`, and leave **List on server browser** off unless you want a public listing
 4. **Start** the app (first run downloads the server from Steam; can take several minutes — watch **Logs**)
 5. Forward **UDP 27016** (game) and **UDP 27015** (Steam query) on your router to the Home Assistant host
-6. In Stationeers, join via the server browser or direct connect to your HA host IP on port 27016
+6. In Stationeers, join via direct connect to your HA host IP on port 27016 (or the public list if you enabled listing)
 
 ### OPEN WEB UI
 
@@ -35,11 +36,12 @@ That is the status page (build, players when known, world save, backups, restore
 
 | Setting | Notes |
 | --- | --- |
-| Save name / world map / server name / password / slots | What players join |
-| List on server browser | Master-server listing (`ServerVisible`) |
+| Save name / world map / password / slots | What players join (world default `Mars2`) |
+| Server name | Optional; blank → stable `HAOS Stationeers ####` |
+| List on server browser | Public master-server listing (`ServerVisible`; default off) |
 | Pause when empty | Pause simulation with nobody online |
 | Autosave / interval | World persistence (default every 300s) |
-| Difficulty / start condition / location | Optional; only for **new** worlds. If you set condition or location, set difficulty too |
+| Difficulty / start condition / location | Optional; only for **new** worlds. Start condition common values: `DefaultStart`, `DefaultStartCommunity`, `Brutal`, `BrutalCommunity`. If you set condition or location, set difficulty too |
 | Update on start | SteamCMD before launch (recommended) |
 | Daily Steam check hour | Default **5** (5:00am local); clear to use the interval instead |
 | Update only when empty | Wait for nobody online before restarting (needs join/leave detection) |
@@ -49,7 +51,7 @@ That is the status page (build, players when known, world save, backups, restore
 
 Optional quiet hours (`update_window_start_hour` / `end`) further limit when a pending update may restart. Leave empty to allow any time once the server is empty.
 
-Common **world / map** values for new saves: `Lunar`, `Mars2`, `Europa3`, `MimasHerschel`, `Vulcan`, `Venus`.
+Common **world / map** values for new saves: `Mars2` (default), `Lunar`, `Europa3`, `MimasHerschel`, `Vulcan`, `Venus`.
 
 ---
 

@@ -10,11 +10,12 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 
 ## Quick start
 
-1. Set **Save name**, **World / map**, and a **Server password** on Configuration.
-2. **Start** the app (first Steam download can take several minutes — watch **Logs**).
-3. Forward Network UDP **27016** (game) and **27015** (Steam query) on your router to this Home Assistant host.
-4. In Stationeers, join via the server list or `your-ha-ip:27016`.
-5. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
+1. Set **Save name** and a **Server password** on Configuration (world defaults to **Mars2**; leave **Server name** blank for a generated `HAOS Stationeers ####`).
+2. Keep **List on server browser** off unless you want a public listing.
+3. **Start** the app (first Steam download can take several minutes — watch **Logs**).
+4. Forward Network UDP **27016** (game) and **27015** (Steam query) on your router to this Home Assistant host.
+5. In Stationeers, join via direct connect to `your-ha-ip:27016` (or the server list if you enabled public listing).
+6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
 
 **OPEN WEB UI** (top of Info, while started) is the status page. The **Ingress** chip that only says the app supports ingress is an explanation, not the UI.
 
@@ -23,8 +24,11 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 | Setting | What it does |
 | --- | --- |
 | Save name | Folder under `/data/world/saves/` |
-| World / map | Map for a **new** save (e.g. `Lunar`, `Mars2`) |
-| Server name / password / slots | Browser listing and join controls |
+| World / map | Map for a **new** save (default `Mars2`; also `Lunar`, `Europa3`, …) |
+| Server name | Optional; blank → stable `HAOS Stationeers ####` for this install |
+| Password / slots | Join controls |
+| List on server browser | Public master-server listing (default **off**) |
+| Start condition | New worlds only — e.g. `DefaultStart`, `Brutal`, `BrutalCommunity` |
 | Pause when empty | Pause with nobody online |
 | Autosave / interval | World persistence |
 | Update on start | SteamCMD when the app starts (recommended) |

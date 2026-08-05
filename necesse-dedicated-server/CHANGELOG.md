@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.33
+
+- Sync shared supervisor: last 5 regex matches per pattern; optional presence player tracking (Necesse stays on count mode)
+
 ## 2.1.32
 
 - Sync shared supervisor: remove cross-game world-save path heuristic (Necesse already declares `world_save.paths`)

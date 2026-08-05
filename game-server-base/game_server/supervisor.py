@@ -483,6 +483,7 @@ class GameServerSupervisor:
             if self.monitor.player_tracking_enabled
             else "no_player_tracking"
         )
+        player_tracking_mode = self.monitor.player_tracking_mode
         install_meta = steamcmd.read_local_install_meta(
             self.config.install_dir, self.plugin.steam_app_id
         )
@@ -541,6 +542,7 @@ class GameServerSupervisor:
             "waits_for_empty_server": waits_for_empty_server,
             # Same values as waits_for_empty_server (legacy field name).
             "player_gating": waits_for_empty_server,
+            "player_tracking_mode": player_tracking_mode,
             "debug_mode": bool(self.config.debug_mode),
             "steam_gate": self.steam_gate.to_dict(),
             "disk": {
