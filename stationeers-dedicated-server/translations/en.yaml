@@ -4,10 +4,10 @@ configuration:
     description: Stationeers save folder name (no spaces; e.g. FamilyStation). Created under /data/world/saves/ on first start.
   world_type:
     name: World / map
-    description: "Map used when the save does not exist yet. Common values: Lunar, Mars2, Europa3, MimasHerschel, Vulcan, Venus. Legacy maps (moon, mars, …) also work on older branches."
+    description: "Map used when the save does not exist yet. Default Mars2 (Mars). Common values: Mars2, Lunar, Europa3, MimasHerschel, Vulcan, Venus. Legacy maps (moon, mars, …) also work on older branches."
   server_name:
     name: Server name
-    description: Name shown in the in-game server browser.
+    description: "Optional name shown to players / in the server browser. Leave blank to use a stable generated name like HAOS Stationeers 4821 (same digits for this install; different across installs)."
   server_password:
     name: Server password
     description: Password required to join. Leave empty for an open server.
@@ -16,7 +16,7 @@ configuration:
     description: Maximum concurrent players (1–30).
   server_visible:
     name: List on server browser
-    description: Ping the Stationeers master server so this host appears in the in-game list.
+    description: "When on, ping the Stationeers master server so this host appears in the public in-game list. Default off (LAN / direct connect only)."
   auto_save:
     name: Autosave
     description: Periodically save the world while the server runs.
@@ -37,13 +37,13 @@ configuration:
     description: Shared secret so trusted clients can run server commands (must match the client setting). Leave empty to disable.
   difficulty:
     name: Difficulty (new worlds)
-    description: Optional. Creative, Easy, Normal, or Stationeer. Leave empty for the map default. If you set start condition or location, set difficulty too.
+    description: "Optional. Common values: Creative, Easy, Normal, Stationeer. Leave empty for the map default. If you set start condition or location, set difficulty too."
   start_condition:
     name: Start condition (new worlds)
-    description: Optional start-condition id for a new world. Leave empty for the map default. Requires difficulty when set.
+    description: "Optional starting kit / scenario for a new world. Common values: DefaultStart, DefaultStartCommunity, Brutal, BrutalCommunity (Europa maps use EuropaDefault / EuropaDefaultCommunity / EuropaBrutal / EuropaBrutalCommunity). Leave empty for the map default. Requires difficulty when set."
   start_location:
     name: Start location (new worlds)
-    description: Optional spawn-location id for a new world. Leave empty for the map default. Requires difficulty and start condition when set.
+    description: "Optional spawn-location id for a new world (map-specific, e.g. MarsSpawnCanyonOverlook). Leave empty for the map default. Requires difficulty and start condition when set."
   update_on_start:
     name: Update on start
     description: Run SteamCMD before launching the server.

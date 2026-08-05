@@ -39,4 +39,9 @@ else
   echo "No options.json at ${OPTIONS_FILE}; using environment defaults"
 fi
 
+# Blank HA server_name → stable "HAOS Stationeers ####" (per-install salt under /data).
+RESOLVED_SERVER_NAME="$(python3 /opt/haos_defaults.py)"
+export SERVER_NAME="${RESOLVED_SERVER_NAME}"
+echo "Server name: ${SERVER_NAME}"
+
 exec python3 -m game_server --plugin "${GAME_PLUGIN}"
