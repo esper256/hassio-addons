@@ -180,7 +180,10 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(plugin.install_marker, "rocketstation_DedicatedServer.x86_64")
         self.assertEqual(plugin.settings_flag, "-settings")
         self.assertIn("GamePort", plugin.settings_map.values())
-        self.assertEqual(plugin.log_patterns.ready, [])
+        self.assertEqual(plugin.player_tracking_mode, "presence")
+        self.assertTrue(plugin.log_patterns.game_version)
+        self.assertTrue(plugin.log_patterns.player_join)
+        self.assertTrue(plugin.log_patterns.players_empty)
         self.assertEqual(plugin.ui_theme.get("accent"), "#5ec8ff")
         cfg = SupervisorConfig(
             drop_privileges=False,
@@ -225,6 +228,60 @@ class PluginTests(unittest.TestCase):
             cmd[file_idx:noclear_idx],
             ["-file", "start", "FamilyStation", "Lunar"],
         )
+
+
+class StationeersPresenceTests(unittest.TestCase):
+    """Presence-mode tracking from real Stationeers log shapes."""
+
+    def test_join_leave_empty_and_version(self) -> None:
+        plugin = load_plugin(STATIONEERS_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            self.assertTrue(mon.presence_tracking)
+            mon.ingest_stdout_line(
+                "Initialize engine version: 2022.3.62f3 (96770f904ca7)"
+            )
+            self.assertIsNone(mon.state.game_version)
+            mon.ingest_stdout_line("16:49:34: Version : 0.2.6403.27689")
+            self.assertEqual(mon.state.game_version, "0.2.6403.27689")
+            mon.ingest_stdout_line(
+                "16:52:09: Client: TheFrizz (76561197968471340). Connected. 4944 / 4944"
+            )
+            self.assertTrue(mon.state.players_known)
+            self.assertEqual(mon.state.player_count, 1)
+            self.assertIn("TheFrizz", mon.state.players)
+            mon.ingest_stdout_line(
+                "16:52:50: Client disconnected: 382805979229700724 | TheFrizz"
+                "  \tconnectTime: 176.7s, ClientId: 76561197968471340"
+            )
+            self.assertEqual(mon.state.player_count, 0)
+            self.assertEqual(mon.state.players, set())
+            mon.ingest_stdout_line(
+                "16:52:09: Client: TheFrizz (76561197968471340). Connected. 4944 / 4944"
+            )
+            self.assertEqual(mon.state.player_count, 1)
+            mon.ingest_stdout_line(
+                "16:52:50: No clients connected. Will save and pause in 10 seconds."
+            )
+            self.assertEqual(mon.state.player_count, 0)
+            self.assertEqual(mon.state.players, set())
+
+    def test_recent_matches_keep_five_lines(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(ready=[r"\bready\b"])
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            for i in range(7):
+                mon.ingest_stdout_line(f"server ready line {i}")
+            ready_stat = next(
+                p
+                for p in mon.pattern_report()["patterns"]
+                if p["category"] == "ready" and p["mode"] == "active"
+            )
+            self.assertEqual(ready_stat["hits"], 7)
+            self.assertEqual(len(ready_stat["recent_lines"]), 5)
+            self.assertEqual(ready_stat["recent_lines"][0], "server ready line 2")
+            self.assertEqual(ready_stat["recent_lines"][-1], "server ready line 6")
 
 
 class NecessePatternPromotionTests(unittest.TestCase):
@@ -1102,7 +1159,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertLess(crashes_i, world_i)
         self.assertLess(world_i, backups_i)
         self.assertLess(backups_i, disk_i)
-        self.assertIn("Recent possible matches", html)
+        self.assertIn("Recent matches (newest first)", html)
         self.assertNotIn(">Pattern</th>", html)
         # Default (no debug_mode): log-watch hidden; players hidden without tracking.
         self.assertIn('id="log-watch"', html)
@@ -1734,16 +1791,16 @@ class StatusFormatTests(unittest.TestCase):
             },
         ]
         rows = _format_pattern_rows(patterns)
-        # Collapsed by category: one ready row (active), one player_count row.
-        self.assertEqual(rows.count("<tr>"), 2)
+        # One row per regex; dry-run ready hidden because active ready exists.
+        self.assertEqual(rows.count("<tr>"), 3)
         self.assertIn("ready", rows)
         self.assertIn("player_count", rows)
+        self.assertIn("Started server", rows)
         self.assertIn("Started server again", rows)
         self.assertIn("Players online: 2", rows)
         self.assertIn("Online players: 2", rows)
         self.assertIn("recent-matches", rows)
         self.assertNotIn(r"\bready\b", rows)
-        self.assertNotIn("<code>", rows)
         highlights = _format_highlights(
             [
                 {
@@ -1814,13 +1871,14 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(debug["log_watch_class"], "")
         self.assertEqual(debug["players_card_class"], "")
 
-        # Active join/leave alone is not enough — need active player_count (or debug).
+        # Count mode: active join/leave alone is not enough — need player_count.
         join_leave_only = _ui_view(
             {
                 "running": True,
                 "lifecycle": "running",
                 "debug_mode": False,
                 "waits_for_empty_server": "yes",
+                "player_tracking_mode": "count",
                 "log_patterns": {
                     "player_tracking_enabled": True,
                     "patterns": [
@@ -1859,6 +1917,7 @@ class StatusFormatTests(unittest.TestCase):
                 "lifecycle": "running",
                 "debug_mode": False,
                 "waits_for_empty_server": "yes",
+                "player_tracking_mode": "count",
                 "log_patterns": {
                     "player_tracking_enabled": True,
                     "patterns": [
@@ -1877,7 +1936,46 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertTrue(counted["log_watch_hidden"])
         self.assertFalse(counted["players_card_hidden"])
+        self.assertEqual(counted["players_label"], "Number of players")
         self.assertEqual(counted["players"], "1")
+
+        presence = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "waits_for_empty_server": "yes",
+                "player_tracking_mode": "presence",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_join",
+                            "pattern": r"Connected",
+                            "hits": 1,
+                            "recent_lines": ["Client: Pat connected"],
+                        },
+                        {
+                            "mode": "active",
+                            "category": "players_empty",
+                            "pattern": r"No clients connected",
+                            "hits": 1,
+                            "recent_lines": ["No clients connected"],
+                        },
+                    ],
+                },
+                "monitor": {
+                    "players_known": True,
+                    "player_count": 0,
+                    "players_present": False,
+                },
+            },
+            "Stationeers",
+        )
+        self.assertFalse(presence["players_card_hidden"])
+        self.assertEqual(presence["players_label"], "Players")
+        self.assertEqual(presence["players"], "Idle")
 
 
 class ProcessCommandBuildTests(unittest.TestCase):

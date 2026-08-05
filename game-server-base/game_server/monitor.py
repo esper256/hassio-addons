@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .patterns import DEFAULT_CANDIDATE_PATTERNS
-from .plugin import GamePlugin
+from .plugin import PLAYER_TRACKING_PRESENCE, GamePlugin
 
 LOG = logging.getLogger("game_server.monitor")
 
@@ -27,8 +27,8 @@ class PatternStat:
     first_hit_at: float | None = None
     last_hit_at: float | None = None
     last_line: str | None = None
-    # Newest last; UI shows up to these recent hits per regex.
-    recent_lines: deque[str] = field(default_factory=lambda: deque(maxlen=3))
+    # Newest last; Ingress shows up to these recent hits per regex.
+    recent_lines: deque[str] = field(default_factory=lambda: deque(maxlen=5))
 
     def note(self, line: str) -> None:
         now = time.time()
@@ -79,12 +79,15 @@ class MonitorState:
     started_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
+        count = len(self.players) if self.players else self.player_count
         return {
             "players": sorted(self.players),
-            "player_count": (
-                len(self.players)
+            "player_count": count,
+            # True when at least one player is known to be online (count or set).
+            "players_present": (
+                bool(self.players)
                 if self.players
-                else self.player_count
+                else (None if count is None else int(count) > 0)
             ),
             "players_known": self.players_known,
             "ready": self.ready,
@@ -182,7 +185,16 @@ class LogMonitor:
             active.get("player_join")
             or active.get("player_leave")
             or active.get("player_count")
+            or active.get("players_empty")
         )
+
+    @property
+    def player_tracking_mode(self) -> str:
+        return str(getattr(self.plugin, "player_tracking_mode", "count") or "count")
+
+    @property
+    def presence_tracking(self) -> bool:
+        return self.player_tracking_mode == PLAYER_TRACKING_PRESENCE
 
     @property
     def version_mismatch_enabled(self) -> bool:
@@ -334,19 +346,39 @@ class LogMonitor:
                 match.group(1) if match.lastindex else None
             )
             if name:
-                self.state.players.add(name)
+                self.state.players.add(str(name).strip())
             self.state.players_known = True
-            self.state.player_count = len(self.state.players)
+            if self.presence_tracking:
+                # Occupied — exact headcount unknown / unused.
+                self.state.player_count = max(1, len(self.state.players))
+            else:
+                self.state.player_count = len(self.state.players)
 
         if "player_leave" in active_hits:
             match = active_hits["player_leave"]
             name = match.groupdict().get("player") or (
                 match.group(1) if match.lastindex else None
             )
-            if name and name in self.state.players:
-                self.state.players.discard(name)
+            removed = False
+            cleaned = str(name).strip() if name else ""
+            if cleaned and cleaned in self.state.players:
+                self.state.players.discard(cleaned)
+                removed = True
             self.state.players_known = True
-            self.state.player_count = len(self.state.players)
+            if self.presence_tracking:
+                if self.state.players:
+                    self.state.player_count = len(self.state.players)
+                elif removed:
+                    # Last tracked name left → idle.
+                    self.state.player_count = 0
+                # Unknown leave name: keep prior occupancy until players_empty.
+            else:
+                self.state.player_count = len(self.state.players)
+
+        if "players_empty" in active_hits:
+            self.state.players.clear()
+            self.state.player_count = 0
+            self.state.players_known = True
 
         if "player_count" in active_hits:
             match = active_hits["player_count"]
@@ -357,6 +389,8 @@ class LogMonitor:
                 try:
                     self.state.player_count = int(raw)
                     self.state.players_known = True
+                    if self.state.player_count <= 0:
+                        self.state.players.clear()
                 except ValueError:
                     pass
 
@@ -403,6 +437,7 @@ def plugin_patterns_as_dict(plugin: GamePlugin) -> dict[str, list[str]]:
         "player_join": list(patterns.player_join or []),
         "player_leave": list(patterns.player_leave or []),
         "player_count": list(patterns.player_count or []),
+        "players_empty": list(patterns.players_empty or []),
         "game_version": list(patterns.game_version or []),
         "version_mismatch": list(patterns.version_mismatch or []),
     }
