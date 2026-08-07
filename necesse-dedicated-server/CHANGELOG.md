@@ -2,7 +2,7 @@
 
 ## 2.1.36
 
-- Sync shared supervisor: HTTP `package_install` path for non-Steam games; clearer recent game output link; install progress mirrored into status recent-output (Necesse still uses SteamCMD)
+- Sync shared supervisor: HTTP `package_install` path for non-Steam games; recent game output is game process only (Necesse still uses SteamCMD)
 
 ## 2.1.35
 

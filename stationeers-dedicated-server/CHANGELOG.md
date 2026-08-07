@@ -2,7 +2,7 @@
 
 ## 1.0.5
 
-- Sync shared supervisor: HTTP `package_install` path for non-Steam games; clearer recent game output link; install progress mirrored into status recent-output (Stationeers still uses SteamCMD)
+- Sync shared supervisor: HTTP `package_install` path for non-Steam games; recent game output is game process only (Stationeers still uses SteamCMD)
 
 ## 1.0.4
 

@@ -18,7 +18,7 @@ Needs an **amd64** HAOS host. On aarch64 the App store will not offer this app.
    - **Game password** (recommended)
    - Leave **Server name** blank for a stable generated `HAOS Factorio ####`
    - Keep **Public server listing** off unless you add Factorio.com credentials
-4. **Start** the app (first run downloads the headless package from factorio.com — watch **Logs** or OPEN WEB UI → **View recent game output**)
+4. **Start** the app (first run downloads the headless package from factorio.com — watch the app **Logs** tab)
 5. Forward **UDP 34197** on your router to the Home Assistant host
 6. In Factorio → Multiplayer → Connect to address → your HA host IP (port 34197)
 
@@ -68,7 +68,7 @@ Factorio worlds are single `.zip` saves; backups **copy that file as-is**. Older
 
 **Restore (OPEN WEB UI)** — pick a backup or **NEW WORLD** → confirm, or **Restore from upload**. The server stops, keeps a pre-restore safety copy when there is data, replaces the world, and restarts (creating a fresh save after NEW WORLD).
 
-**Logs** — app **Logs** tab for supervisor / download / game; **OPEN WEB UI** → **View recent game output** for the live buffer (and an empty-state hint while idle).
+**Logs** — app **Logs** tab for supervisor / download / game. **OPEN WEB UI** → **View recent game output** is only the running game’s output (empty until the server process is up).
 
 ---
 

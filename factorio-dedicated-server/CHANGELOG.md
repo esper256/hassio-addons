@@ -3,7 +3,7 @@
 ## 1.0.1
 
 - Install from Wube’s **free headless package** (factorio.com), not SteamCMD — anonymous Steam returns “No subscription” for app 427520
-- Shared supervisor: generic `package_install` HTTP archive path + clearer “View recent game output” status link (shows install progress / empty-state hint)
+- Shared supervisor: generic `package_install` HTTP archive path + clearer “View recent game output” link (game process only; install/update stays in the HA Logs tab)
 
 ## 1.0.0
 

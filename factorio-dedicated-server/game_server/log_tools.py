@@ -185,9 +185,9 @@ class LogToolbox:
             "source_label": "Live process output (in memory)",
             "lines": [],
             "empty_hint": (
-                "No game process output yet. During install or update, progress "
-                "appears here as it runs; the Home Assistant app Logs tab also "
-                "shows full supervisor / download / SteamCMD lines."
+                "No game process output yet — this view only shows the running "
+                "game server. For install, update, and supervisor messages, use "
+                "the Home Assistant app Logs tab."
             ),
         }
 

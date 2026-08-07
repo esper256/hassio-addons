@@ -143,18 +143,6 @@ class LogMonitor:
         )
         self._build_patterns()
 
-    def record_activity(self, line: str) -> None:
-        """Append install/update progress for the status page recent-output view.
-
-        Does not run log pattern matching (SteamCMD / package download noise).
-        """
-
-        text = strip_ansi(str(line or "")).rstrip("\n")
-        if not text.strip():
-            return
-        self.state.last_log_line = text
-        self.state.recent_lines.append(text)
-
     def _build_patterns(self) -> None:
         active = plugin_patterns_as_dict(self.plugin)
         candidates = merge_candidates(

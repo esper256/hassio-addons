@@ -748,11 +748,6 @@ class GameServerSupervisor:
             return self.run_ids[0], self.run_ids[1]
         return None, None
 
-    def _activity_line(self, line: str) -> None:
-        """Push install/update progress into the status recent-output buffer."""
-
-        self.monitor.record_activity(line)
-
     def ensure_installed(self) -> None:
         if not self.plugin.uses_package_install:
             steamcmd.ensure_steamcmd(self.config.steamcmd_dir)
@@ -790,7 +785,6 @@ class GameServerSupervisor:
                         self.plugin,
                         force=False,
                         stop_event=self._stop,
-                        on_line=self._activity_line,
                         run_uid=run_uid,
                         run_gid=run_gid,
                     )
@@ -804,7 +798,6 @@ class GameServerSupervisor:
                         stop_event=self._stop,
                         run_uid=run_uid,
                         run_gid=run_gid,
-                        on_line=self._activity_line,
                     )
                 self.last_update_applied_at = time.time()
                 self.last_update_check_at = self.last_update_applied_at
@@ -939,7 +932,6 @@ class GameServerSupervisor:
                         self.plugin,
                         force=True,
                         stop_event=self._stop,
-                        on_line=self._activity_line,
                         run_uid=run_uid,
                         run_gid=run_gid,
                     )
@@ -953,7 +945,6 @@ class GameServerSupervisor:
                         stop_event=self._stop,
                         run_uid=run_uid,
                         run_gid=run_gid,
-                        on_line=self._activity_line,
                     )
                 if self.config.drop_privileges:
                     paths = [self.config.install_dir]

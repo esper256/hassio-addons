@@ -11,7 +11,7 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 
 1. Set **Save name** and a **Game password** on Configuration (leave **Server name** blank for a generated `HAOS Factorio ####`).
 2. Keep **Public server listing** off unless you add Factorio.com username + token.
-3. **Start** the app (first headless package download can take several minutes — watch **Logs** or OPEN WEB UI → **View recent game output**).
+3. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab).
 4. Forward Network UDP **34197** on your router to this Home Assistant host.
 5. In Factorio, Multiplayer → Connect to address → `your-ha-ip:34197` (or LAN browser if LAN visibility is on).
 6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
@@ -45,8 +45,8 @@ In **OPEN WEB UI**: restore a listed backup, choose **NEW WORLD**, or **Restore 
 
 | Where | Contents |
 | --- | --- |
-| App **Logs** | Version banner, supervisor, `[game]`, `[steamcmd]` |
-| **OPEN WEB UI** | Status, restore, raw tail, log captures |
+| App **Logs** | Version banner, supervisor, download / install, `[game]` |
+| **OPEN WEB UI** → **View recent game output** | Running game process output only (empty until the server is up) |
 
 ## Data
 
