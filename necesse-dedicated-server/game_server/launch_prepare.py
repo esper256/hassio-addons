@@ -26,9 +26,39 @@ from .world_save import locate_active_world
 LOG = logging.getLogger("game_server.launch_prepare")
 
 _TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
-_SUPPORTED_FORMATS = frozenset({"json", "ini"})
+_SUPPORTED_FORMATS = frozenset({"json", "ini", "mod_list"})
 _SUPPORTED_WHEN = frozenset({"missing"})
 _SUPPORTED_TYPES = frozenset({"str", "string", "int", "integer", "bool", "boolean", "float"})
+
+
+@dataclass
+class ModListEntry:
+    """One mod toggle for ``format: mod_list`` config files."""
+
+    name: str
+    # Literal enable state when ``enabled_option`` is unset.
+    enabled: bool | None = None
+    # Option key whose truthiness sets enabled (e.g. space_age → DLC mods).
+    enabled_option: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "ModListEntry":
+        if not isinstance(data, dict):
+            raise ValueError("mod_list mods entries must be mappings")
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise ValueError("mod_list mods entry requires name")
+        option = data.get("enabled_option")
+        option_key = str(option).strip() if option is not None and str(option).strip() else None
+        if "enabled" in data and data.get("enabled") is not None:
+            enabled = bool(data.get("enabled"))
+        else:
+            enabled = None
+        if option_key is None and enabled is None:
+            raise ValueError(
+                f"mod_list mod {name!r} requires enabled or enabled_option"
+            )
+        return cls(name=name, enabled=enabled, enabled_option=option_key)
 
 
 @dataclass
@@ -45,6 +75,8 @@ class ConfigFileSpec:
     types: dict[str, str] = field(default_factory=dict)
     # Skip mapped options whose value is None/"".
     omit_empty: bool = True
+    # For format=mod_list: declarative mod enable/disable rows.
+    mods: list[ModListEntry] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Any) -> "ConfigFileSpec":
@@ -56,7 +88,8 @@ class ConfigFileSpec:
         fmt = str(data.get("format") or "json").strip().lower()
         if fmt not in _SUPPORTED_FORMATS:
             raise ValueError(
-                f"Unsupported config_files format {fmt!r}; expected json or ini"
+                f"Unsupported config_files format {fmt!r}; "
+                "expected json, ini, or mod_list"
             )
         fixed = data.get("fixed") or {}
         if not isinstance(fixed, dict):
@@ -76,6 +109,12 @@ class ConfigFileSpec:
                     f"expected str/int/bool/float"
                 )
             types[str(key)] = t
+        mods: list[ModListEntry] = []
+        if fmt == "mod_list":
+            raw_mods = data.get("mods") or []
+            if not isinstance(raw_mods, (list, tuple)) or not raw_mods:
+                raise ValueError("config_files format mod_list requires non-empty mods")
+            mods = [ModListEntry.from_dict(item) for item in raw_mods]
         return cls(
             path=path,
             format=fmt,
@@ -83,6 +122,7 @@ class ConfigFileSpec:
             map={str(k): str(v) for k, v in raw_map.items()},
             types=types,
             omit_empty=bool(data.get("omit_empty", True)),
+            mods=mods,
         )
 
 
@@ -239,6 +279,61 @@ def build_config_payload(
     return payload
 
 
+def _option_truthy(options: Mapping[str, Any], key: str) -> bool:
+    if key not in options:
+        return False
+    value = options[key]
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return bool(value)
+
+
+def build_mod_list_payload(
+    spec: ConfigFileSpec,
+    options: Mapping[str, Any],
+    existing: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build Factorio-style ``{"mods":[{"name","enabled"},…]}``, merging others."""
+
+    by_name: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    if isinstance(existing, Mapping):
+        for item in existing.get("mods") or []:
+            if not isinstance(item, Mapping):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name or name in by_name:
+                continue
+            by_name[name] = {
+                "name": name,
+                "enabled": bool(item.get("enabled", True)),
+            }
+            order.append(name)
+
+    managed: list[str] = []
+    for entry in spec.mods:
+        if entry.enabled_option:
+            enabled = _option_truthy(options, entry.enabled_option)
+        else:
+            enabled = bool(entry.enabled)
+        by_name[entry.name] = {"name": entry.name, "enabled": enabled}
+        managed.append(entry.name)
+        if entry.name not in order:
+            order.append(entry.name)
+
+    # Managed mods first (plugin order), then any preserved extras.
+    final_order = list(managed)
+    for name in order:
+        if name not in final_order:
+            final_order.append(name)
+    return {"mods": [by_name[name] for name in final_order if name in by_name]}
+
+
 def write_config_file(
     spec: ConfigFileSpec,
     options: Mapping[str, Any],
@@ -251,6 +346,23 @@ def write_config_file(
         raise ValueError(f"config_files path rendered empty: {spec.path!r}")
     path = Path(rendered_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    if spec.format == "mod_list":
+        existing: dict[str, Any] | None = None
+        if path.is_file():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                LOG.warning("Ignoring unreadable existing mod list at %s", path)
+        payload = build_mod_list_payload(spec, options, existing)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+        LOG.info("Wrote mod_list config %s", path)
+        return path
+
     payload = build_config_payload(spec, options, bool_style)
 
     if spec.format == "json":

@@ -265,6 +265,10 @@ class GamePlugin:
             keys.update(_collect_template_env_keys(cfg.fixed))
             for option_key in cfg.map:
                 keys.add(str(option_key).strip().upper())
+            for mod in getattr(cfg, "mods", None) or []:
+                option = getattr(mod, "enabled_option", None)
+                if option:
+                    keys.add(str(option).strip().upper())
         if self.world_prepare is not None:
             for token in self.world_prepare.argv:
                 keys.update(_template_option_env_keys(token))

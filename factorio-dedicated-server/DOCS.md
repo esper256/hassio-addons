@@ -11,7 +11,9 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 
 This add-on does **not** use SteamCMD. On start it downloads Wube’s **free Linux headless package** from factorio.com into `/data/game` (no Steam ownership and no Factorio.com login for install). Players still need an owned Factorio client to join.
 
-**Release channel** (Configuration): **stable** (default) or **experimental**. Clients must match the channel you install. Changing channel pulls that build on the next update check / restart with update-on-start.
+**Space Age DLC** (Configuration): default **off** = base game only. The headless package includes Space Age as official mods (`elevated-rails`, `quality`, `space-age`, and on newer builds `recycler`); with the option off we disable them in `mods/mod-list.json` before the world is created. Turn **on** only if every player owns Space Age. Changing this after a world exists usually requires OPEN WEB UI → **NEW WORLD**.
+
+**Release channel** (Configuration): **stable** (default) or **experimental**. Clients must match the channel you install. Changing channel pulls that build on the next update check / restart with update-on-start. Prefer **stable** unless you intentionally want experimental clients.
 
 Anonymous Steam for app `427520` fails with “No subscription” — that path is intentionally unused here.
 
@@ -31,11 +33,12 @@ Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Rev
 ## Quick start
 
 1. Set **Save name** and a **Game password** on Configuration (leave **Server name** blank for a generated `HAOS Factorio ####`).
-2. Leave **Public server listing** off and Factorio.com username/token empty unless you want the public browser (see above).
-3. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab; no login required).
-4. Forward Network UDP **34197** on your router to this Home Assistant host.
-5. In Factorio, Multiplayer → Connect to address → `your-ha-ip:34197` (or LAN browser if LAN visibility is on).
-6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
+2. Leave **Space Age DLC** off unless all players own Space Age (decide before first start).
+3. Leave **Public server listing** off and Factorio.com username/token empty unless you want the public browser (see above).
+4. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab; no login required).
+5. Forward Network UDP **34197** on your router to this Home Assistant host.
+6. In Factorio, Multiplayer → Connect to address → `your-ha-ip:34197` (or LAN browser if LAN visibility is on).
+7. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
 
 **OPEN WEB UI** (top of Info, while started) is the status page. The **Ingress** chip that only says the app supports ingress is an explanation, not the UI.
 
@@ -49,6 +52,7 @@ Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Rev
 | LAN visibility | Default on (Play on LAN) |
 | Public server listing | Off by default; needs Factorio.com username + token |
 | Factorio.com username / token | Public listing only — not used for package download |
+| Space Age DLC | Default off (base game); on = DLC mods enabled |
 | Release channel | `stable` (default) or `experimental` |
 | Pause when empty | Pause with nobody online |
 | Autosave interval | Minutes between autosaves |

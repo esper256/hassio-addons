@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+- **Space Age DLC** option (default **off**): writes `mods/mod-list.json` so base-game servers do not load quality / elevated-rails / space-age / recycler
+- Saves created with Space Age on cannot simply turn it off — use NEW WORLD after disabling
+
 ## 1.0.2
 
 - **Release channel** option: Stable (default) or Experimental headless builds from factorio.com
