@@ -37,7 +37,7 @@ That is the status page (build, players when known, world save, backups, restore
 | Java options | Default `-Xms512M -Xmx2G` |
 | Update on start | SteamCMD before launch (recommended) |
 | Daily Steam check hour | Default **5** (5:00am local); clear to use the interval instead |
-| Update only when empty | Wait for nobody online before restarting (needs join/leave detection) |
+| Update only when empty | Wait until Idle before restarting (presence join/leave); after 24h apply anyway |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update failure / version mismatch |
 | Network → UDP port | Host port players use (default 14159) |
@@ -81,7 +81,8 @@ Set `SERVER_PASSWORD` / `WORLD_NAME` in the compose environment. UDP **14159** f
 ```text
 /data/game/          # Steam install
 /data/world/         # Necesse data (saves under saves/worlds/)
-/data/logs/          # game logs
+                     #   also latest-server-log.txt + data/logs/*.txt
+/data/logs/          # configured -logs path (often empty; Necesse writes under world/)
 /data/backups/       # world backups
 /data/supervisor/    # status.json, steam gate, log captures
 ```

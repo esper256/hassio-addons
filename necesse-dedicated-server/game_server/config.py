@@ -29,6 +29,10 @@ class SupervisorConfig:
     # Default 05:00 so we ask Steam once a day, not every few minutes.
     auto_update_check_hour: int | None = 5
     update_when_empty_only: bool = True
+    # Cap how long "wait for empty" may defer a pending update. 0 = unlimited.
+    # Prevents a stuck player-count (or a forever-online session) from blocking
+    # Steam updates indefinitely.
+    update_empty_max_wait_hours: int = 24
     update_on_version_mismatch: bool = True
     update_window_start_hour: int | None = None
     update_window_end_hour: int | None = None
@@ -147,6 +151,7 @@ SUPERVISOR_ENV_KEYS = (
     "AUTO_UPDATE_INTERVAL_MINUTES",
     "AUTO_UPDATE_CHECK_HOUR",
     "UPDATE_WHEN_EMPTY_ONLY",
+    "UPDATE_EMPTY_MAX_WAIT_HOURS",
     "UPDATE_ON_VERSION_MISMATCH",
     "UPDATE_WINDOW_START_HOUR",
     "UPDATE_WINDOW_END_HOUR",
@@ -219,6 +224,7 @@ def load_config(
         "auto_update_interval_minutes",
         "auto_update_check_hour",
         "update_when_empty_only",
+        "update_empty_max_wait_hours",
         "update_on_version_mismatch",
         "update_window_start_hour",
         "update_window_end_hour",
@@ -259,6 +265,10 @@ def load_config(
         ),
         update_when_empty_only=_as_bool(
             normalized.get("update_when_empty_only"), True
+        ),
+        update_empty_max_wait_hours=max(
+            0,
+            _as_int(normalized.get("update_empty_max_wait_hours"), 24),
         ),
         update_on_version_mismatch=_as_bool(
             normalized.get("update_on_version_mismatch"), True

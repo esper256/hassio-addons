@@ -59,6 +59,8 @@ class GameServerSupervisor:
         self._update_bypass_window = False
         # Manual UI force: apply even when players are online.
         self._update_ignore_players = False
+        # When the current pending update was first requested (for max empty-wait).
+        self._update_pending_since: float | None = None
         self._update_not_before = 0.0
         self._apply_failures = 0
         self._update_lock = threading.Lock()
@@ -525,6 +527,9 @@ class GameServerSupervisor:
             "world_save": world_size,
             "update_pending": self._update_pending,
             "update_reason": self._update_reason,
+            "update_pending_since": self._update_pending_since,
+            "update_empty_max_wait_hours": self.config.update_empty_max_wait_hours,
+            "update_ignore_players": self._update_ignore_players,
             "last_update_check_at": self.last_update_check_at,
             "last_update_applied_at": self.last_update_applied_at,
             "last_update_error": self.last_update_error,
@@ -605,6 +610,8 @@ class GameServerSupervisor:
         ignore_players: bool = False,
     ) -> None:
         with self._update_lock:
+            if not self._update_pending:
+                self._update_pending_since = time.time()
             self._update_pending = True
             self._update_reason = reason
             self._update_bypass_window = self._update_bypass_window or bypass_window
@@ -680,6 +687,14 @@ class GameServerSupervisor:
             return None
         return int(state.player_count)
 
+    def _empty_wait_expired(self) -> bool:
+        """True when a pending update has waited long enough to interrupt players."""
+
+        max_hours = int(self.config.update_empty_max_wait_hours or 0)
+        if max_hours <= 0 or self._update_pending_since is None:
+            return False
+        return (time.time() - self._update_pending_since) >= max_hours * 3600
+
     def _can_apply_update(self) -> bool:
         if time.time() < self._update_not_before:
             return False
@@ -696,7 +711,16 @@ class GameServerSupervisor:
                     "Player tracking unavailable; allowing update without empty check"
                 )
             elif online > 0:
-                return False
+                if self._empty_wait_expired():
+                    LOG.warning(
+                        "Update pending for >= %sh with players still online; "
+                        "applying anyway (update_empty_max_wait_hours)",
+                        self.config.update_empty_max_wait_hours,
+                    )
+                    with self._update_lock:
+                        self._update_ignore_players = True
+                else:
+                    return False
         ok, _free = ensure_free_mb(self.config.install_dir, self.config.min_free_disk_mb)
         return ok
 
@@ -892,6 +916,7 @@ class GameServerSupervisor:
                 self._update_reason = None
                 self._update_bypass_window = False
                 self._update_ignore_players = False
+                self._update_pending_since = None
             self.monitor.reset_session()
             self.process.start(reason="update")
             self.notifier.notify(

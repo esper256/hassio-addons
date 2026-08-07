@@ -59,6 +59,75 @@ KEYWORD_HINTS = {
     ],
 }
 
+# Prefer Necesse's latest-server-log.txt, then common dedicated-server names.
+PREFERRED_LOG_NAMES = (
+    "latest-server-log.txt",
+    "latest.log",
+    "server.log",
+    "console.log",
+)
+
+
+def log_search_dirs(
+    logs_dir: str | Path,
+    data_dir: str | Path | None = None,
+) -> list[Path]:
+    """Directories where game logs may appear (configured logs_dir + data_dir)."""
+
+    dirs = [Path(logs_dir)]
+    if data_dir:
+        root = Path(data_dir)
+        for candidate in (
+            root,
+            root / "logs",
+            root / "data" / "logs",
+        ):
+            if candidate not in dirs:
+                dirs.append(candidate)
+    return dirs
+
+
+def discover_log_file(
+    logs_dir: str | Path,
+    data_dir: str | Path | None = None,
+) -> Path | None:
+    """Pick the best live game log for monitoring / Ingress capture.
+
+    Games do not always honor ``logs_dir`` (Necesse often writes under
+    ``data_dir`` / ``data_dir/data/logs``). Search those roots so live pattern
+    monitoring and the log toolkit stay aligned.
+    """
+
+    directories = log_search_dirs(logs_dir, data_dir)
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for preferred in PREFERRED_LOG_NAMES:
+            path = directory / preferred
+            if path.is_file():
+                return path
+    # Newest .log / .txt under known dirs (non-recursive, then one level).
+    candidates: list[Path] = []
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        try:
+            for path in directory.iterdir():
+                if path.is_file() and path.suffix.lower() in {".log", ".txt"}:
+                    candidates.append(path)
+                elif path.is_dir():
+                    for child in path.iterdir():
+                        if child.is_file() and child.suffix.lower() in {
+                            ".log",
+                            ".txt",
+                        }:
+                            candidates.append(child)
+        except OSError:
+            continue
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
 
 class LogToolbox:
     def __init__(
@@ -76,52 +145,10 @@ class LogToolbox:
         self.recent_lines_provider = recent_lines_provider
 
     def _search_dirs(self) -> list[Path]:
-        dirs = [self.logs_dir]
-        data_dir = Path(self.plugin.data_dir)
-        for candidate in (
-            data_dir,
-            data_dir / "logs",
-            data_dir / "data" / "logs",
-        ):
-            if candidate not in dirs:
-                dirs.append(candidate)
-        return dirs
+        return log_search_dirs(self.logs_dir, self.plugin.data_dir)
 
     def pick_log_file(self) -> Path | None:
-        preferred_names = (
-            "latest-server-log.txt",
-            "latest.log",
-            "server.log",
-            "console.log",
-        )
-        for directory in self._search_dirs():
-            if not directory.is_dir():
-                continue
-            for preferred in preferred_names:
-                path = directory / preferred
-                if path.is_file():
-                    return path
-        # Newest .log / .txt under known dirs (non-recursive, then one level).
-        candidates: list[Path] = []
-        for directory in self._search_dirs():
-            if not directory.is_dir():
-                continue
-            try:
-                for path in directory.iterdir():
-                    if path.is_file() and path.suffix.lower() in {".log", ".txt"}:
-                        candidates.append(path)
-                    elif path.is_dir():
-                        for child in path.iterdir():
-                            if child.is_file() and child.suffix.lower() in {
-                                ".log",
-                                ".txt",
-                            }:
-                                candidates.append(child)
-            except OSError:
-                continue
-        if not candidates:
-            return None
-        return max(candidates, key=lambda p: p.stat().st_mtime)
+        return discover_log_file(self.logs_dir, self.plugin.data_dir)
 
     def tail_file(self, path: Path | None = None, lines: int = 400) -> list[str]:
         path = path or self.pick_log_file()

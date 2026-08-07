@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- Sync shared supervisor: presence unknown-leave clears to Idle; 24h max wait for empty before applying updates; log monitor follows `data_dir` logs and truncate/rotate
+
 ## 1.0.2
 
 - Default world / map is **Mars2**; public server-browser listing defaults to **off**

@@ -30,7 +30,7 @@ from game_server.config import (  # noqa: E402
     load_options_json,
 )
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
-from game_server.log_tools import LogToolbox  # noqa: E402
+from game_server.log_tools import LogToolbox, discover_log_file  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
@@ -293,6 +293,7 @@ class NecessePatternPromotionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mon = LogMonitor(plugin, tmp)
             self.assertTrue(mon.player_tracking_enabled)
+            self.assertTrue(mon.presence_tracking)
             samples = [
                 "[2026-08-03 13:57:00] Loading dedicated server on version 1.3.1.",
                 (
@@ -328,6 +329,13 @@ class NecessePatternPromotionTests(unittest.TestCase):
             self.assertEqual(mon.state.players, {"76561197968471340"})
             self.assertEqual(mon.state.player_count, 1)
 
+            # Mismatched leave identity must not stick occupancy in presence mode.
+            mon.ingest_stdout_line(
+                'Player TestPlayer (76561197968471340) disconnected with message: Quit'
+            )
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
             # Misleading dry-run hits must not become active player_count signals.
             self.assertEqual(plugin.log_patterns.player_count, [])
 
@@ -358,6 +366,43 @@ class NecessePatternPromotionTests(unittest.TestCase):
             mon.ingest_stdout_line(line)
             self.assertEqual(mon.state.version_mismatch_count, 1)
             self.assertEqual(triggered, [line])
+
+    def test_monitor_finds_necesse_logs_under_data_dir(self) -> None:
+        """Empty /data/logs must not blind the monitor when Necesse logs under world/."""
+
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs_dir = root / "logs"
+            world = root / "world"
+            logs_dir.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            latest = world / "latest-server-log.txt"
+            latest.write_text(
+                'Client "76561197968471340" had wrong version (1.3.0).\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(discover_log_file(logs_dir, world), latest)
+            mon = LogMonitor(plugin, logs_dir)
+            self.assertEqual(mon._pick_log_file(), latest)
+
+
+class PresenceLeaveResetTests(unittest.TestCase):
+    def test_unknown_leave_clears_occupancy(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.player_tracking_mode = "presence"
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.player_count, 1)
+            mon.ingest_stdout_line("SomeoneElse left")
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
 
 
 class WorldSaveLocatorTests(unittest.TestCase):
@@ -1521,6 +1566,51 @@ class StatusFormatTests(unittest.TestCase):
             self.assertTrue(supervisor._update_bypass_window)
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
+
+    def test_update_empty_max_wait_applies_despite_players(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            steamcmd_dir = root / "steamcmd"
+            world.mkdir()
+            logs.mkdir()
+            steamcmd_dir.mkdir()
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(steamcmd_dir),
+                update_when_empty_only=True,
+                update_empty_max_wait_hours=24,
+                game_options={
+                    "data_dir": str(world),
+                    "logs_dir": str(logs),
+                },
+            )
+            plugin.log_patterns.player_join = [r"(?P<player>.+) joined"]
+            plugin.log_patterns.player_leave = [r"(?P<player>.+) left"]
+            supervisor = GameServerSupervisor(plugin, cfg)
+            supervisor.monitor.state.players_known = True
+            supervisor.monitor.state.player_count = 1
+            supervisor.monitor.state.players = {"Alice"}
+            supervisor.request_update(reason="steam_build")
+            self.assertFalse(supervisor._can_apply_update())
+            # Still pending but under the cap.
+            supervisor._update_pending_since = time.time() - (23 * 3600)
+            self.assertFalse(supervisor._can_apply_update())
+            # Past the cap: apply even with players online.
+            supervisor._update_pending_since = time.time() - (25 * 3600)
+            self.assertTrue(supervisor._can_apply_update())
+            self.assertTrue(supervisor._update_ignore_players)
+            status = supervisor.status()
+            self.assertEqual(status["update_empty_max_wait_hours"], 24)
+            self.assertIsNotNone(status["update_pending_since"])
 
     def test_version_mismatch_checks_steam_before_scheduling_stop(
         self,

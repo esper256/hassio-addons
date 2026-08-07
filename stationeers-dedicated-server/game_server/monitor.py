@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .log_bridge import STDOUT_DEDUPER, strip_ansi
+from .log_tools import discover_log_file
 from .patterns import DEFAULT_CANDIDATE_PATTERNS
 from .plugin import PLAYER_TRACKING_PRESENCE, GamePlugin
 
@@ -242,22 +243,9 @@ class LogMonitor:
             self._thread = None
 
     def _pick_log_file(self) -> Path | None:
-        if not self.logs_dir.is_dir():
-            return None
-        candidates = sorted(
-            [
-                p
-                for p in self.logs_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in {".log", ".txt", ""}
-            ],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for preferred in ("latest.log", "server.log", "console.log"):
-            path = self.logs_dir / preferred
-            if path.is_file():
-                return path
-        return candidates[0] if candidates else None
+        # Same discovery as Ingress log toolkit: configured logs_dir plus data_dir
+        # fallbacks (Necesse writes under /data/world even when -logs is set).
+        return discover_log_file(self.logs_dir, self.plugin.data_dir)
 
     def _run(self) -> None:
         current: Path | None = None
@@ -267,25 +255,55 @@ class LogMonitor:
             while not self._stop.is_set():
                 path = self._pick_log_file()
                 if path is None:
+                    if handle is not None:
+                        handle.close()
+                        handle = None
+                        current = None
+                        inode = None
                     time.sleep(1)
                     continue
                 try:
                     stat = path.stat()
                 except FileNotFoundError:
+                    if handle is not None:
+                        handle.close()
+                        handle = None
+                        current = None
+                        inode = None
                     time.sleep(1)
                     continue
 
-                if handle is None or path != current or stat.st_ino != inode:
+                reopen = handle is None or path != current or stat.st_ino != inode
+                if not reopen and handle is not None:
+                    try:
+                        # Truncate/reuse same inode (common log rotate) leaves the
+                        # reader stuck at the old EOF; detect and rewind.
+                        if stat.st_size < handle.tell():
+                            reopen = True
+                    except OSError:
+                        reopen = True
+
+                if reopen:
+                    same_inode = (
+                        current == path and inode is not None and inode == stat.st_ino
+                    )
                     if handle:
                         handle.close()
                     try:
                         handle = path.open("r", encoding="utf-8", errors="replace")
-                        handle.seek(0, 2)
+                        # New file / first open: follow from EOF. Same inode that
+                        # shrank (truncate rotate): rewind so new lines are seen.
+                        if same_inode:
+                            handle.seek(0)
+                        else:
+                            handle.seek(0, 2)
                         current = path
                         inode = stat.st_ino
                         LOG.info("Monitoring log file %s", path)
                     except OSError:
                         handle = None
+                        current = None
+                        inode = None
                         time.sleep(1)
                         continue
 
@@ -356,22 +374,29 @@ class LogMonitor:
 
         if "player_leave" in active_hits:
             match = active_hits["player_leave"]
-            name = match.groupdict().get("player") or (
+            # Prefer steam_id when the pattern captured both (identity must match join).
+            groups = match.groupdict()
+            name = groups.get("steam_id") or groups.get("player") or (
                 match.group(1) if match.lastindex else None
             )
-            removed = False
             cleaned = str(name).strip() if name else ""
+            removed = False
             if cleaned and cleaned in self.state.players:
                 self.state.players.discard(cleaned)
                 removed = True
             self.state.players_known = True
             if self.presence_tracking:
-                if self.state.players:
-                    self.state.player_count = len(self.state.players)
+                if removed and self.state.players:
+                    # Known leave with other tracked names still present.
+                    self.state.player_count = max(1, len(self.state.players))
                 elif removed:
-                    # Last tracked name left → idle.
                     self.state.player_count = 0
-                # Unknown leave name: keep prior occupancy until players_empty.
+                else:
+                    # Unknown leave identity: reset to idle. Presence mode cannot
+                    # prove remaining players without a matching join name, and
+                    # keeping occupancy forever was leaving updates stuck.
+                    self.state.players.clear()
+                    self.state.player_count = 0
             else:
                 self.state.player_count = len(self.state.players)
 

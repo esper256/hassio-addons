@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.34
+
+- Player tracking uses **presence** (Idle / Players Active): join → occupied, any disconnect → idle, so a mismatched leave identity cannot stick updates forever
+- Pending Steam updates still wait for Idle, but never longer than **24 hours** (`update_empty_max_wait_hours`)
+- Live log monitor searches `data_dir` (e.g. `/data/world/latest-server-log.txt`) when `/data/logs` is empty, and reopens after truncate/rotate so version-mismatch catching keeps working
+
 ## 2.1.33
 
 - Sync shared supervisor: last 5 regex matches per pattern; optional presence player tracking (Necesse stays on count mode)
