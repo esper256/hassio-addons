@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.35
+
+- Sync shared supervisor: generic `config_files` + `world_prepare` launch helpers (no Necesse behavior change)
+
 ## 2.1.34
 
 - Player tracking uses **presence** (Idle / Players Active): join → occupied; unknown leave identity → idle so a mismatched disconnect cannot stick updates forever

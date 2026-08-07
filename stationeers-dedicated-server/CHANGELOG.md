@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- Sync shared supervisor: generic `config_files` + `world_prepare` launch helpers; signal-first stop when no stdin quit commands (Stationeers still uses stdin save/quit)
+
 ## 1.0.3
 
 - Sync shared supervisor: presence unknown-leave clears to Idle; 24h max wait for empty before applying updates; log monitor follows `data_dir` logs without cross-source double-fires; drains/reopens across truncate/rotate

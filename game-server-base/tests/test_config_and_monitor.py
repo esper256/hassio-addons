@@ -32,6 +32,14 @@ from game_server.config import (  # noqa: E402
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
 from game_server.log_tools import LogToolbox, discover_log_file  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
+from game_server.launch_prepare import (  # noqa: E402
+    ConfigFileSpec,
+    WorldPrepareSpec,
+    build_world_prepare_command,
+    prepare_launch,
+    world_needs_prepare,
+    write_config_files,
+)
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
@@ -88,6 +96,7 @@ from game_server.version import app_version  # noqa: E402
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
 STATIONEERS_PLUGIN = ROOT.parent / "stationeers-dedicated-server" / "games" / "game.yaml"
+FACTORIO_PLUGIN = ROOT.parent / "factorio-dedicated-server" / "games" / "game.yaml"
 
 
 class ConfigTests(unittest.TestCase):
@@ -159,6 +168,15 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("WORLD_TYPE", necesse_keys)
         self.assertNotIn("START_CONDITION", necesse_keys)
 
+        factorio = load_plugin(FACTORIO_PLUGIN)
+        factorio_keys = set(factorio.docker_env_keys())
+        self.assertIn("WORLD_NAME", factorio_keys)
+        self.assertIn("SERVER_NAME", factorio_keys)
+        self.assertIn("SERVER_SLOTS", factorio_keys)
+        self.assertIn("VISIBILITY_PUBLIC", factorio_keys)
+        self.assertIn("FACTORIO_TOKEN", factorio_keys)
+        self.assertNotIn("JAVA_OPTS", factorio_keys)
+
 
 class PluginTests(unittest.TestCase):
     def test_load_example_fixture(self) -> None:
@@ -171,6 +189,51 @@ class PluginTests(unittest.TestCase):
         assert plugin.world_save is not None
         self.assertEqual(plugin.world_save.strategy, "named_path")
         self.assertIn("{world_name}.zip", plugin.world_save.paths[0])
+
+    def test_load_factorio_plugin_builds_headless_cli(self) -> None:
+        self.assertTrue(FACTORIO_PLUGIN.is_file(), f"missing {FACTORIO_PLUGIN}")
+        plugin = load_plugin(FACTORIO_PLUGIN)
+        self.assertEqual(plugin.name, "Factorio")
+        self.assertEqual(plugin.steam_app_id, 427520)
+        self.assertEqual(plugin.install_marker, "bin/x64/factorio")
+        self.assertEqual(plugin.player_tracking_mode, "presence")
+        self.assertEqual(plugin.ui_theme.get("accent"), "#ff7a1a")
+        self.assertIsNotNone(plugin.world_prepare)
+        self.assertEqual(len(plugin.config_files), 2)
+        self.assertTrue(plugin.log_patterns.player_join)
+        self.assertTrue(plugin.log_patterns.ready)
+        cfg = SupervisorConfig(
+            drop_privileges=False,
+            status_http_enabled=False,
+            backup_enabled=False,
+            ha_notifications=False,
+            game_options={
+                "world_name": "FamilyFactory",
+                "server_port": 34197,
+                "data_dir": "/data/world",
+                "logs_dir": "/data/logs",
+            },
+        )
+        cmd = ProcessManager(plugin, cfg).build_command()
+        self.assertEqual(cmd[0], "./bin/x64/factorio")
+        self.assertIn("--start-server", cmd)
+        self.assertIn("/data/world/saves/FamilyFactory.zip", cmd)
+        self.assertIn("--server-settings", cmd)
+        self.assertIn("/data/world/server-settings.json", cmd)
+        self.assertIn("--config", cmd)
+        self.assertIn("/data/world/config.ini", cmd)
+        self.assertIn("--port", cmd)
+        self.assertIn("34197", cmd)
+        prepare_cmd = build_world_prepare_command(
+            plugin,
+            {
+                "data_dir": "/data/world",
+                "world_name": "FamilyFactory",
+                "working_dir": "/data/game",
+            },
+        )
+        self.assertIn("--create", prepare_cmd)
+        self.assertIn("/data/world/saves/FamilyFactory.zip", prepare_cmd)
 
     def test_load_stationeers_plugin_builds_unity_cli(self) -> None:
         self.assertTrue(STATIONEERS_PLUGIN.is_file(), f"missing {STATIONEERS_PLUGIN}")
@@ -2400,6 +2463,57 @@ class ProcessStopTests(unittest.TestCase):
             # Should finish via stdin exit well under the 240s budget.
             self.assertLess(elapsed, 20)
 
+    def test_stop_signal_first_without_stdin_commands(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.stop_timeout_seconds = 30
+        plugin.stop_stdin_commands = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                stop_timeout_seconds=0,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            plugin.data_dir = str(root / "world")
+            plugin.logs_dir = str(root / "logs")
+            plugin.working_dir = str(root / "game")
+            (root / "game").mkdir()
+            plugin.executable = [
+                sys.executable,
+                "-c",
+                (
+                    "import signal, time\n"
+                    "stopped=False\n"
+                    "def _term(signum, frame):\n"
+                    "    global stopped\n"
+                    "    stopped=True\n"
+                    "signal.signal(signal.SIGTERM, _term)\n"
+                    "while not stopped:\n"
+                    "    time.sleep(0.05)\n"
+                ),
+            ]
+            mgr = ProcessManager(plugin, cfg)
+            mgr.start(reason="boot")
+            self.assertTrue(mgr.running)
+            started = time.time()
+            mgr.stop()
+            elapsed = time.time() - started
+            self.assertFalse(mgr.running)
+            # Must SIGTERM promptly — not burn most of the 30s waiting voluntarily.
+            self.assertLess(elapsed, 10)
+
     def test_stop_escalates_when_process_ignores_stdin(self) -> None:
         plugin = load_plugin(FIXTURE)
         plugin.stop_timeout_seconds = 8
@@ -2689,6 +2803,142 @@ class LogToolsTests(unittest.TestCase):
             self.assertTrue(
                 (state / "captures" / capture["id"] / "capture.tar.gz").is_file()
             )
+
+
+class LaunchPrepareTests(unittest.TestCase):
+    """Generic config_files + world_prepare (no game-specific identity)."""
+
+    def test_json_config_file_map_and_types(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.config_files = [
+            ConfigFileSpec.from_dict(
+                {
+                    "path": "{data_dir}/server-settings.json",
+                    "format": "json",
+                    "fixed": {
+                        "visibility": {"public": False, "lan": True},
+                        "require_user_verification": True,
+                    },
+                    "map": {
+                        "server_name": "name",
+                        "server_password": "game_password",
+                        "server_slots": "max_players",
+                        "auto_pause": "auto_pause",
+                        "visibility_public": "visibility.public",
+                    },
+                    "types": {
+                        "max_players": "int",
+                        "auto_pause": "bool",
+                        "visibility.public": "bool",
+                    },
+                }
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "world"
+            data_dir.mkdir()
+            plugin.data_dir = str(data_dir)
+            options = {
+                "data_dir": str(data_dir),
+                "server_name": "Family Factory",
+                "server_password": "secret",
+                "server_slots": "12",
+                "auto_pause": "true",
+                "visibility_public": False,
+            }
+            written = write_config_files(plugin, options)
+            self.assertEqual(len(written), 1)
+            payload = json.loads(written[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["name"], "Family Factory")
+            self.assertEqual(payload["game_password"], "secret")
+            self.assertEqual(payload["max_players"], 12)
+            self.assertIs(payload["auto_pause"], True)
+            self.assertIs(payload["visibility"]["public"], False)
+            self.assertIs(payload["visibility"]["lan"], True)
+
+    def test_ini_config_file_and_world_prepare(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = root / "game"
+            world = root / "world"
+            logs = root / "logs"
+            game.mkdir()
+            world.mkdir()
+            logs.mkdir()
+            save = world / "saves" / "TestWorld.zip"
+            # Fake create: write the save file when --create path is passed.
+            maker = game / "maker.py"
+            maker.write_text(
+                "import pathlib, sys\n"
+                "args=sys.argv[1:]\n"
+                "if args and args[0]=='--create':\n"
+                "  pathlib.Path(args[1]).parent.mkdir(parents=True, exist_ok=True)\n"
+                "  pathlib.Path(args[1]).write_bytes(b'FAKEZIP')\n",
+                encoding="utf-8",
+            )
+            plugin.executable = [sys.executable, str(maker)]
+            plugin.data_dir = str(world)
+            plugin.logs_dir = str(logs)
+            plugin.working_dir = str(game)
+            plugin.world_save = WorldSaveSpec(
+                strategy="named_path",
+                paths=["{data_dir}/saves/{world_name}.zip"],
+            )
+            plugin.config_files = [
+                ConfigFileSpec.from_dict(
+                    {
+                        "path": "{data_dir}/config.ini",
+                        "format": "ini",
+                        "fixed": {
+                            "path": {
+                                "read-data": "{working_dir}/data",
+                                "write-data": "{data_dir}",
+                            }
+                        },
+                    }
+                )
+            ]
+            plugin.world_prepare = WorldPrepareSpec.from_dict(
+                {
+                    "when": "missing",
+                    "argv": ["--create", "{data_dir}/saves/{world_name}.zip"],
+                    "timeout_seconds": 30,
+                }
+            )
+            options = {
+                "data_dir": str(world),
+                "logs_dir": str(logs),
+                "world_name": "TestWorld",
+            }
+            self.assertTrue(world_needs_prepare(plugin, options))
+            cmd = build_world_prepare_command(plugin, options)
+            self.assertEqual(cmd[-2:], ["--create", str(save)])
+            prepare_launch(plugin, options, working_dir=game)
+            self.assertTrue(save.is_file())
+            self.assertFalse(world_needs_prepare(plugin, options))
+            ini_text = (world / "config.ini").read_text(encoding="utf-8")
+            self.assertIn(f"write-data={world}", ini_text)
+            self.assertIn(f"read-data={game}/data", ini_text)
+            self.assertNotIn("write-data =", ini_text)
+
+    def test_docker_env_keys_include_config_file_map(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.arg_map = {}
+        plugin.config_files = [
+            ConfigFileSpec.from_dict(
+                {
+                    "path": "{data_dir}/server-settings.json",
+                    "format": "json",
+                    "map": {"server_name": "name", "server_slots": "max_players"},
+                }
+            )
+        ]
+        keys = set(plugin.docker_env_keys())
+        self.assertIn("SERVER_NAME", keys)
+        self.assertIn("SERVER_SLOTS", keys)
+        self.assertIn("DATA_DIR", keys)
 
 
 if __name__ == "__main__":

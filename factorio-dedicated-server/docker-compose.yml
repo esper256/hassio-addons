@@ -1,0 +1,56 @@
+# Portainer / plain Docker example for Factorio.
+# Builds the thin Factorio add-on image (generic supervisor + binary + game.yaml).
+#
+# Security note: the status UI on :8099 is passwordless. Outside Home Assistant
+# there is no Ingress auth and no peer allowlist. Bind it to localhost only
+# (below), or put it behind your own reverse-proxy auth. Do not publish 8099 on
+# a public interface.
+services:
+  factorio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: factorio-dedicated-server:local
+    container_name: factorio
+    restart: unless-stopped
+    ports:
+      - "34197:34197/udp"
+      - "127.0.0.1:8099:8099"
+    environment:
+      GAME_PLUGIN: /opt/games/game.yaml
+      INSTALL_DIR: /data/game
+      WORLD_NAME: FamilyFactory
+      # Leave SERVER_NAME unset/blank for a stable "HAOS Factorio ####" default.
+      # SERVER_NAME: My Factory
+      SERVER_DESCRIPTION: Welcome to the family Factorio server!
+      SERVER_PASSWORD: changeme
+      SERVER_SLOTS: "10"
+      AUTO_PAUSE: "true"
+      AUTOSAVE_INTERVAL: "10"
+      VISIBILITY_LAN: "true"
+      VISIBILITY_PUBLIC: "false"
+      UPDATE_ON_START: "true"
+      AUTO_UPDATE_CHECK_HOUR: "5"
+      AUTO_UPDATE_INTERVAL_MINUTES: "1440"
+      UPDATE_WHEN_EMPTY_ONLY: "true"
+      UPDATE_ON_VERSION_MISMATCH: "true"
+      STATUS_HTTP_ENABLED: "true"
+      STATUS_HTTP_PORT: "8099"
+      HA_NOTIFICATIONS: "false"
+      SERVER_PORT: "34197"
+      BACKUP_ENABLED: "true"
+      BACKUP_INTERVAL_MINUTES: "1440"
+      BACKUP_ON_UPDATE: "true"
+      BACKUP_RETENTION: standard
+      MIN_FREE_DISK_MB: "1024"
+      TZ: America/Los_Angeles
+    volumes:
+      - ./data:/data
+    # Match HA add-on timeout (300s): give quit room before SIGKILL.
+    stop_grace_period: 300s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s

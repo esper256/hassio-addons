@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .launch_prepare import ConfigFileSpec, WorldPrepareSpec
 from .world_save import WorldSaveSpec
 
 _OPTION_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
@@ -88,6 +89,10 @@ class GamePlugin:
     runtime_notes: str = ""
     # How to find the active world artifact for status UI (not backup roots).
     world_save: WorldSaveSpec | None = None
+    # Optional JSON/INI files rewritten from options before each launch.
+    config_files: list[ConfigFileSpec] = field(default_factory=list)
+    # Optional one-shot argv when the active world is missing (create-save, etc.).
+    world_prepare: WorldPrepareSpec | None = None
     # Optional Ingress status page CSS color overrides (see status_http.DEFAULT_UI_THEME).
     ui_theme: dict[str, str] = field(default_factory=dict)
     # count (default) or presence — see PLAYER_TRACKING_* constants.
@@ -161,6 +166,8 @@ class GamePlugin:
             min_backup_bytes=int(data.get("min_backup_bytes", 1024)),
             runtime_notes=str(data.get("runtime_notes") or ""),
             world_save=WorldSaveSpec.from_dict(data.get("world_save")),
+            config_files=_coerce_config_files(data.get("config_files")),
+            world_prepare=WorldPrepareSpec.from_dict(data.get("world_prepare")),
             ui_theme=_coerce_ui_theme(data.get("ui_theme")),
             player_tracking_mode=tracking_mode,
         )
@@ -193,6 +200,14 @@ class GamePlugin:
             world_opt = (self.world_save.world_name_option or "").strip()
             if world_opt:
                 keys.add(world_opt.upper())
+        for cfg in self.config_files:
+            keys.update(_template_option_env_keys(cfg.path))
+            keys.update(_collect_template_env_keys(cfg.fixed))
+            for option_key in cfg.map:
+                keys.add(str(option_key).strip().upper())
+        if self.world_prepare is not None:
+            for token in self.world_prepare.argv:
+                keys.update(_template_option_env_keys(token))
         # ProcessManager only injects java_opts when argv[0] is java.
         if self.executable and str(self.executable[0]).strip() == "java":
             java_env = (self.java_opts_env or "JAVA_OPTS").strip().upper()
@@ -217,8 +232,29 @@ def _coerce_env_options(raw: Any) -> list[str]:
     return out
 
 
+def _coerce_config_files(raw: Any) -> list[ConfigFileSpec]:
+    if not raw:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("config_files must be a list")
+    return [ConfigFileSpec.from_dict(item) for item in raw]
+
+
 def _template_option_env_keys(text: str) -> set[str]:
     return {match.group(1).upper() for match in _OPTION_TEMPLATE_RE.finditer(str(text))}
+
+
+def _collect_template_env_keys(node: Any) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(node, dict):
+        for value in node.values():
+            keys.update(_collect_template_env_keys(value))
+    elif isinstance(node, list):
+        for value in node:
+            keys.update(_collect_template_env_keys(value))
+    elif isinstance(node, str):
+        keys.update(_template_option_env_keys(node))
+    return keys
 
 
 def _coerce_ui_theme(raw: Any) -> dict[str, str]:
