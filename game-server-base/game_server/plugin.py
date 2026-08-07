@@ -91,6 +91,7 @@ class GamePlugin:
     # Optional Ingress status page CSS color overrides (see status_http.DEFAULT_UI_THEME).
     ui_theme: dict[str, str] = field(default_factory=dict)
     # count (default) or presence — see PLAYER_TRACKING_* constants.
+    # Presence: join → occupied; matching leave may keep others; unknown leave → idle.
     player_tracking_mode: str = PLAYER_TRACKING_COUNT
 
     @classmethod

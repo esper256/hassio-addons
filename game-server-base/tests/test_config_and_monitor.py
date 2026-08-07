@@ -30,7 +30,7 @@ from game_server.config import (  # noqa: E402
     load_options_json,
 )
 from game_server.log_bridge import RecentLineDeduper, strip_ansi  # noqa: E402
-from game_server.log_tools import LogToolbox  # noqa: E402
+from game_server.log_tools import LogToolbox, discover_log_file  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
@@ -293,6 +293,7 @@ class NecessePatternPromotionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mon = LogMonitor(plugin, tmp)
             self.assertTrue(mon.player_tracking_enabled)
+            self.assertTrue(mon.presence_tracking)
             samples = [
                 "[2026-08-03 13:57:00] Loading dedicated server on version 1.3.1.",
                 (
@@ -328,6 +329,13 @@ class NecessePatternPromotionTests(unittest.TestCase):
             self.assertEqual(mon.state.players, {"76561197968471340"})
             self.assertEqual(mon.state.player_count, 1)
 
+            # Mismatched leave identity must not stick occupancy in presence mode.
+            mon.ingest_stdout_line(
+                'Player TestPlayer (76561197968471340) disconnected with message: Quit'
+            )
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
             # Misleading dry-run hits must not become active player_count signals.
             self.assertEqual(plugin.log_patterns.player_count, [])
 
@@ -358,6 +366,203 @@ class NecessePatternPromotionTests(unittest.TestCase):
             mon.ingest_stdout_line(line)
             self.assertEqual(mon.state.version_mismatch_count, 1)
             self.assertEqual(triggered, [line])
+
+    def test_monitor_finds_necesse_logs_under_data_dir(self) -> None:
+        """Empty /data/logs must not blind the monitor when Necesse logs under world/."""
+
+        plugin = load_plugin(NECESSE_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs_dir = root / "logs"
+            world = root / "world"
+            logs_dir.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            latest = world / "latest-server-log.txt"
+            latest.write_text(
+                'Client "76561197968471340" had wrong version (1.3.0).\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(discover_log_file(logs_dir, world), latest)
+            mon = LogMonitor(plugin, logs_dir)
+            self.assertEqual(mon._pick_log_file(), latest)
+
+
+class PresenceLeaveResetTests(unittest.TestCase):
+    def test_unknown_leave_clears_occupancy(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.player_tracking_mode = "presence"
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.player_count, 1)
+            mon.ingest_stdout_line("SomeoneElse left")
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
+
+class LogFollowIntegrityTests(unittest.TestCase):
+    """No gaps / no cross-source duplicate pattern fires while following logs."""
+
+    def test_file_echo_of_stdout_does_not_double_count(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.player_count, 1)
+            # Same line later from the on-disk log must not join twice.
+            mon._handle_line("Alice joined", source="file")
+            self.assertEqual(mon.state.players, {"Alice"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_stdout_echo_of_file_does_not_double_count(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon._handle_line("Bob joined", source="file")
+            self.assertEqual(mon.state.player_count, 1)
+            mon.ingest_stdout_line("Bob joined")
+            self.assertEqual(mon.state.players, {"Bob"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_same_source_identical_lines_still_apply(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            mon.ingest_stdout_line("Alice left")
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.players, {"Alice"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_file_only_line_still_applies(self) -> None:
+        plugin = load_plugin(NECESSE_PLUGIN)
+        triggered: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            line = (
+                '[2026-08-04 08:45:04] Client "76561197968471340" '
+                "had wrong version (1.3.0)."
+            )
+            mon._handle_line(line, source="file")
+            self.assertEqual(mon.state.version_mismatch_count, 1)
+            self.assertEqual(triggered, [line])
+
+    def _join_hits(self, mon: LogMonitor) -> int:
+        return sum(
+            int(p["hits"])
+            for p in mon.pattern_report()["patterns"]
+            if p["category"] == "player_join" and p["mode"] == "active"
+        )
+
+    def test_rotate_drains_old_file_and_reads_new_from_start(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            version_mismatch=[r"wrong version"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            world = root / "world"
+            logs.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            current = world / "latest-server-log.txt"
+            current.write_text("boot\n", encoding="utf-8")
+            mon = LogMonitor(plugin, logs)
+            mon.start()
+            try:
+                deadline = time.time() + 3
+                while time.time() < deadline and mon._pick_log_file() != current:
+                    time.sleep(0.05)
+                time.sleep(0.4)
+                with current.open("a", encoding="utf-8") as handle:
+                    handle.write("Alice joined\n")
+                    handle.flush()
+                deadline = time.time() + 3
+                while time.time() < deadline and mon.state.player_count != 1:
+                    time.sleep(0.05)
+                self.assertEqual(mon.state.player_count, 1)
+                self.assertEqual(self._join_hits(mon), 1)
+
+                # Rename-rotate: unread trailing line on old inode + new file lines.
+                rotated = world / "data" / "logs"
+                rotated.mkdir(parents=True)
+                old = rotated / "2026-08-04-session.txt"
+                current.rename(old)
+                with old.open("a", encoding="utf-8") as handle:
+                    handle.write("Client had wrong version\n")
+                    handle.flush()
+                current.write_text("Bob joined\n", encoding="utf-8")
+
+                deadline = time.time() + 4
+                while time.time() < deadline:
+                    if (
+                        mon.state.version_mismatch_count >= 1
+                        and "Bob" in mon.state.players
+                    ):
+                        break
+                    time.sleep(0.05)
+                self.assertGreaterEqual(mon.state.version_mismatch_count, 1)
+                self.assertIn("Bob", mon.state.players)
+                # Alice must not be replayed when the renamed inode is reopened.
+                self.assertEqual(self._join_hits(mon), 2)
+                self.assertEqual(mon.state.version_mismatch_count, 1)
+            finally:
+                mon.stop()
+
+    def test_truncate_continues_without_stale_eof(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            world = root / "world"
+            logs.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            current = world / "latest-server-log.txt"
+            current.write_text("warmup\n", encoding="utf-8")
+            mon = LogMonitor(plugin, logs)
+            mon.start()
+            try:
+                time.sleep(0.4)
+                with current.open("a", encoding="utf-8") as handle:
+                    handle.write("Alice joined\n")
+                    handle.flush()
+                deadline = time.time() + 3
+                while time.time() < deadline and mon.state.player_count != 1:
+                    time.sleep(0.05)
+                self.assertEqual(mon.state.player_count, 1)
+                self.assertEqual(self._join_hits(mon), 1)
+
+                # copytruncate-style: same path, new content from offset 0.
+                current.write_text("Carol joined\n", encoding="utf-8")
+                deadline = time.time() + 3
+                while time.time() < deadline and "Carol" not in mon.state.players:
+                    time.sleep(0.05)
+                self.assertIn("Carol", mon.state.players)
+                self.assertEqual(self._join_hits(mon), 2)
+            finally:
+                mon.stop()
 
 
 class WorldSaveLocatorTests(unittest.TestCase):
@@ -1522,6 +1727,51 @@ class StatusFormatTests(unittest.TestCase):
             self.assertEqual(supervisor._update_reason, "manual")
             self.assertTrue(supervisor._can_apply_update())
 
+    def test_update_empty_max_wait_applies_despite_players(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            logs = root / "logs"
+            steamcmd_dir = root / "steamcmd"
+            world.mkdir()
+            logs.mkdir()
+            steamcmd_dir.mkdir()
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(steamcmd_dir),
+                update_when_empty_only=True,
+                update_empty_max_wait_hours=24,
+                game_options={
+                    "data_dir": str(world),
+                    "logs_dir": str(logs),
+                },
+            )
+            plugin.log_patterns.player_join = [r"(?P<player>.+) joined"]
+            plugin.log_patterns.player_leave = [r"(?P<player>.+) left"]
+            supervisor = GameServerSupervisor(plugin, cfg)
+            supervisor.monitor.state.players_known = True
+            supervisor.monitor.state.player_count = 1
+            supervisor.monitor.state.players = {"Alice"}
+            supervisor.request_update(reason="steam_build")
+            self.assertFalse(supervisor._can_apply_update())
+            # Still pending but under the cap.
+            supervisor._update_pending_since = time.time() - (23 * 3600)
+            self.assertFalse(supervisor._can_apply_update())
+            # Past the cap: apply even with players online.
+            supervisor._update_pending_since = time.time() - (25 * 3600)
+            self.assertTrue(supervisor._can_apply_update())
+            self.assertTrue(supervisor._update_ignore_players)
+            status = supervisor.status()
+            self.assertEqual(status["update_empty_max_wait_hours"], 24)
+            self.assertIsNotNone(status["update_pending_since"])
+
     def test_version_mismatch_checks_steam_before_scheduling_stop(
         self,
     ) -> None:
@@ -2202,6 +2452,14 @@ class LogBridgeTests(unittest.TestCase):
         self.assertFalse(deduper.remember_if_new("  Player joined  "))
         self.assertTrue(deduper.remember_if_new("Player left"))
         self.assertFalse(deduper.remember_if_new(""))
+
+    def test_recent_line_seen_and_remember(self) -> None:
+        deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
+        self.assertFalse(deduper.seen("Alice joined"))
+        deduper.remember("Alice joined")
+        self.assertTrue(deduper.seen("  Alice joined  "))
+        deduper.remember("Alice joined")
+        self.assertTrue(deduper.seen("Alice joined"))
 
     def test_strip_ansi(self) -> None:
         raw = "\x1b[34m[2026-08-03 12:59:33] Started server using port 14159\x1b[39m"
