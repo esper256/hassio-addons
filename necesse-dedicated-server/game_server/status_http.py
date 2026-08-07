@@ -436,7 +436,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <summary>Game server log watching pattern hits</summary>
       <p class="sub">
         <span class="tag active">active</span> can trigger updates/player state.
-        <span class="tag dry_run">dry_run</span> only highlights candidates for promotion.
+        <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
+        Promote a precise hit into the game plugin <code>log_patterns</code> to make it
+        <span class="tag active">active</span>.
         <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
       </p>
       <table>
@@ -1747,25 +1749,17 @@ def _format_pattern_snippet(pattern: str, *, limit: int = 72) -> str:
 
 
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
-    """One table row per regex so broad patterns can show several recent hits."""
+    """One table row per regex so broad dry-run guesses stay visible.
+
+    Do not collapse or hide dry-run peers when an active pattern exists —
+    over-matching candidates are how we discover promotions.
+    """
 
     if not patterns:
         return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
-    active_categories = _active_pattern_categories(patterns)
-    # Hide dry-run rows once that category already has an active pattern.
-    visible = [
-        item
-        for item in patterns
-        if not (
-            (item.get("mode") or "") == "dry_run"
-            and str(item.get("category") or "") in active_categories
-        )
-    ]
-    if not visible:
-        return "<tr><td colspan='5'>(no patterns to show)</td></tr>"
 
     ordered = sorted(
-        visible,
+        patterns,
         key=lambda item: (
             0 if int(item.get("hits") or 0) else 1,
             0 if (item.get("mode") or "") == "active" else 1,
@@ -1775,7 +1769,7 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
         ),
     )
     rows = []
-    for item in ordered[:80]:
+    for item in ordered[:120]:
         mode = item.get("mode") or "dry_run"
         stale = (
             " <span class='tag stale'>stale</span>"
@@ -1801,29 +1795,23 @@ def _format_highlights(
     *,
     active_categories: set[str] | None = None,
 ) -> str:
+    del active_categories  # kept for call-site compatibility; dry-runs stay visible
     if not items:
         return (
             "(no pattern hits yet — once the server is online, dry_run candidates "
             "should light up lines like “server started” or “player joined”)"
         )
-    active = active_categories or set()
     lines = []
     for item in items[-30:]:
-        matches = []
-        for match in item.get("matches") or []:
-            mode = str(match.get("mode") or "")
-            category = str(match.get("category") or "")
-            if mode == "dry_run" and category in active:
-                continue
-            matches.append(match)
+        matches = list(item.get("matches") or [])
         if not matches:
             continue
         tags = ", ".join(
-            f"{m.get('mode')}:{m.get('category')}" for m in matches[:6]
+            f"{m.get('mode')}:{m.get('category')}" for m in matches[:8]
         )
         lines.append(f"[{tags}] {strip_ansi(str(item.get('line') or ''))}")
     if not lines:
-        return "(no pattern hits to show after hiding superseded dry-run matches)"
+        return "(no pattern hits to show yet)"
     return "\n".join(lines)
 
 

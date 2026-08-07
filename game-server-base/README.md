@@ -70,11 +70,12 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
-### Log patterns
+### Log patterns (dry-run first)
 
-- Ship `log_patterns: {}` until you’ve watched real logs.
-- Generic dry-run candidates only **highlight** in Ingress; they do not gate updates.
-- Promote a regex only after it cleanly matches the real event.
+- **New games must ship `log_patterns: {}`** (empty active). Put guesses in `log_pattern_candidates` plus the shared generics in `patterns.py`.
+- Generic + game candidates only **highlight** in Ingress Debug mode; they do **not** gate updates or player presence.
+- Prefer many broad, case-insensitive guesses (over-match) over one clever regex. Each regex is its own table row — they are not joined into a single pattern.
+- Turn on **Debug mode**, start the server, watch which dry_run rows hit, then promote a precise regex into `log_patterns` for that category.
 - Without active join/leave patterns, “update only when empty” cannot wait for players to leave.
 
 ---

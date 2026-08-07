@@ -219,8 +219,11 @@ class PluginTests(unittest.TestCase):
         self.assertIsNotNone(plugin.world_prepare)
         self.assertEqual(len(plugin.config_files), 3)
         self.assertEqual(plugin.config_files[0].format, "mod_list")
-        self.assertTrue(plugin.log_patterns.player_join)
-        self.assertTrue(plugin.log_patterns.ready)
+        # Dry-run first: no active patterns until promoted from Ingress hits.
+        self.assertEqual(plugin.log_patterns.player_join, [])
+        self.assertEqual(plugin.log_patterns.ready, [])
+        self.assertIn("Hosting game at", plugin.log_pattern_candidates.get("ready", []))
+        self.assertTrue(plugin.log_pattern_candidates.get("player_join"))
         plugin.apply_install_channel_options({"release_channel": "experimental"})
         assert plugin.package_install is not None
         self.assertEqual(
@@ -2094,7 +2097,7 @@ class StatusFormatTests(unittest.TestCase):
             "Dedicated server supervisor v2.1.12 · SteamCMD 1785186678",
         )
 
-    def test_hide_dry_run_when_active_category_exists(self) -> None:
+    def test_dry_run_rows_remain_visible_with_active_category(self) -> None:
         patterns = [
             {
                 "mode": "active",
@@ -2130,8 +2133,8 @@ class StatusFormatTests(unittest.TestCase):
             },
         ]
         rows = _format_pattern_rows(patterns)
-        # One row per regex; dry-run ready hidden because active ready exists.
-        self.assertEqual(rows.count("<tr>"), 3)
+        # One row per regex; dry-run peers stay visible for discovery.
+        self.assertEqual(rows.count("<tr>"), 4)
         self.assertIn("ready", rows)
         self.assertIn("player_count", rows)
         self.assertIn("Started server", rows)
@@ -2139,7 +2142,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("Players online: 2", rows)
         self.assertIn("Online players: 2", rows)
         self.assertIn("recent-matches", rows)
-        self.assertNotIn(r"\bready\b", rows)
+        self.assertIn(r"\bready\b", rows)
         highlights = _format_highlights(
             [
                 {
@@ -2153,7 +2156,7 @@ class StatusFormatTests(unittest.TestCase):
             active_categories={"ready"},
         )
         self.assertIn("active:ready", highlights)
-        self.assertNotIn("dry_run:ready", highlights)
+        self.assertIn("dry_run:ready", highlights)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(

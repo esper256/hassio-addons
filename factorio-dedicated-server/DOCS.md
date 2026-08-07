@@ -29,6 +29,10 @@ Anonymous Steam for app `427520` fails with “No subscription” — that path 
 
 After a good start you should see `Hosting game` and `InGame`. A Factorio `Got EOF on stdin` Error line alone is not a failure (older builds logged it when stdin was closed).
 
+## Log patterns (Debug mode)
+
+This add-on ships with **no active** log patterns. Shared + Factorio guesses run as **dry_run** only (highlights in OPEN WEB UI when **Debug mode** is on). Each regex is its own row — they are not combined into one pattern. Prefer over-matching until a line is proven, then promote that regex into `games/game.yaml` → `log_patterns`. Until join/leave are promoted, “update only when empty” cannot wait for players.
+
 ## Factorio.com username and token
 
 These settings are **not** for installing or updating the server.
@@ -68,7 +72,8 @@ Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Rev
 | Autosave interval | Minutes between autosaves |
 | Update on start | Check/download headless package when the app starts (recommended) |
 | Daily update check hour | Once-a-day factorio.com check (default **5**) |
-| Update only when empty | Restart for updates only when nobody is online |
+| Update only when empty | Restart for updates only when nobody is online (needs promoted player patterns) |
+| Debug mode | Ingress log-watch: dry_run candidate hits for pattern promotion |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update / version-mismatch alerts |
 | Network → UDP port | Host port players use (default 34197) |
