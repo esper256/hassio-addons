@@ -34,19 +34,19 @@ configuration:
     description: Optional Factorio.com authentication token (preferred over password). Required only for public listing. Keep secret.
   update_on_start:
     name: Update on start
-    description: Run SteamCMD before launching the server.
+    description: Check factorio.com for a newer free headless package before launching the server.
   auto_update_interval_minutes:
     name: Auto-update interval (minutes)
-    description: Used only when “Daily Steam check hour” is empty. How often to ask Steam whether a newer dedicated-server build exists. 0 turns periodic Steam checks off. Values below 15 are raised to 15.
+    description: Used only when “Daily update check hour” is empty. How often to ask factorio.com whether a newer headless package exists. 0 turns periodic checks off. Values below 15 are raised to 15.
   auto_update_check_hour:
-    name: Daily Steam check hour
-    description: Local hour (0–23) to ask Steam once per day for a newer dedicated-server build. Default is 5 (5:00am). Leave empty to use the interval setting instead.
+    name: Daily update check hour
+    description: Local hour (0–23) to ask factorio.com once per day for a newer headless package. Default is 5 (5:00am). Leave empty to use the interval setting instead.
   update_when_empty_only:
     name: Update only when empty
-    description: When a newer build is ready, wait until nobody is online before restarting so players are not interrupted. Requires working player join/leave detection (configured log patterns) — without that, emptiness cannot be determined and updates will not proceed while this is on.
+    description: When a newer package is ready, wait until nobody is online before restarting so players are not interrupted. Requires working player join/leave detection (configured log patterns) — without that, emptiness cannot be determined and updates will not proceed while this is on.
   update_on_version_mismatch:
     name: Update on version mismatch
-    description: If clients are rejected for a wrong/outdated version, check Steam for a newer build and only then restart to update.
+    description: If clients are rejected for a wrong/outdated version, check factorio.com for a newer package and only then restart to update.
   debug_mode:
     name: Debug mode
     description: Show Ingress log-watch pattern tooling (dry-run regex hits) and keep the Number of players card visible even when player-count patterns are still dry-run. Leave off for normal operation.

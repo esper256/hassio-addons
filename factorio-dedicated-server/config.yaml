@@ -1,9 +1,9 @@
 name: "Factorio Dedicated Server"
-description: "Factorio dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "1.0.0"
+description: "Factorio dedicated multiplayer server with free headless auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
+version: "1.0.1"
 slug: "factorio_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/factorio-dedicated-server"
-# SteamCMD / Factorio dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
+# Factorio Linux headless binary is x86_64. HAOS on aarch64 will not offer this app.
 arch:
   - amd64
 startup: application

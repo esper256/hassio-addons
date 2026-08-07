@@ -455,7 +455,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <p class="sub">Human actions for diagnosing the live server. Prefer these over the JSON API links.</p>
     <div class="actions">
       <a href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
-      <a href="api/logs/raw?lines=400&amp;format=text">View raw log tail</a>
+      <a href="api/logs/raw?lines=400&amp;format=text">View recent game output</a>
     </div>
     <div class="capture-row">
       <label for="capture-select">Saved captures</label>
@@ -476,7 +476,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <li><a href="api/logs/patterns">Pattern hit report</a></li>
         <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
         <li><a href="api/logs/captures">Captures list JSON</a></li>
-        <li><a href="api/logs/raw?lines=400">Raw log tail JSON</a></li>
+        <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
       </ul>
     </details>
   </main>
@@ -1116,11 +1116,21 @@ class StatusServer:
                         return
                     payload = toolbox.raw_tail(lines=lines)
                     if as_text:
-                        text = "\n".join(payload.get("lines") or [])
-                        header = f"# source: {payload.get('source') or 'unknown'}\n\n"
+                        lines_out = list(payload.get("lines") or [])
+                        label = (
+                            payload.get("source_label")
+                            or payload.get("source")
+                            or "unknown"
+                        )
+                        header = f"# {label}\n"
+                        if not lines_out and payload.get("empty_hint"):
+                            body = header + "\n" + str(payload["empty_hint"]) + "\n"
+                        else:
+                            text = "\n".join(lines_out)
+                            body = header + "\n" + text + ("\n" if text else "")
                         self._send(
                             200,
-                            (header + text + ("\n" if text else "")).encode("utf-8"),
+                            body.encode("utf-8"),
                             "text/plain; charset=utf-8",
                         )
                     else:

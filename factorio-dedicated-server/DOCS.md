@@ -5,13 +5,13 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 ## Requirements
 
 - Home Assistant OS / Supervised (**Apps** store)
-- Host architecture **amd64** (SteamCMD). Not offered on aarch64.
+- Host architecture **amd64** (Linux headless package). Not offered on aarch64.
 
 ## Quick start
 
 1. Set **Save name** and a **Game password** on Configuration (leave **Server name** blank for a generated `HAOS Factorio ####`).
 2. Keep **Public server listing** off unless you add Factorio.com username + token.
-3. **Start** the app (first Steam download can take several minutes — watch **Logs**).
+3. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab).
 4. Forward Network UDP **34197** on your router to this Home Assistant host.
 5. In Factorio, Multiplayer → Connect to address → `your-ha-ip:34197` (or LAN browser if LAN visibility is on).
 6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
@@ -28,8 +28,8 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 | LAN / public visibility | LAN default on; public needs Factorio.com credentials |
 | Pause when empty | Pause with nobody online |
 | Autosave interval | Minutes between autosaves |
-| Update on start | SteamCMD when the app starts (recommended) |
-| Daily Steam check hour | Once-a-day Steam check (default **5**) |
+| Update on start | Check/download headless package when the app starts (recommended) |
+| Daily update check hour | Once-a-day factorio.com check (default **5**) |
 | Update only when empty | Restart for updates only when nobody is online |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update / version-mismatch alerts |
@@ -45,8 +45,8 @@ In **OPEN WEB UI**: restore a listed backup, choose **NEW WORLD**, or **Restore 
 
 | Where | Contents |
 | --- | --- |
-| App **Logs** | Version banner, supervisor, `[game]`, `[steamcmd]` |
-| **OPEN WEB UI** | Status, restore, raw tail, log captures |
+| App **Logs** | Version banner, supervisor, download / install, `[game]` |
+| **OPEN WEB UI** → **View recent game output** | Running game process output only (empty until the server is up) |
 
 ## Data
 

@@ -40,6 +40,13 @@ from game_server.launch_prepare import (  # noqa: E402
     world_needs_prepare,
     write_config_files,
 )
+from game_server.package_install import (  # noqa: E402
+    PackageInstallSpec,
+    download_url_for,
+    install_or_update as package_install_or_update,
+    read_local_version,
+    update_available as package_update_available,
+)
 from game_server.plugin import LogPatterns, load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests  # noqa: E402
@@ -170,6 +177,8 @@ class ConfigTests(unittest.TestCase):
 
         factorio = load_plugin(FACTORIO_PLUGIN)
         factorio_keys = set(factorio.docker_env_keys())
+        self.assertTrue(factorio.uses_package_install)
+        self.assertIsNone(factorio.steam_app_id)
         self.assertIn("WORLD_NAME", factorio_keys)
         self.assertIn("SERVER_NAME", factorio_keys)
         self.assertIn("SERVER_SLOTS", factorio_keys)
@@ -194,7 +203,11 @@ class PluginTests(unittest.TestCase):
         self.assertTrue(FACTORIO_PLUGIN.is_file(), f"missing {FACTORIO_PLUGIN}")
         plugin = load_plugin(FACTORIO_PLUGIN)
         self.assertEqual(plugin.name, "Factorio")
-        self.assertEqual(plugin.steam_app_id, 427520)
+        self.assertIsNone(plugin.steam_app_id)
+        self.assertTrue(plugin.uses_package_install)
+        assert plugin.package_install is not None
+        self.assertEqual(plugin.package_install.kind, "http_archive")
+        self.assertIn("{version}", plugin.package_install.download_url)
         self.assertEqual(plugin.install_marker, "bin/x64/factorio")
         self.assertEqual(plugin.player_tracking_mode, "presence")
         self.assertEqual(plugin.ui_theme.get("accent"), "#ff7a1a")
@@ -2669,6 +2682,7 @@ class SteamCMDHelperTests(unittest.TestCase):
             run_uid=None,
             run_gid=None,
             stop_event=None,
+            on_line=None,
         ):
             idx = min(calls["n"], len(outputs) - 1)
             calls["n"] += 1
@@ -2803,6 +2817,89 @@ class LogToolsTests(unittest.TestCase):
             self.assertTrue(
                 (state / "captures" / capture["id"] / "capture.tar.gz").is_file()
             )
+
+
+class PackageInstallTests(unittest.TestCase):
+    """HTTP archive install path (non-Steam games)."""
+
+    def test_install_from_local_http_archive(self) -> None:
+        import http.server
+        import socketserver
+        import tarfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg_root = root / "serve"
+            pkg_root.mkdir()
+            content = pkg_root / "factorio-pkg"
+            (content / "bin" / "x64").mkdir(parents=True)
+            (content / "bin" / "x64" / "factorio").write_text("#!/bin/true\n", encoding="utf-8")
+            archive = pkg_root / "pkg.tar"
+            with tarfile.open(archive, "w") as tar:
+                tar.add(content, arcname="factorio-pkg")
+
+            versions = {"stable": {"headless": "9.9.9"}}
+            (pkg_root / "versions.json").write_text(
+                json.dumps(versions), encoding="utf-8"
+            )
+
+            class Handler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=str(pkg_root), **kwargs)
+
+                def log_message(self, format, *args):  # noqa: A003
+                    return
+
+            httpd = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+            port = httpd.server_address[1]
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                plugin = load_plugin(FIXTURE)
+                plugin.install_marker = "bin/x64/factorio"
+                plugin.package_install = PackageInstallSpec(
+                    kind="http_archive",
+                    version_url=f"http://127.0.0.1:{port}/versions.json",
+                    version_json_path="stable.headless",
+                    download_url=f"http://127.0.0.1:{port}/pkg.tar",
+                    strip_components=1,
+                )
+                install_dir = root / "game"
+                lines: list[str] = []
+                version = package_install_or_update(
+                    install_dir,
+                    plugin,
+                    on_line=lines.append,
+                )
+                self.assertEqual(version, "9.9.9")
+                self.assertTrue((install_dir / "bin" / "x64" / "factorio").is_file())
+                self.assertEqual(read_local_version(install_dir, plugin.package_install), "9.9.9")
+                self.assertTrue(any("Download" in line for line in lines))
+                check = package_update_available(install_dir, plugin)
+                self.assertTrue(check.check_ok)
+                self.assertFalse(check.update_available)
+                versions["stable"]["headless"] = "9.9.10"
+                (pkg_root / "versions.json").write_text(
+                    json.dumps(versions), encoding="utf-8"
+                )
+                check2 = package_update_available(install_dir, plugin)
+                self.assertTrue(check2.update_available)
+                self.assertEqual(check2.remote_build_id, "9.9.10")
+            finally:
+                httpd.shutdown()
+
+    def test_download_url_expands_version(self) -> None:
+        spec = PackageInstallSpec(
+            kind="http_archive",
+            version_url="https://example.invalid/v",
+            version_json_path="stable.headless",
+            download_url="https://example.invalid/get/{version}/headless",
+        )
+        self.assertEqual(
+            download_url_for(spec, "2.0.77"),
+            "https://example.invalid/get/2.0.77/headless",
+        )
 
 
 class LaunchPrepareTests(unittest.TestCase):

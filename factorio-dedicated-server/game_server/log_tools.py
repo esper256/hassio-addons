@@ -162,16 +162,33 @@ class LogToolbox:
             return []
 
     def raw_tail(self, lines: int = 400) -> dict[str, Any]:
-        """Prefer on-disk game logs; fall back to in-memory recent stdout."""
+        """Prefer on-disk game logs; fall back to in-memory recent output."""
 
         path = self.pick_log_file()
         file_lines = self.tail_file(path=path, lines=lines) if path else []
         if file_lines:
-            return {"source": str(path), "lines": file_lines}
+            return {
+                "source": str(path),
+                "source_label": f"Game log file ({path.name})",
+                "lines": file_lines,
+            }
         recent = [strip_ansi(line) for line in self.recent_lines_provider()]
+        clipped = recent[-max(1, lines) :]
+        if clipped:
+            return {
+                "source": "memory:recent_output",
+                "source_label": "Live process output (in memory)",
+                "lines": clipped,
+            }
         return {
             "source": "memory:recent_output",
-            "lines": recent[-max(1, lines) :],
+            "source_label": "Live process output (in memory)",
+            "lines": [],
+            "empty_hint": (
+                "No game process output yet — this view only shows the running "
+                "game server. For install, update, and supervisor messages, use "
+                "the Home Assistant app Logs tab."
+            ),
         }
 
     def analyze_lines(self, lines: Iterable[str]) -> dict[str, Any]:

@@ -37,6 +37,6 @@ The shared supervisor is game-agnostic. Copy an existing game add-on, point `gam
 | --- | --- |
 | `necesse-dedicated-server/` | Necesse app |
 | `stationeers-dedicated-server/` | Stationeers app (Unity / Linux Steam dedicated server) |
-| `factorio-dedicated-server/` | Factorio app (Linux Steam / headless host) |
+| `factorio-dedicated-server/` | Factorio app (free Linux headless package from factorio.com) |
 | `game-server-base/` | Shared SteamCMD supervisor; sync into game apps with `sync-into-addons.sh` |
 | `tests/` | Repo checks for HA app `config.yaml` rules |

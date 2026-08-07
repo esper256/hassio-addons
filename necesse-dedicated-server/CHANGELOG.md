@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.36
+
+- Sync shared supervisor: HTTP `package_install` path for non-Steam games; recent game output is game process only (Necesse still uses SteamCMD)
+
 ## 2.1.35
 
 - Sync shared supervisor: generic `config_files` + `world_prepare` launch helpers; signal-first stop when no stdin quit commands (Necesse still uses stdin save/exit)

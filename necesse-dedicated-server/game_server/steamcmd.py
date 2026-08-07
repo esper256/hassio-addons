@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .plugin import GamePlugin
 from .steam_gate import get_gate
@@ -107,6 +108,7 @@ def _run_streaming(
     run_uid: int | None = None,
     run_gid: int | None = None,
     stop_event: threading.Event | None = None,
+    on_line: Callable[[str], None] | None = None,
 ) -> tuple[int, str]:
     """Run a command, streaming stdout/stderr line-by-line into HA Logs."""
 
@@ -129,6 +131,11 @@ def _run_streaming(
                 lines.append(text)
                 LOG.info("%s %s", prefix, text)
                 remember_steamcmd_version(text)
+                if on_line is not None:
+                    try:
+                        on_line(text)
+                    except Exception:  # noqa: BLE001
+                        LOG.debug("steamcmd on_line callback failed", exc_info=True)
         finally:
             proc.stdout.close()
 
@@ -402,6 +409,7 @@ def wait_for_app_info(
     poll_interval_seconds: float = APP_INFO_POLL_INTERVAL_SECONDS,
     run_uid: int | None = None,
     run_gid: int | None = None,
+    on_line: Callable[[str], None] | None = None,
 ) -> str:
     """Block until Steam has install config for the app (a parseable build id).
 
@@ -436,6 +444,7 @@ def wait_for_app_info(
                 run_uid=run_uid,
                 run_gid=run_gid,
                 stop_event=stop_event,
+                on_line=on_line,
             )
         except subprocess.TimeoutExpired as exc:
             raise SteamCMDError(
@@ -536,6 +545,7 @@ def install_or_update(
     stop_event: threading.Event | None = None,
     run_uid: int | None = None,
     run_gid: int | None = None,
+    on_line: Callable[[str], None] | None = None,
 ) -> str | None:
     """Ensure Steam app info is ready, then run app_update.
 
@@ -588,6 +598,7 @@ def install_or_update(
                     stop_event=stop_event,
                     run_uid=run_uid,
                     run_gid=run_gid,
+                    on_line=on_line,
                 )
 
                 cmd = _build_app_update_cmd(
@@ -609,6 +620,7 @@ def install_or_update(
                     run_uid=run_uid,
                     run_gid=run_gid,
                     stop_event=stop_event,
+                    on_line=on_line,
                 )
                 if _install_succeeded(
                     returncode=returncode,
