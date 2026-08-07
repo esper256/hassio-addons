@@ -1,10 +1,12 @@
 name: Factorio
-steam_app_id: 427520
-steam_login: anonymous
-steam_branch: public
-# Pin SteamCMD to Linux depots (this add-on is amd64 Linux / HAOS only).
-steam_platform: linux
-validate_on_update: true
+# Wube's free headless package (no Steam ownership). Anonymous SteamCMD for
+# app 427520 returns "No subscription" — do not use SteamCMD for Factorio.
+package_install:
+  kind: http_archive
+  version_url: "https://factorio.com/api/latest-releases"
+  version_json_path: "stable.headless"
+  download_url: "https://factorio.com/get-download/{version}/headless/linux64"
+  strip_components: 1
 working_dir: /data/game
 data_dir: /data/world
 logs_dir: /data/logs

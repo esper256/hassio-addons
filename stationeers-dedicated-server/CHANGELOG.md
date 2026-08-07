@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- Sync shared supervisor: HTTP `package_install` path for non-Steam games; clearer recent game output link; install progress mirrored into status recent-output (Stationeers still uses SteamCMD)
+
 ## 1.0.4
 
 - Sync shared supervisor: generic `config_files` + `world_prepare` launch helpers; signal-first stop when no stdin quit commands (Stationeers still uses stdin save/quit)

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import steamcmd
+from . import package_install, steamcmd
 from .backup import BackupManager, EMPTY_WORLD
 from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
@@ -19,6 +19,7 @@ from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
 from .notify import Notifier
+from .package_install import PackageInstallError
 from .plugin import GamePlugin, load_plugin, resolve_plugin_path
 from .privileges import prepare_owned_paths
 from .process_manager import ProcessManager
@@ -486,10 +487,18 @@ class GameServerSupervisor:
             else "no_player_tracking"
         )
         player_tracking_mode = self.monitor.player_tracking_mode
-        install_meta = steamcmd.read_local_install_meta(
-            self.config.install_dir, self.plugin.steam_app_id
-        )
-        # Prefer on-disk build id for display; do not mutate self on a status read.
+        if self.plugin.uses_package_install and self.plugin.package_install is not None:
+            install_meta = {
+                "build_id": package_install.read_local_version(
+                    self.config.install_dir, self.plugin.package_install
+                ),
+                "last_updated": None,
+            }
+        else:
+            install_meta = steamcmd.read_local_install_meta(
+                self.config.install_dir, self.plugin.steam_app_id
+            )
+        # Prefer on-disk build id / package version for display.
         local_build = install_meta.get("build_id") or self.local_build_id
         active_world = locate_active_world(
             self.plugin,
@@ -506,6 +515,9 @@ class GameServerSupervisor:
             "game": self.plugin.name,
             "app_version": app_version(),
             "steam_app_id": self.plugin.steam_app_id,
+            "install_method": (
+                "package" if self.plugin.uses_package_install else "steamcmd"
+            ),
             "running": self.process.running,
             "lifecycle": phase,
             # Narrower than the old "not stopped" meaning; prefer ``lifecycle``.
@@ -626,25 +638,25 @@ class GameServerSupervisor:
         )
 
     def force_update_now(self) -> dict[str, Any]:
-        """Schedule a Steam update from the web UI, even if players are online.
+        """Schedule an update from the web UI, even if players are online.
 
-        Respects a long Steam cooldown (rate-limit style) so a button mash cannot
-        hammer Valve. Short spacing between SteamCMD calls still applies when the
-        main loop runs the update.
+        SteamCMD games respect a long Steam cooldown so a button mash cannot
+        hammer Valve. Package-install games skip the Steam gate.
         """
 
-        cooldown = self.steam_gate.cooldown_remaining()
-        if cooldown >= 600:
-            return {
-                "ok": False,
-                "error": (
-                    f"Steam is cooling down for about {int(cooldown)}s after a "
-                    "recent failure or rate limit. Try again later."
-                ),
-                "cooldown_seconds": int(cooldown),
-            }
+        if not self.plugin.uses_package_install:
+            cooldown = self.steam_gate.cooldown_remaining()
+            if cooldown >= 600:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Steam is cooling down for about {int(cooldown)}s after a "
+                        "recent failure or rate limit. Try again later."
+                    ),
+                    "cooldown_seconds": int(cooldown),
+                }
         # Clear soft "try later" from a previous apply failure; the Steam gate
-        # still enforces spacing / hard cooldowns.
+        # still enforces spacing / hard cooldowns for SteamCMD games.
         self._update_not_before = 0.0
         self.request_update(
             reason="manual",
@@ -652,10 +664,11 @@ class GameServerSupervisor:
             ignore_players=True,
         )
         online = self._players_online()
+        source = "the package download" if self.plugin.uses_package_install else "Steam"
         return {
             "ok": True,
             "message": (
-                "Update scheduled. The game server will stop, update from Steam, "
+                f"Update scheduled. The game server will stop, update from {source}, "
                 "and restart. Anyone playing will be disconnected."
             ),
             "update_pending": True,
@@ -698,14 +711,17 @@ class GameServerSupervisor:
     def _can_apply_update(self) -> bool:
         if time.time() < self._update_not_before:
             return False
-        if self.steam_gate.seconds_until_next_call() > 0:
+        if (
+            not self.plugin.uses_package_install
+            and self.steam_gate.seconds_until_next_call() > 0
+        ):
             return False
         if not self._update_bypass_window and not self._within_update_window():
             return False
         if self.config.update_when_empty_only and not self._update_ignore_players:
             online = self._players_online()
             if online is None:
-                # Do not block Steam updates forever when player tracking is not
+                # Do not block updates forever when player tracking is not
                 # available yet. Status explains that restarts may interrupt players.
                 LOG.debug(
                     "Player tracking unavailable; allowing update without empty check"
@@ -731,62 +747,101 @@ class GameServerSupervisor:
             return self.run_ids[0], self.run_ids[1]
         return None, None
 
+    def _activity_line(self, line: str) -> None:
+        """Push install/update progress into the status recent-output buffer."""
+
+        self.monitor.record_activity(line)
+
     def ensure_installed(self) -> None:
-        steamcmd.ensure_steamcmd(self.config.steamcmd_dir)
-        # Re-apply ownership after SteamCMD bootstrap files appear.
-        if self.config.drop_privileges:
-            self.run_ids = prepare_owned_paths(
-                self.config.run_as_user,
-                [
-                    self.config.steamcmd_dir,
-                    self.config.install_dir,
-                    steamcmd.steam_home_dir(),
-                ],
-            ) or self.run_ids
+        if not self.plugin.uses_package_install:
+            steamcmd.ensure_steamcmd(self.config.steamcmd_dir)
+            # Re-apply ownership after SteamCMD bootstrap files appear.
+            if self.config.drop_privileges:
+                self.run_ids = prepare_owned_paths(
+                    self.config.run_as_user,
+                    [
+                        self.config.steamcmd_dir,
+                        self.config.install_dir,
+                        steamcmd.steam_home_dir(),
+                    ],
+                ) or self.run_ids
         had_install = steamcmd.server_installed(
             self.config.install_dir, self.plugin.install_marker
         )
         if not had_install or self.config.update_on_start:
+            source = (
+                "package download"
+                if self.plugin.uses_package_install
+                else "SteamCMD"
+            )
             LOG.info(
-                "Installing/updating game server via SteamCMD into %s",
+                "Installing/updating game server via %s into %s",
+                source,
                 self.config.install_dir,
             )
             self._activity = "installing"
             run_uid, run_gid = self._steamcmd_identity()
             try:
-                self.local_build_id = steamcmd.install_or_update(
-                    self.config.steamcmd_dir,
-                    self.config.install_dir,
-                    self.plugin,
-                    retries=self.config.steamcmd_retries,
-                    retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
-                    stop_event=self._stop,
-                    run_uid=run_uid,
-                    run_gid=run_gid,
-                )
+                if self.plugin.uses_package_install:
+                    # Version compare inside install_or_update; no force on boot.
+                    self.local_build_id = package_install.install_or_update(
+                        self.config.install_dir,
+                        self.plugin,
+                        force=False,
+                        stop_event=self._stop,
+                        on_line=self._activity_line,
+                        run_uid=run_uid,
+                        run_gid=run_gid,
+                    )
+                else:
+                    self.local_build_id = steamcmd.install_or_update(
+                        self.config.steamcmd_dir,
+                        self.config.install_dir,
+                        self.plugin,
+                        retries=self.config.steamcmd_retries,
+                        retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
+                        stop_event=self._stop,
+                        run_uid=run_uid,
+                        run_gid=run_gid,
+                        on_line=self._activity_line,
+                    )
                 self.last_update_applied_at = time.time()
                 self.last_update_check_at = self.last_update_applied_at
                 self.update_apply_count += 1
                 self.last_update_error = None
                 self._apply_failures = 0
-            except SteamCMDError as exc:
+            except (SteamCMDError, PackageInstallError) as exc:
                 self.last_update_error = str(exc)
                 self.last_update_check_at = time.time()
+                label = (
+                    "package install"
+                    if self.plugin.uses_package_install
+                    else "SteamCMD"
+                )
                 self.notifier.notify(
                     "steamcmd_failed",
-                    f"{self.plugin.name}: SteamCMD failed",
+                    f"{self.plugin.name}: {label} failed",
                     str(exc),
                     force=True,
                 )
                 if had_install:
-                    # Steam/backend problem on restart: keep serving the existing
+                    # Backend problem on restart: keep serving the existing
                     # build instead of refusing to start the whole app.
-                    self.local_build_id = steamcmd.read_local_build_id(
-                        self.config.install_dir, self.plugin.steam_app_id
-                    )
+                    if (
+                        self.plugin.uses_package_install
+                        and self.plugin.package_install is not None
+                    ):
+                        self.local_build_id = package_install.read_local_version(
+                            self.config.install_dir, self.plugin.package_install
+                        )
+                    else:
+                        self.local_build_id = steamcmd.read_local_build_id(
+                            self.config.install_dir, self.plugin.steam_app_id
+                        )
                     LOG.error(
-                        "SteamCMD update-on-start failed; continuing with existing "
-                        "install (buildid=%s): %s",
+                        "%s update-on-start failed; continuing with existing "
+                        "install (version=%s): %s",
+                        label,
                         self.local_build_id or "unknown",
                         exc,
                     )
@@ -795,18 +850,24 @@ class GameServerSupervisor:
             finally:
                 self._activity = None
             if self.config.drop_privileges:
-                prepare_owned_paths(
-                    self.config.run_as_user,
-                    [
-                        self.config.install_dir,
-                        self.config.steamcmd_dir,
-                        steamcmd.steam_home_dir(),
-                    ],
-                )
+                paths = [self.config.install_dir]
+                if not self.plugin.uses_package_install:
+                    paths.extend(
+                        [self.config.steamcmd_dir, steamcmd.steam_home_dir()]
+                    )
+                prepare_owned_paths(self.config.run_as_user, paths)
         else:
-            self.local_build_id = steamcmd.read_local_build_id(
-                self.config.install_dir, self.plugin.steam_app_id
-            )
+            if (
+                self.plugin.uses_package_install
+                and self.plugin.package_install is not None
+            ):
+                self.local_build_id = package_install.read_local_version(
+                    self.config.install_dir, self.plugin.package_install
+                )
+            else:
+                self.local_build_id = steamcmd.read_local_build_id(
+                    self.config.install_dir, self.plugin.steam_app_id
+                )
 
     def _schedule_update_retry(self, exc: Exception) -> None:
         self._apply_failures += 1
@@ -871,31 +932,44 @@ class GameServerSupervisor:
 
             run_uid, run_gid = self._steamcmd_identity()
             try:
-                self.local_build_id = steamcmd.install_or_update(
-                    self.config.steamcmd_dir,
-                    self.config.install_dir,
-                    self.plugin,
-                    retries=self.config.steamcmd_retries,
-                    retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
-                    stop_event=self._stop,
-                    run_uid=run_uid,
-                    run_gid=run_gid,
-                )
+                if self.plugin.uses_package_install:
+                    self.local_build_id = package_install.install_or_update(
+                        self.config.install_dir,
+                        self.plugin,
+                        force=True,
+                        stop_event=self._stop,
+                        on_line=self._activity_line,
+                        run_uid=run_uid,
+                        run_gid=run_gid,
+                    )
+                else:
+                    self.local_build_id = steamcmd.install_or_update(
+                        self.config.steamcmd_dir,
+                        self.config.install_dir,
+                        self.plugin,
+                        retries=self.config.steamcmd_retries,
+                        retry_delay_seconds=self.config.steamcmd_retry_delay_seconds,
+                        stop_event=self._stop,
+                        run_uid=run_uid,
+                        run_gid=run_gid,
+                        on_line=self._activity_line,
+                    )
                 if self.config.drop_privileges:
-                    self.run_ids = prepare_owned_paths(
-                        self.config.run_as_user,
-                        [
-                            self.config.install_dir,
-                            self.config.steamcmd_dir,
-                            steamcmd.steam_home_dir(),
-                        ],
-                    ) or self.run_ids
+                    paths = [self.config.install_dir]
+                    if not self.plugin.uses_package_install:
+                        paths.extend(
+                            [self.config.steamcmd_dir, steamcmd.steam_home_dir()]
+                        )
+                    self.run_ids = (
+                        prepare_owned_paths(self.config.run_as_user, paths)
+                        or self.run_ids
+                    )
                 self.last_update_applied_at = time.time()
                 self.update_apply_count += 1
                 self.last_update_error = None
                 self._apply_failures = 0
                 self._update_not_before = 0.0
-            except SteamCMDError as exc:
+            except (SteamCMDError, PackageInstallError) as exc:
                 try:
                     self.capture_logs("update_failed")
                 except OSError:
@@ -922,7 +996,7 @@ class GameServerSupervisor:
             self.notifier.notify(
                 "updated",
                 f"{self.plugin.name}: updated",
-                f"Now running build {self.local_build_id or 'unknown'} (reason: {reason})",
+                f"Now running {self.local_build_id or 'unknown'} (reason: {reason})",
                 force=True,
             )
         finally:
@@ -960,7 +1034,7 @@ class GameServerSupervisor:
         reason: str,
         bypass_window: bool,
     ) -> bool | None:
-        """Ask SteamCMD whether a newer build exists.
+        """Ask whether a newer build/package version exists.
 
         Returns:
             True — newer build found; apply was scheduled (still not stopped here)
@@ -968,32 +1042,39 @@ class GameServerSupervisor:
             None — deferred for Steam cooldown/spacing; caller may retry
         """
 
-        cooldown = self.steam_gate.seconds_until_next_call()
-        if cooldown > 0:
-            LOG.info(
-                "Deferring Steam update check (%s); Steam cooldown %.0fs remaining",
-                reason,
-                cooldown,
-            )
-            return None
+        if not self.plugin.uses_package_install:
+            cooldown = self.steam_gate.seconds_until_next_call()
+            if cooldown > 0:
+                LOG.info(
+                    "Deferring Steam update check (%s); Steam cooldown %.0fs remaining",
+                    reason,
+                    cooldown,
+                )
+                return None
 
         self.update_check_count += 1
         self.last_update_check_at = time.time()
-        run_uid, run_gid = self._steamcmd_identity()
-        result = steamcmd.update_available(
-            self.config.steamcmd_dir,
-            self.config.install_dir,
-            self.plugin,
-            stop_event=self._stop,
-            run_uid=run_uid,
-            run_gid=run_gid,
-        )
+        if self.plugin.uses_package_install:
+            result = package_install.update_available(
+                self.config.install_dir,
+                self.plugin,
+            )
+        else:
+            run_uid, run_gid = self._steamcmd_identity()
+            result = steamcmd.update_available(
+                self.config.steamcmd_dir,
+                self.config.install_dir,
+                self.plugin,
+                stop_event=self._stop,
+                run_uid=run_uid,
+                run_gid=run_gid,
+            )
         self.local_build_id = result.local_build_id or self.local_build_id
         self.remote_build_id = result.remote_build_id
         if not result.check_ok:
             self.last_update_error = result.error
             LOG.warning(
-                "Steam update check unavailable (local=%s): %s",
+                "Update check unavailable (local=%s): %s",
                 result.local_build_id or "unknown",
                 result.error,
             )
@@ -1015,19 +1096,24 @@ class GameServerSupervisor:
             return True
 
         LOG.info(
-            "Game is up to date (buildid=%s); not restarting (%s)",
+            "Game is up to date (version=%s); not restarting (%s)",
             result.local_build_id or result.remote_build_id or "unknown",
             reason,
         )
         self.last_update_error = None
         if reason == "version_mismatch":
+            source = (
+                "the package source"
+                if self.plugin.uses_package_install
+                else "Steam"
+            )
             self.notifier.notify(
                 "version_mismatch_no_update",
-                f"{self.plugin.name}: version mismatch, no Steam update",
+                f"{self.plugin.name}: version mismatch, no update available",
                 (
-                    "A client was rejected for a version problem, but Steam reports "
-                    f"the install is already current "
-                    f"(build {result.local_build_id or 'unknown'}). "
+                    "A client was rejected for a version problem, but "
+                    f"{source} reports the install is already current "
+                    f"(version {result.local_build_id or 'unknown'}). "
                     "Not stopping the server."
                 ),
             )
@@ -1281,12 +1367,20 @@ def main(argv: list[str] | None = None) -> int:
         "Ingress status UI listens on port %s (HA OPEN WEB UI; host port not required)",
         config.status_http_port,
     )
-    LOG.info(
-        "Starting supervisor for %s (appid=%s, app_version=%s, install_dir=%s)",
-        plugin.name,
-        plugin.steam_app_id,
-        version,
-        config.install_dir,
-    )
+    if plugin.uses_package_install:
+        LOG.info(
+            "Starting supervisor for %s (package_install, app_version=%s, install_dir=%s)",
+            plugin.name,
+            version,
+            config.install_dir,
+        )
+    else:
+        LOG.info(
+            "Starting supervisor for %s (appid=%s, app_version=%s, install_dir=%s)",
+            plugin.name,
+            plugin.steam_app_id,
+            version,
+            config.install_dir,
+        )
     supervisor = GameServerSupervisor(plugin, config)
     return supervisor.run()

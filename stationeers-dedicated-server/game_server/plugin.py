@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .launch_prepare import ConfigFileSpec, WorldPrepareSpec
+from .package_install import PackageInstallSpec
 from .world_save import WorldSaveSpec
 
 _OPTION_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
@@ -43,15 +44,16 @@ class LogPatterns:
 
 @dataclass
 class GamePlugin:
-    """Describes how to install and run one Steam dedicated server."""
+    """Describes how to install and run one dedicated game server."""
 
     name: str
-    steam_app_id: int
     working_dir: str
     executable: list[str]
     data_dir: str
     logs_dir: str
     install_marker: str
+    # SteamCMD app id when using Steam installs. Optional for package_install games.
+    steam_app_id: int | None = None
     backup_paths: list[str] = field(default_factory=list)
     steam_branch: str = "public"
     steam_login: str = "anonymous"
@@ -59,6 +61,8 @@ class GamePlugin:
     # Optional SteamCMD platform pin (e.g. "linux"). Empty = host-native depots.
     steam_platform: str = ""
     validate_on_update: bool = True
+    # Optional non-Steam HTTP archive install (free headless tarballs, etc.).
+    package_install: PackageInstallSpec | None = None
     env: dict[str, str] = field(default_factory=dict)
     # Simple option_key → CLI flag pairs (``-flag value`` or ``-flag=value``).
     arg_map: dict[str, str] = field(default_factory=dict)
@@ -118,9 +122,16 @@ class GamePlugin:
                 f"Unsupported player_tracking_mode {tracking_mode!r}; "
                 f"expected count or presence"
             )
+        package_install = PackageInstallSpec.from_dict(data.get("package_install"))
+        raw_app_id = data.get("steam_app_id")
+        if package_install is None and raw_app_id is None:
+            raise ValueError(
+                "Game plugin requires steam_app_id (SteamCMD) or package_install"
+            )
+        steam_app_id = int(raw_app_id) if raw_app_id is not None else None
         return cls(
             name=data["name"],
-            steam_app_id=int(data["steam_app_id"]),
+            steam_app_id=steam_app_id,
             working_dir=data.get("working_dir", "/data/game"),
             executable=list(data["executable"]),
             data_dir=data.get("data_dir", "/data/world"),
@@ -134,6 +145,7 @@ class GamePlugin:
             steam_password=data.get("steam_password", ""),
             steam_platform=str(data.get("steam_platform") or "").strip().lower(),
             validate_on_update=bool(data.get("validate_on_update", True)),
+            package_install=package_install,
             env={str(k): str(v) for k, v in (data.get("env") or {}).items()},
             arg_map={str(k): str(v) for k, v in (data.get("arg_map") or {}).items()},
             argv_prefix=[str(x) for x in (data.get("argv_prefix") or [])],
@@ -171,6 +183,10 @@ class GamePlugin:
             ui_theme=_coerce_ui_theme(data.get("ui_theme")),
             player_tracking_mode=tracking_mode,
         )
+
+    @property
+    def uses_package_install(self) -> bool:
+        return self.package_install is not None
 
     def docker_env_keys(self) -> list[str]:
         """UPPER_SNAKE env var names this game accepts as Docker/compose options.

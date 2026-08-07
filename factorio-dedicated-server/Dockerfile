@@ -1,6 +1,6 @@
 # Home Assistant add-on: Factorio dedicated server
 # Thin game layer over the shared game-server-base supervisor.
-# Game identity lives in games/game.yaml; native Linux binary (no Java).
+# Installs Wube's free Linux headless package (not SteamCMD).
 
 FROM debian:bookworm-slim
 
@@ -14,17 +14,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt \
     INSTALL_DIR=/data/game \
-    STEAM_HOME=/data/steam-home \
     HOME=/data/steam-home \
     APP_VERSION=${BUILD_VERSION} \
     STATUS_HTTP_PORT=8099
 
-RUN dpkg --add-architecture i386 \
- && apt-get update \
+RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
-      lib32gcc-s1 \
       locales \
       python3 \
       python3-yaml \
@@ -35,14 +32,9 @@ RUN dpkg --add-architecture i386 \
  && locale-gen en_US.UTF-8 \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /opt/steamcmd \
- && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
-    | tar -xz -C /opt/steamcmd \
- && /opt/steamcmd/steamcmd.sh +quit || true
-
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
  && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /data/steam-home /opt/games \
- && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver
+ && chown -R gameserver:gameserver /data /home/gameserver
 
 # Shared supervisor already vendored into this add-on (run
 # ../game-server-base/sync-into-addons.sh on the host after base edits; not a
@@ -60,7 +52,7 @@ WORKDIR /data/game
 
 LABEL \
   io.hass.name="Factorio Dedicated Server" \
-  io.hass.description="Factorio dedicated server with SteamCMD auto-updates, smart restarts, backups, and status page" \
+  io.hass.description="Factorio dedicated server with auto-updates, smart restarts, backups, and status page" \
   io.hass.type="app" \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.arch="${BUILD_ARCH}" \
