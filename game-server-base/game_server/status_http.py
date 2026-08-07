@@ -335,19 +335,13 @@ HTML_PAGE = """<!DOCTYPE html>
       overflow: auto;
       max-width: 42rem;
     }}
-    .recent-matches div {{
+    .recent-matches .match-line {{
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      color: var(--muted);
     }}
-    .pattern-cell {{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
-      max-width: 18rem;
-      word-break: break-all;
-    }}
+    .recent-matches .match-line.active {{ color: var(--good); }}
+    .recent-matches .match-line.dry_run {{ color: var(--accent); }}
   </style>
 </head>
 <body>
@@ -443,7 +437,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </p>
       <table>
         <thead>
-          <tr><th>Mode</th><th>Category</th><th>Pattern</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
+          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
         </thead>
         <tbody id="pattern-rows">
           {pattern_rows}
@@ -1706,6 +1700,7 @@ def _active_pattern_categories(patterns: list[dict[str, Any]]) -> set[str]:
 
 
 _RECENT_MATCH_LIMIT = 5
+_CATEGORY_RECENT_MATCH_LIMIT = 10
 
 
 def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
@@ -1723,67 +1718,100 @@ def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
     return list(reversed(lines[-_RECENT_MATCH_LIMIT:]))
 
 
-def _format_recent_matches_cell(item: dict[str, Any]) -> str:
-    """Render up to 5 newest hits for a single regex."""
+def _format_category_recent_matches(items: list[dict[str, Any]]) -> str:
+    """Merge recent hits for a category; color by source regex mode.
 
+    Active matches render green; dry-run-only matches render accent/orange.
+    Duplicate line text prefers the active color when both modes saw it.
+    """
+
+    # Prefer active entries first so duplicates keep the active color.
+    ordered = sorted(
+        items,
+        key=lambda item: (0 if (item.get("mode") or "") == "active" else 1),
+    )
     parts: list[str] = []
     seen: set[str] = set()
-    for line in _recent_matches_for_pattern(item):
-        text = strip_ansi(line).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        if len(text) > 160:
-            text = text[:160] + "…"
-        parts.append(f"<div>{_html_escape(text)}</div>")
+    for item in ordered:
+        mode = item.get("mode") or "dry_run"
+        if mode not in ("active", "dry_run"):
+            mode = "dry_run"
+        for line in _recent_matches_for_pattern(item):
+            text = strip_ansi(line).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            if len(text) > 160:
+                text = text[:160] + "…"
+            parts.append(
+                f"<div class='match-line {mode}'>{_html_escape(text)}</div>"
+            )
+            if len(parts) >= _CATEGORY_RECENT_MATCH_LIMIT:
+                break
+        if len(parts) >= _CATEGORY_RECENT_MATCH_LIMIT:
+            break
     if not parts:
         return ""
     return f"<div class='recent-matches'>{''.join(parts)}</div>"
 
 
-def _format_pattern_snippet(pattern: str, *, limit: int = 72) -> str:
-    text = str(pattern or "").strip()
-    if len(text) > limit:
-        text = text[: limit - 1] + "…"
-    return _html_escape(text)
-
-
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
-    """One table row per regex so broad dry-run guesses stay visible.
+    """One table row per category; regex text stays out of the UI.
 
-    Do not collapse or hide dry-run peers when an active pattern exists —
-    over-matching candidates are how we discover promotions.
+    Dry-run peers remain in the hit data (and colored recent matches) so
+    over-matching candidates stay discoverable when log shapes drift.
     """
 
     if not patterns:
-        return "<tr><td colspan='5'>(no patterns configured)</td></tr>"
+        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
 
-    ordered = sorted(
-        patterns,
-        key=lambda item: (
-            0 if int(item.get("hits") or 0) else 1,
-            0 if (item.get("mode") or "") == "active" else 1,
-            str(item.get("category") or ""),
-            -int(item.get("hits") or 0),
-            str(item.get("pattern") or ""),
-        ),
-    )
-    rows = []
-    for item in ordered[:120]:
-        mode = item.get("mode") or "dry_run"
-        stale = (
-            " <span class='tag stale'>stale</span>"
-            if item.get("stale") and int(item.get("hits") or 0) > 0
-            else ""
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for item in patterns:
+        category = str(item.get("category") or "")
+        by_category.setdefault(category, []).append(item)
+
+    def _category_sort_key(category: str) -> tuple[Any, ...]:
+        items = by_category[category]
+        active_hits = sum(
+            int(item.get("hits") or 0)
+            for item in items
+            if (item.get("mode") or "") == "active"
         )
-        recent = _format_recent_matches_cell(item)
+        has_active = any((item.get("mode") or "") == "active" for item in items)
+        any_hits = any(int(item.get("hits") or 0) for item in items)
+        return (
+            0 if any_hits else 1,
+            0 if has_active else 1,
+            0 if active_hits else 1,
+            category,
+            -active_hits,
+        )
+
+    rows = []
+    for category in sorted(by_category, key=_category_sort_key)[:120]:
+        items = by_category[category]
+        modes: list[str] = []
+        for mode in ("active", "dry_run"):
+            if any((item.get("mode") or "") == mode for item in items):
+                modes.append(mode)
+        mode_html = "".join(
+            f"<span class='tag {mode}'>{mode}</span>" for mode in modes
+        ) or "<span class='tag dry_run'>dry_run</span>"
+        stale = any(
+            item.get("stale") and int(item.get("hits") or 0) > 0 for item in items
+        )
+        stale_html = " <span class='tag stale'>stale</span>" if stale else ""
+        active_hits = sum(
+            int(item.get("hits") or 0)
+            for item in items
+            if (item.get("mode") or "") == "active"
+        )
+        recent = _format_category_recent_matches(items)
         rows.append(
             "<tr>"
-            f"<td><span class='tag {mode}'>{mode}</span>{stale}</td>"
-            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
-            f"<td class='pattern-cell' title='{_html_escape(str(item.get('pattern') or ''))}'>"
-            f"{_format_pattern_snippet(str(item.get('pattern') or ''))}</td>"
-            f"<td>{int(item.get('hits') or 0)}</td>"
+            f"<td>{mode_html}{stale_html}</td>"
+            f"<td>{_html_escape(category)}</td>"
+            f"<td>{active_hits}</td>"
             f"<td>{recent}</td>"
             "</tr>"
         )

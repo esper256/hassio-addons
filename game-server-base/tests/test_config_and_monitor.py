@@ -1505,7 +1505,8 @@ class StatusFormatTests(unittest.TestCase):
         self.assertLess(world_i, backups_i)
         self.assertLess(backups_i, disk_i)
         self.assertIn("Recent matches (newest first)", html)
-        self.assertIn(">Pattern</th>", html)
+        self.assertNotIn(">Pattern</th>", html)
+        self.assertIn(">Hits</th>", html)
         # Default (no debug_mode): log-watch hidden; players hidden without tracking.
         self.assertIn('id="log-watch"', html)
         self.assertIn("hidden", view["log_watch_class"])
@@ -2181,8 +2182,8 @@ class StatusFormatTests(unittest.TestCase):
             },
         ]
         rows = _format_pattern_rows(patterns)
-        # One row per regex; dry-run peers stay visible for discovery.
-        self.assertEqual(rows.count("<tr>"), 4)
+        # One row per category; regex text stays out of the table.
+        self.assertEqual(rows.count("<tr>"), 2)
         self.assertIn("ready", rows)
         self.assertIn("player_count", rows)
         self.assertIn("Started server", rows)
@@ -2190,7 +2191,16 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("Players online: 2", rows)
         self.assertIn("Online players: 2", rows)
         self.assertIn("recent-matches", rows)
-        self.assertIn(r"\bready\b", rows)
+        self.assertIn("match-line active", rows)
+        self.assertIn("match-line dry_run", rows)
+        self.assertNotIn(r"\bready\b", rows)
+        self.assertNotIn("players online", rows)  # pattern text not shown
+        # Hits count active regexes only (ready active=2; dry_run=5 ignored).
+        self.assertIn("<td>2</td>", rows)
+        # player_count is dry_run-only → 0 active hits.
+        self.assertIn("<td>0</td>", rows)
+        self.assertIn("tag active", rows)
+        self.assertIn("tag dry_run", rows)
         highlights = _format_highlights(
             [
                 {
