@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- **Release channel** option: Stable (default) or Experimental headless builds from factorio.com
+- Keep game stdin open so Factorio no longer logs a scary “Got EOF on stdin” Error after a successful host
+- Package update-check log lines no longer say “Steam”
+
 ## 1.0.1
 
 - Install from Wube’s **free headless package** (factorio.com), not SteamCMD — anonymous Steam returns “No subscription” for app 427520

@@ -32,6 +32,9 @@ configuration:
   factorio_token:
     name: Factorio.com token
     description: "Auth token from factorio.com/profile (Reveal) — use this, not your account password. Only needed for public listing. Not used to download the headless server. Keep secret."
+  release_channel:
+    name: Release channel
+    description: "Which factorio.com headless build to install. Stable matches the current retail client; Experimental tracks Wube’s newer test builds (clients must match). Changing channel downloads that build on the next update."
   update_on_start:
     name: Update on start
     description: Check factorio.com for a newer free headless package before launching the server (no login; not SteamCMD).

@@ -32,6 +32,9 @@ configuration:
   java_opts:
     name: Java options
     description: Extra JVM flags, for example memory limits.
+  steam_branch:
+    name: Steam branch
+    description: "SteamCMD branch to install. Public is the normal release; Experimental tracks Necesse’s Steam beta. Clients must match. Changing branch redownloads on the next update."
   update_on_start:
     name: Update on start
     description: Run SteamCMD before launching the server.

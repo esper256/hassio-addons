@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6
+
+- **Steam branch** option: Public (default) or Beta
+- Sync shared supervisor: install-channel overrides + keep game stdin open
+
 ## 1.0.5
 
 - Sync shared supervisor: HTTP `package_install` path for non-Steam games; recent game output is game process only (Stationeers still uses SteamCMD)

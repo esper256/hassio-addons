@@ -160,7 +160,6 @@ class ProcessManager:
             cmd = self.build_command()
             env = os.environ.copy()
             env.update(self.plugin.env)
-            want_stdin = bool(self.plugin.stop_stdin_commands)
             if self.start_count > 0:
                 self.restart_count += 1
             self.start_count += 1
@@ -172,11 +171,15 @@ class ProcessManager:
                 workdir,
                 self.run_uid,
             )
+            # Keep stdin open even when we have no stop commands. Some headless
+            # servers (Factorio) log a scary "Got EOF on stdin" Error and close
+            # their console reader when stdin is /dev/null — hosting still works,
+            # but PIPE avoids the false alarm. Stop commands write to this pipe.
             self.proc = subprocess.Popen(
                 cmd,
                 cwd=str(workdir),
                 env=env,
-                stdin=subprocess.PIPE if want_stdin else subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

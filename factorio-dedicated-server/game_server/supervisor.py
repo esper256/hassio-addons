@@ -98,6 +98,8 @@ class GameServerSupervisor:
         self.plugin.working_dir = str(
             config.game_options.get("working_dir") or config.install_dir
         )
+        # HA/Docker: steam_branch and/or package release_channel (stable/experimental).
+        self.plugin.apply_install_channel_options(config.game_options)
 
         Path(config.state_dir).mkdir(parents=True, exist_ok=True)
         Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -518,6 +520,12 @@ class GameServerSupervisor:
             "steam_app_id": self.plugin.steam_app_id,
             "install_method": (
                 "package" if self.plugin.uses_package_install else "steamcmd"
+            ),
+            "steam_branch": self.plugin.steam_branch,
+            "release_channel": (
+                str(self.config.game_options.get("release_channel") or "stable")
+                if self.plugin.uses_package_install
+                else None
             ),
             "running": self.process.running,
             "lifecycle": phase,
@@ -1135,33 +1143,51 @@ class GameServerSupervisor:
         minutes = self.steam_gate.clamp_check_interval_minutes(
             self.config.auto_update_interval_minutes
         )
+        source = (
+            "package"
+            if self.plugin.uses_package_install
+            else "Steam"
+        )
         if minutes <= 0:
-            LOG.info("Periodic Steam update checks disabled")
+            LOG.info("Periodic %s update checks disabled", source)
             return
         check_hour = self.config.auto_update_check_hour
         if check_hour is not None:
-            LOG.info(
-                "Checking Steam for updates once daily at local %02d:00 "
-                "(Steam spacing %.0fs, max retries %s)",
-                check_hour,
-                self.steam_gate.policy.min_interval_seconds,
-                self.steam_gate.policy.max_retries,
-            )
+            if self.plugin.uses_package_install:
+                LOG.info(
+                    "Checking package source for updates once daily at local %02d:00",
+                    check_hour,
+                )
+            else:
+                LOG.info(
+                    "Checking Steam for updates once daily at local %02d:00 "
+                    "(Steam spacing %.0fs, max retries %s)",
+                    check_hour,
+                    self.steam_gate.policy.min_interval_seconds,
+                    self.steam_gate.policy.max_retries,
+                )
         else:
-            LOG.info(
-                "Checking Steam for updates every %s minutes "
-                "(Steam spacing %.0fs, max retries %s)",
-                minutes,
-                self.steam_gate.policy.min_interval_seconds,
-                self.steam_gate.policy.max_retries,
-            )
+            if self.plugin.uses_package_install:
+                LOG.info(
+                    "Checking package source for updates every %s minutes",
+                    minutes,
+                )
+            else:
+                LOG.info(
+                    "Checking Steam for updates every %s minutes "
+                    "(Steam spacing %.0fs, max retries %s)",
+                    minutes,
+                    self.steam_gate.policy.min_interval_seconds,
+                    self.steam_gate.policy.max_retries,
+                )
         while True:
             wait_for = self._seconds_until_next_update_check()
             if wait_for <= 0:
                 return
             if check_hour is not None:
                 LOG.info(
-                    "Next Steam update check in %.0fs (daily at local %02d:00)",
+                    "Next %s update check in %.0fs (daily at local %02d:00)",
+                    source,
                     wait_for,
                     check_hour,
                 )
@@ -1351,10 +1377,16 @@ def main(argv: list[str] | None = None) -> int:
     if not config.install_dir:
         config.install_dir = "/data/game"
 
-    LOG.info(
-        "Home Assistant Logs tab = this container's stdout: supervisor events, "
-        "[game] process output, [game-log] file-only lines, [steamcmd] updates"
-    )
+    if plugin.uses_package_install:
+        LOG.info(
+            "Home Assistant Logs tab = this container's stdout: supervisor events, "
+            "[game] process output, [game-log] file-only lines, [package] downloads"
+        )
+    else:
+        LOG.info(
+            "Home Assistant Logs tab = this container's stdout: supervisor events, "
+            "[game] process output, [game-log] file-only lines, [steamcmd] updates"
+        )
     LOG.info(
         "Ingress status UI listens on port %s (HA OPEN WEB UI; host port not required)",
         config.status_http_port,

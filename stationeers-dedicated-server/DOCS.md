@@ -31,6 +31,7 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 | Start condition | New worlds only — e.g. `DefaultStart`, `Brutal`, `BrutalCommunity` |
 | Pause when empty | Pause with nobody online |
 | Autosave / interval | World persistence |
+| Steam branch | `public` (default) or `beta` — clients must match |
 | Update on start | SteamCMD when the app starts (recommended) |
 | Daily Steam check hour | Once-a-day Steam check (default **5**) |
 | Update only when empty | Restart for updates only when nobody is online |

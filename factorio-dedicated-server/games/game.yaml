@@ -4,7 +4,8 @@ name: Factorio
 package_install:
   kind: http_archive
   version_url: "https://factorio.com/api/latest-releases"
-  version_json_path: "stable.headless"
+  # {release_channel} comes from HA option release_channel (stable|experimental).
+  version_json_path: "{release_channel}.headless"
   download_url: "https://factorio.com/get-download/{version}/headless/linux64"
   strip_components: 1
 working_dir: /data/game

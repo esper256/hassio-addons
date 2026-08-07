@@ -1,6 +1,6 @@
 name: "Necesse Dedicated Server"
 description: "Necesse dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "2.1.36"
+version: "2.1.37"
 slug: "necesse_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/necesse-dedicated-server"
 # SteamCMD / Necesse dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
@@ -37,6 +37,7 @@ options:
   zip_saves: true
   server_language: "en"
   java_opts: "-Xms512M -Xmx2G"
+  steam_branch: public
   update_on_start: true
   auto_update_interval_minutes: 1440
   auto_update_check_hour: 5
@@ -62,6 +63,7 @@ schema:
   zip_saves: bool
   server_language: str
   java_opts: str?
+  steam_branch: list(public|experimental)
   update_on_start: bool
   auto_update_interval_minutes: int(0,)
   auto_update_check_hour: int(0,23)?
