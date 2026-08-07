@@ -2910,11 +2910,6 @@ class PackageInstallTests(unittest.TestCase):
         import tarfile
         import threading
 
-        from game_server.package_install import (
-            LAYOUT_VERSION,
-            read_layout_version,
-        )
-
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pkg_root = root / "serve"
@@ -2997,17 +2992,6 @@ class PackageInstallTests(unittest.TestCase):
                 self.assertTrue(
                     (install_dir / "data" / "recycler" / "recycling.lua").is_file()
                 )
-                self.assertEqual(read_layout_version(install_dir), LAYOUT_VERSION)
-
-                # Same version + current layout → no-op; drop layout to force
-                # one clean re-extract for broken merge installs.
-                layout = install_dir / ".package_layout"
-                layout.unlink()
-                stale.parent.mkdir(parents=True, exist_ok=True)
-                stale.write_text("-- planted stale\n", encoding="utf-8")
-                package_install_or_update(install_dir, plugin)
-                self.assertFalse(stale.exists())
-                self.assertEqual(read_layout_version(install_dir), LAYOUT_VERSION)
             finally:
                 httpd.shutdown()
 

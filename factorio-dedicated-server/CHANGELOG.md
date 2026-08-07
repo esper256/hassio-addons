@@ -3,7 +3,6 @@
 ## 1.0.4
 
 - Fix package updates: **clean-replace** the headless install tree instead of merging (stale `quality/.../recycling.lua` from 2.0 left after a 2.1 overlay caused crash loops)
-- Existing 2.1.x installs re-extract once on next start (layout stamp)
 
 ## 1.0.3
 

@@ -31,10 +31,6 @@ class _PackagePlugin(Protocol):
 
 _SUPPORTED_KINDS = frozenset({"http_archive"})
 VERSION_FILENAME = ".package_version"
-# Bump when extract/install layout semantics change so already-current game
-# versions still get one clean re-extract (e.g. merge→replace).
-LAYOUT_FILENAME = ".package_layout"
-LAYOUT_VERSION = "2"
 
 
 class PackageInstallError(RuntimeError):
@@ -154,10 +150,6 @@ def version_path(install_dir: str | Path, spec: PackageInstallSpec) -> Path:
     return Path(install_dir) / spec.version_filename
 
 
-def layout_path(install_dir: str | Path) -> Path:
-    return Path(install_dir) / LAYOUT_FILENAME
-
-
 def read_local_version(install_dir: str | Path, spec: PackageInstallSpec) -> str | None:
     path = version_path(install_dir, spec)
     try:
@@ -167,27 +159,6 @@ def read_local_version(install_dir: str | Path, spec: PackageInstallSpec) -> str
     except OSError:
         LOG.debug("Could not read package version file", exc_info=True)
     return None
-
-
-def read_layout_version(install_dir: str | Path) -> str | None:
-    path = layout_path(install_dir)
-    try:
-        if path.is_file():
-            text = path.read_text(encoding="utf-8").strip()
-            return text or None
-    except OSError:
-        LOG.debug("Could not read package layout file", exc_info=True)
-    return None
-
-
-def write_layout_version(
-    install_dir: str | Path, value: str = LAYOUT_VERSION
-) -> None:
-    path = layout_path(install_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(value.strip() + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def write_local_version(
@@ -349,17 +320,15 @@ def install_or_update(
     remote = fetch_remote_version(spec, timeout=min(60.0, timeout))
     local = read_local_version(root, spec)
     installed = _marker_installed(root, plugin.install_marker)
-    layout_ok = read_layout_version(root) == LAYOUT_VERSION
-    if installed and local == remote and layout_ok and not force:
+    if installed and local == remote and not force:
         _emit(on_line, f"Already up to date (version {remote})")
         return remote
 
-    reason = "fresh install"
-    if local:
-        reason = f"was {local}"
-    if installed and local == remote and not layout_ok:
-        reason = f"version {remote}, clean re-extract (layout {LAYOUT_VERSION})"
-    _emit(on_line, f"Installing package version {remote} ({reason})")
+    _emit(
+        on_line,
+        f"Installing package version {remote}"
+        + (f" (was {local})" if local else " (fresh install)"),
+    )
     url = download_url_for(spec, remote)
     with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
         archive = Path(tmp) / "package.tar"
@@ -384,7 +353,6 @@ def install_or_update(
             f"Package extract finished but install marker missing: {plugin.install_marker}"
         )
     write_local_version(root, spec, remote)
-    write_layout_version(root)
     # Best-effort ownership when running as root before drop.
     if run_uid is not None and hasattr(os, "chown"):
         try:
