@@ -1,0 +1,127 @@
+name: Factorio
+steam_app_id: 427520
+steam_login: anonymous
+steam_branch: public
+# Pin SteamCMD to Linux depots (this add-on is amd64 Linux / HAOS only).
+steam_platform: linux
+validate_on_update: true
+working_dir: /data/game
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: bin/x64/factorio
+min_backup_bytes: 1024
+# Factorio saves on SIGTERM; allow time for large maps.
+stop_timeout_seconds: 120
+# No stdin quit — SIGTERM triggers Factorio's save-on-exit path.
+stop_stdin_commands: []
+# Fallback roots when no named world exists yet; also used to restore legacy
+# *.tar.gz snapshots. New backups copy the .zip save as-is.
+backup_paths:
+  - /data/world
+# Active world is a single .zip save under write-data/saves/.
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/saves/{world_name}.zip"
+executable:
+  - ./bin/x64/factorio
+bool_style: true_false
+ready_timeout_seconds: 180
+# Headless host: load the named save + generated settings/config.
+argv_prefix:
+  - --start-server
+  - "{data_dir}/saves/{world_name}.zip"
+  - --server-settings
+  - "{data_dir}/server-settings.json"
+  - --config
+  - "{data_dir}/config.ini"
+# server_port is forced to 34197 by run.sh (HA container-side Network mapping).
+arg_map:
+  server_port: --port
+# Factorio requires an existing save; create one when missing (first boot / NEW WORLD).
+world_prepare:
+  when: missing
+  timeout_seconds: 300
+  argv:
+    - --create
+    - "{data_dir}/saves/{world_name}.zip"
+    - --config
+    - "{data_dir}/config.ini"
+# Rewrite settings + write-data config before every launch from HA options.
+config_files:
+  - path: "{data_dir}/config.ini"
+    format: ini
+    fixed:
+      path:
+        read-data: "{working_dir}/data"
+        write-data: "{data_dir}"
+  - path: "{data_dir}/server-settings.json"
+    format: json
+    fixed:
+      tags: ["haos"]
+      visibility:
+        public: false
+        lan: true
+      username: ""
+      password: ""
+      token: ""
+      require_user_verification: true
+      max_upload_in_kilobytes_per_second: 0
+      max_upload_slots: 5
+      minimum_latency_in_ticks: 0
+      max_heartbeats_per_second: 60
+      ignore_player_limit_for_returning_players: false
+      allow_commands: admins-only
+      autosave_slots: 5
+      afk_autokick_interval: 0
+      auto_pause_when_players_connect: false
+      only_admins_can_pause_the_game: true
+      autosave_only_on_server: true
+      non_blocking_saving: false
+    map:
+      server_name: name
+      server_description: description
+      server_password: game_password
+      server_slots: max_players
+      auto_pause: auto_pause
+      autosave_interval: autosave_interval
+      visibility_public: visibility.public
+      visibility_lan: visibility.lan
+      factorio_username: username
+      factorio_token: token
+    types:
+      max_players: int
+      auto_pause: bool
+      autosave_interval: int
+      visibility.public: bool
+      visibility.lan: bool
+# Black / Factorio orange Ingress theme.
+ui_theme:
+  bg: "#0d0d0d"
+  panel: "#1a1410"
+  ink: "#f5e6d3"
+  muted: "#a08060"
+  accent: "#ff7a1a"
+  good: "#8fbf5a"
+  bad: "#e05545"
+  glow: "#2a1a0a"
+  wash: "#080808"
+  depth: "#1a1008"
+# Named join/leave lines are reliable ([JOIN]/[LEAVE]).
+player_tracking_mode: presence
+log_patterns:
+  ready:
+    - 'Hosting game at'
+    - 'changing state from\(CreatingGame\) to\(InGame\)'
+  game_version:
+    - 'Factorio\s+(?P<version>\d+\.\d+\.\d+)'
+    - 'Map output version:\s+(?P<version>\d+\.\d+\.\d+)'
+  player_join:
+    - '\[JOIN\]\s+(?P<player>.+?)\s+joined the game'
+  player_leave:
+    - '\[LEAVE\]\s+(?P<player>.+?)\s+left the game'
+log_pattern_candidates:
+  ready:
+    - 'Opening socket at'
+  players_empty:
+    - 'changing state from\(InGame\) to\(Disconnecting'

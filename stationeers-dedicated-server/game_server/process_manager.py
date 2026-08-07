@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import signal
 import subprocess
 import threading
@@ -14,13 +13,12 @@ from pathlib import Path
 from typing import Callable
 
 from .config import SupervisorConfig, format_bool
+from .launch_prepare import launch_options, prepare_launch, render_template
 from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .plugin import GamePlugin
 from .privileges import make_preexec
 
 LOG = logging.getLogger("game_server.process")
-
-_TEMPLATE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 
 def _format_option_value(value: object, bool_style: str) -> str:
@@ -35,20 +33,7 @@ def _format_option_value(value: object, bool_style: str) -> str:
 def _render_argv_token(token: str, options: dict, bool_style: str) -> str:
     """Expand ``{option_key}`` templates; return empty string to omit the token."""
 
-    text = str(token)
-
-    def repl(match: re.Match[str]) -> str:
-        key = match.group(1)
-        if key not in options:
-            return ""
-        value = options[key]
-        if value is None or value == "":
-            return ""
-        return _format_option_value(value, bool_style)
-
-    if "{" in text:
-        return _TEMPLATE_RE.sub(repl, text)
-    return text
+    return render_template(str(token), options, bool_style)
 
 
 class ProcessManager:
@@ -96,11 +81,14 @@ class ProcessManager:
             opts = [part for part in java_opts.split() if part]
             cmd = [cmd[0], *opts, *cmd[1:]]
 
-        options = dict(self.config.game_options)
-        if "data_dir" not in options:
-            options["data_dir"] = self.plugin.data_dir
-        if "logs_dir" not in options:
-            options["logs_dir"] = self.plugin.logs_dir
+        options = launch_options(
+            self.plugin,
+            self.config.game_options,
+            working_dir=self.config.game_options.get("working_dir")
+            or self.config.install_dir
+            or self.plugin.working_dir,
+            install_dir=self.config.install_dir,
+        )
 
         for token in self.plugin.argv_prefix:
             rendered = _render_argv_token(token, options, self.plugin.bool_style)
@@ -159,6 +147,16 @@ class ProcessManager:
             Path(self.plugin.data_dir).mkdir(parents=True, exist_ok=True)
             Path(self.plugin.logs_dir).mkdir(parents=True, exist_ok=True)
 
+            # Rewrite plugin config files and create a missing world before launch.
+            prepare_launch(
+                self.plugin,
+                self.config.game_options,
+                working_dir=workdir,
+                install_dir=self.config.install_dir,
+                run_uid=self.run_uid,
+                run_gid=self.run_gid,
+            )
+
             cmd = self.build_command()
             env = os.environ.copy()
             env.update(self.plugin.env)
@@ -178,7 +176,7 @@ class ProcessManager:
                 cmd,
                 cwd=str(workdir),
                 env=env,
-                stdin=subprocess.PIPE if want_stdin else None,
+                stdin=subprocess.PIPE if want_stdin else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -248,24 +246,32 @@ class ProcessManager:
             return
 
         deadline = time.time() + timeout
-        # Spend most of the budget waiting for stdin stop commands. Escalate
-        # late so HA's Docker stop grace (add-on timeout, ≤300s) is not burned
-        # on SIGKILL.
-        term_budget = min(30.0, max(5.0, timeout * 0.12))
+        has_stdin_stop = bool(self.plugin.stop_stdin_commands)
         kill_budget = min(10.0, max(3.0, timeout * 0.05))
-        escalate_budget = term_budget + kill_budget
-        if escalate_budget > timeout * 0.45:
-            escalate_budget = max(3.0, timeout * 0.4)
-            term_budget = escalate_budget * 0.7
-            kill_budget = escalate_budget - term_budget
-        graceful_deadline = deadline - escalate_budget
+        if has_stdin_stop:
+            # Spend most of the budget waiting for stdin stop commands. Escalate
+            # late so HA's Docker stop grace (add-on timeout, ≤300s) is not burned
+            # on SIGKILL.
+            term_budget = min(30.0, max(5.0, timeout * 0.12))
+            escalate_budget = term_budget + kill_budget
+            if escalate_budget > timeout * 0.45:
+                escalate_budget = max(3.0, timeout * 0.4)
+                term_budget = escalate_budget * 0.7
+                kill_budget = escalate_budget - term_budget
+            graceful_deadline = deadline - escalate_budget
+        else:
+            # No console quit path — SIGTERM immediately and keep most of the
+            # budget for save-on-signal games to finish writing.
+            term_budget = max(5.0, timeout - kill_budget - 1.0)
+            graceful_deadline = time.time()
 
         LOG.info(
-            "Stopping server pid=%s gracefully (timeout=%.0fs)",
+            "Stopping server pid=%s gracefully (timeout=%.0fs%s)",
             proc.pid,
             timeout,
+            "" if has_stdin_stop else ", signal-first",
         )
-        if proc.stdin and self.plugin.stop_stdin_commands:
+        if has_stdin_stop and proc.stdin:
             try:
                 for command in self.plugin.stop_stdin_commands:
                     LOG.info("Sending stop command via stdin: %s", command)
@@ -281,12 +287,16 @@ class ProcessManager:
                 LOG.warning("Failed writing stop commands to stdin", exc_info=True)
 
         # Prefer voluntary exit after stdin commands (no signal yet).
-        remaining = max(0.1, graceful_deadline - time.time())
+        remaining = max(0.0, graceful_deadline - time.time())
         try:
-            proc.wait(timeout=remaining)
+            if remaining > 0:
+                proc.wait(timeout=remaining)
+            elif proc.poll() is None:
+                raise subprocess.TimeoutExpired(proc.args, 0)
         except subprocess.TimeoutExpired:
-            LOG.warning(
-                "Server still running after graceful wait; sending SIGTERM"
+            LOG.info(
+                "Sending SIGTERM%s",
+                " after graceful wait" if has_stdin_stop else " (no stdin stop commands)",
             )
             try:
                 proc.send_signal(signal.SIGTERM)
