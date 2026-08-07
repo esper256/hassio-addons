@@ -29,6 +29,7 @@ services:
       AUTOSAVE_INTERVAL: "10"
       VISIBILITY_LAN: "true"
       VISIBILITY_PUBLIC: "false"
+      SPACE_AGE: "false"
       RELEASE_CHANNEL: stable
       UPDATE_ON_START: "true"
       AUTO_UPDATE_CHECK_HOUR: "5"

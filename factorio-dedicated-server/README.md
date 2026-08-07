@@ -48,6 +48,7 @@ Needs an **amd64** HAOS host. On aarch64 the App store will not offer this app.
    - **Save name** (default `FamilyFactory` — no spaces)
    - **Game password** (recommended)
    - Leave **Server name** blank for a stable generated `HAOS Factorio ####`
+   - Leave **Space Age DLC** off unless every player owns Space Age (set this before first start)
    - Leave **Public server listing** off and Factorio.com username/token empty unless you want the public browser
 4. **Start** the app (first run downloads the free headless package — no login; watch the app **Logs** tab)
 5. Forward **UDP 34197** on your router to the Home Assistant host
@@ -70,6 +71,7 @@ That is the status page (build, players when known, world save, backups, restore
 | LAN visibility | On by default (Play on LAN) |
 | Public server listing | Off by default; needs Factorio.com username + token (see above) |
 | Factorio.com username / token | Only for public listing — not used to download the server |
+| Space Age DLC | Default **off** (base game). On requires the DLC for every player. Set before first world create; turning off later usually needs NEW WORLD |
 | Release channel | `stable` (default) or `experimental` headless package |
 | Pause when empty | Pause simulation with nobody online |
 | Autosave interval | Minutes between Factorio autosaves (default 10) |
