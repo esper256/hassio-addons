@@ -1,9 +1,37 @@
 # Factorio Dedicated Server
 
 Run a **Factorio** dedicated multiplayer server on Home Assistant OS (or Docker).  
-The app downloads Wube’s **free Linux headless package** (no Steam ownership on the server), backs up the world, and **OPEN WEB UI** shows status, restore, and logs.
+The app downloads Wube’s **free Linux headless package**, backs up the world, and **OPEN WEB UI** shows status, restore, and logs.
 
 Other games / packaging your own: [repository README](../README.md) · [game-server-base](../game-server-base/README.md)
+
+---
+
+## Install method (not Steam)
+
+This is **not** a SteamCMD game. Wube publishes a free headless Linux build; anonymous Steam for app `427520` returns “No subscription”.
+
+| | |
+| --- | --- |
+| **What the app downloads** | Stable headless archive from `factorio.com` into `/data/game` |
+| **Steam on the host** | Not used — no Steam ownership or Steam login on the server |
+| **Factorio.com login to install** | Not required |
+| **Players** | Still need a normal owned Factorio client to join |
+
+Updates check the same factorio.com release API and replace the headless package when a newer stable build exists.
+
+---
+
+## Factorio.com authentication (public listing only)
+
+Leave **Factorio.com username** / **token** empty for the default setup: LAN visibility and/or direct IP connect. That does **not** need a Factorio.com account on the server.
+
+Turn on **Public server listing** only if you want the server in Factorio’s public browser. Then you must set:
+
+1. Your **Factorio.com username** (not Steam, not email)
+2. Your **authentication token** from [factorio.com/profile](https://www.factorio.com/profile) (Reveal token) — prefer the token over your account password
+
+This is Wube’s multiplayer matching auth, not game install auth. Keep the token secret; regenerate it on the profile page if it leaks.
 
 ---
 
@@ -17,8 +45,8 @@ Needs an **amd64** HAOS host. On aarch64 the App store will not offer this app.
    - **Save name** (default `FamilyFactory` — no spaces)
    - **Game password** (recommended)
    - Leave **Server name** blank for a stable generated `HAOS Factorio ####`
-   - Keep **Public server listing** off unless you add Factorio.com credentials
-4. **Start** the app (first run downloads the headless package from factorio.com — watch the app **Logs** tab)
+   - Leave **Public server listing** off and Factorio.com username/token empty unless you want the public browser
+4. **Start** the app (first run downloads the free headless package — no login; watch the app **Logs** tab)
 5. Forward **UDP 34197** on your router to the Home Assistant host
 6. In Factorio → Multiplayer → Connect to address → your HA host IP (port 34197)
 
@@ -36,7 +64,9 @@ That is the status page (build, players when known, world save, backups, restore
 | --- | --- |
 | Save name / password / slots | What players join (save is `/data/world/saves/<name>.zip`) |
 | Server name | Optional; blank → stable `HAOS Factorio ####` |
-| LAN / public visibility | LAN on by default; public needs Factorio.com username + token |
+| LAN visibility | On by default (Play on LAN) |
+| Public server listing | Off by default; needs Factorio.com username + token (see above) |
+| Factorio.com username / token | Only for public listing — not used to download the server |
 | Pause when empty | Pause simulation with nobody online |
 | Autosave interval | Minutes between Factorio autosaves (default 10) |
 | Update on start | Check/download a newer headless package before launch (recommended) |
