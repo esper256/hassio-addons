@@ -23,6 +23,8 @@ Changing this after a world exists usually requires OPEN WEB UI → **NEW WORLD*
 
 **Release channel** (Configuration): **stable** (default) or **experimental**. Clients must match the channel you install. Changing channel pulls that build on the next update check / restart with update-on-start. Prefer **stable** unless you intentionally want experimental clients.
 
+If you hit a crash in `quality/.../recycling.lua` after an older overlay install, wipe `/data/game` (or the whole add-on data) and let it download fresh — current builds clean-replace on package updates so that should not recur.
+
 Anonymous Steam for app `427520` fails with “No subscription” — that path is intentionally unused here.
 
 After a good start you should see `Hosting game` and `InGame`. A Factorio `Got EOF on stdin` Error line alone is not a failure (older builds logged it when stdin was closed).

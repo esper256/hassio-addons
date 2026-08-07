@@ -245,10 +245,19 @@ def _extract_archive(
     strip_components: int,
     on_line: LineCallback | None,
 ) -> None:
-    _emit(on_line, f"Extracting archive into {install_dir}")
-    install_dir.mkdir(parents=True, exist_ok=True)
-    # Extract into a staging dir, then merge — keeps a partial extract off the live tree.
-    with tempfile.TemporaryDirectory(prefix="pkg-extract-", dir=str(install_dir.parent)) as tmp:
+    """Extract archive and replace ``install_dir`` contents (no merge).
+
+    Merging left deleted upstream files in place (e.g. Factorio 2.0→2.1 moved
+    ``quality/.../recycling.lua`` into ``recycler/``; a merge kept the stale
+    file and the game crashed). Always swap in a clean tree instead.
+    """
+
+    _emit(on_line, f"Extracting archive into {install_dir} (clean replace)")
+    install_dir.parent.mkdir(parents=True, exist_ok=True)
+    # Staging + backup live beside install_dir so renames stay on one filesystem.
+    with tempfile.TemporaryDirectory(
+        prefix="pkg-extract-", dir=str(install_dir.parent)
+    ) as tmp:
         staging = Path(tmp) / "root"
         staging.mkdir()
         try:
@@ -262,17 +271,30 @@ def _extract_archive(
         except (tarfile.TarError, OSError) as exc:
             raise PackageInstallError(f"Failed extracting archive: {exc}") from exc
 
-        # Replace tracked install contents carefully: copy new tree over install_dir.
-        for src in staging.rglob("*"):
-            rel = src.relative_to(staging)
-            dest = install_dir / rel
-            if src.is_dir():
-                dest.mkdir(parents=True, exist_ok=True)
-            elif src.is_symlink():
-                continue
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
+        backup = Path(str(install_dir) + ".replace-old")
+        if backup.exists():
+            shutil.rmtree(backup)
+        replaced = False
+        try:
+            if install_dir.exists():
+                install_dir.rename(backup)
+                replaced = True
+            staging.rename(install_dir)
+        except OSError as exc:
+            # Best-effort rollback if the swap failed mid-way.
+            if not install_dir.exists() and backup.exists():
+                try:
+                    backup.rename(install_dir)
+                except OSError:
+                    LOG.warning(
+                        "Failed restoring install dir after extract error",
+                        exc_info=True,
+                    )
+            raise PackageInstallError(
+                f"Failed replacing install tree at {install_dir}: {exc}"
+            ) from exc
+        if replaced and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
     _emit(on_line, "Extract complete")
 
 

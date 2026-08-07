@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- Fix package updates: **clean-replace** the headless install tree instead of merging (stale `quality/.../recycling.lua` from 2.0 left after a 2.1 overlay caused crash loops)
+
 ## 1.0.3
 
 - **Space Age DLC** option (default **off**): writes `mods/mod-list.json` so base-game servers do not load quality / elevated-rails / space-age / recycler

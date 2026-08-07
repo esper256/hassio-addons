@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.38
+
+- Sync shared supervisor: package install clean-replace (no stale merge on HTTP archive updates)
+
 ## 2.1.37
 
 - **Steam branch** option: Public (default) or Experimental

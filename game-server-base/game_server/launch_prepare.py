@@ -360,7 +360,22 @@ def write_config_file(
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         tmp.replace(path)
-        LOG.info("Wrote mod_list config %s", path)
+        enabled = [
+            str(m.get("name"))
+            for m in payload.get("mods") or []
+            if isinstance(m, dict) and m.get("enabled")
+        ]
+        disabled = [
+            str(m.get("name"))
+            for m in payload.get("mods") or []
+            if isinstance(m, dict) and not m.get("enabled")
+        ]
+        LOG.info(
+            "Wrote mod_list config %s (enabled=%s disabled=%s)",
+            path,
+            ",".join(enabled) or "-",
+            ",".join(disabled) or "-",
+        )
         return path
 
     payload = build_config_payload(spec, options, bool_style)
