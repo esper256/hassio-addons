@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- Sync shared supervisor: package install clean-replace (no stale merge on HTTP archive updates)
+
 ## 1.0.6
 
 - **Steam branch** option: Public (default) or Beta

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -2898,6 +2899,115 @@ class PackageInstallTests(unittest.TestCase):
                 check2 = package_update_available(install_dir, plugin)
                 self.assertTrue(check2.update_available)
                 self.assertEqual(check2.remote_build_id, "9.9.10")
+            finally:
+                httpd.shutdown()
+
+    def test_package_extract_replaces_stale_files(self) -> None:
+        """Clean replace must drop files removed from a newer archive."""
+
+        import http.server
+        import socketserver
+        import tarfile
+        import threading
+
+        from game_server.package_install import (
+            LAYOUT_VERSION,
+            read_layout_version,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg_root = root / "serve"
+            pkg_root.mkdir()
+
+            def build_archive(name: str, with_stale: bool) -> Path:
+                content = pkg_root / name
+                if content.exists():
+                    shutil.rmtree(content)
+                (content / "bin" / "x64").mkdir(parents=True)
+                (content / "bin" / "x64" / "factorio").write_text(
+                    "#!/bin/true\n", encoding="utf-8"
+                )
+                (content / "data" / "quality" / "prototypes").mkdir(parents=True)
+                (content / "data" / "quality" / "info.json").write_text(
+                    '{"name":"quality"}\n', encoding="utf-8"
+                )
+                if with_stale:
+                    (
+                        content / "data" / "quality" / "prototypes" / "recycling.lua"
+                    ).write_text("-- stale from 2.0\n", encoding="utf-8")
+                else:
+                    (content / "data" / "recycler").mkdir(parents=True)
+                    (content / "data" / "recycler" / "recycling.lua").write_text(
+                        "-- new location\n", encoding="utf-8"
+                    )
+                archive = pkg_root / f"{name}.tar"
+                with tarfile.open(archive, "w") as tar:
+                    tar.add(content, arcname=name)
+                return archive
+
+            build_archive("pkg-old", with_stale=True)
+            build_archive("pkg-new", with_stale=False)
+            versions = {"stable": {"headless": "1.0.0"}}
+            (pkg_root / "versions.json").write_text(
+                json.dumps(versions), encoding="utf-8"
+            )
+
+            class Handler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=str(pkg_root), **kwargs)
+
+                def log_message(self, format, *args):  # noqa: A003
+                    return
+
+            httpd = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+            port = httpd.server_address[1]
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                plugin = load_plugin(FIXTURE)
+                plugin.install_marker = "bin/x64/factorio"
+                plugin.package_install = PackageInstallSpec(
+                    kind="http_archive",
+                    version_url=f"http://127.0.0.1:{port}/versions.json",
+                    version_json_path="stable.headless",
+                    download_url=f"http://127.0.0.1:{port}/pkg-old.tar",
+                    strip_components=1,
+                )
+                install_dir = root / "game"
+                package_install_or_update(install_dir, plugin)
+                stale = (
+                    install_dir / "data" / "quality" / "prototypes" / "recycling.lua"
+                )
+                self.assertTrue(stale.is_file())
+
+                plugin.package_install = PackageInstallSpec(
+                    kind="http_archive",
+                    version_url=f"http://127.0.0.1:{port}/versions.json",
+                    version_json_path="stable.headless",
+                    download_url=f"http://127.0.0.1:{port}/pkg-new.tar",
+                    strip_components=1,
+                )
+                versions["stable"]["headless"] = "2.0.0"
+                (pkg_root / "versions.json").write_text(
+                    json.dumps(versions), encoding="utf-8"
+                )
+                package_install_or_update(install_dir, plugin)
+                self.assertFalse(stale.exists())
+                self.assertTrue(
+                    (install_dir / "data" / "recycler" / "recycling.lua").is_file()
+                )
+                self.assertEqual(read_layout_version(install_dir), LAYOUT_VERSION)
+
+                # Same version + current layout → no-op; drop layout to force
+                # one clean re-extract for broken merge installs.
+                layout = install_dir / ".package_layout"
+                layout.unlink()
+                stale.parent.mkdir(parents=True, exist_ok=True)
+                stale.write_text("-- planted stale\n", encoding="utf-8")
+                package_install_or_update(install_dir, plugin)
+                self.assertFalse(stale.exists())
+                self.assertEqual(read_layout_version(install_dir), LAYOUT_VERSION)
             finally:
                 httpd.shutdown()
 

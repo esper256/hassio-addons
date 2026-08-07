@@ -31,6 +31,10 @@ class _PackagePlugin(Protocol):
 
 _SUPPORTED_KINDS = frozenset({"http_archive"})
 VERSION_FILENAME = ".package_version"
+# Bump when extract/install layout semantics change so already-current game
+# versions still get one clean re-extract (e.g. merge→replace).
+LAYOUT_FILENAME = ".package_layout"
+LAYOUT_VERSION = "2"
 
 
 class PackageInstallError(RuntimeError):
@@ -150,6 +154,10 @@ def version_path(install_dir: str | Path, spec: PackageInstallSpec) -> Path:
     return Path(install_dir) / spec.version_filename
 
 
+def layout_path(install_dir: str | Path) -> Path:
+    return Path(install_dir) / LAYOUT_FILENAME
+
+
 def read_local_version(install_dir: str | Path, spec: PackageInstallSpec) -> str | None:
     path = version_path(install_dir, spec)
     try:
@@ -159,6 +167,27 @@ def read_local_version(install_dir: str | Path, spec: PackageInstallSpec) -> str
     except OSError:
         LOG.debug("Could not read package version file", exc_info=True)
     return None
+
+
+def read_layout_version(install_dir: str | Path) -> str | None:
+    path = layout_path(install_dir)
+    try:
+        if path.is_file():
+            text = path.read_text(encoding="utf-8").strip()
+            return text or None
+    except OSError:
+        LOG.debug("Could not read package layout file", exc_info=True)
+    return None
+
+
+def write_layout_version(
+    install_dir: str | Path, value: str = LAYOUT_VERSION
+) -> None:
+    path = layout_path(install_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(value.strip() + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def write_local_version(
@@ -245,10 +274,19 @@ def _extract_archive(
     strip_components: int,
     on_line: LineCallback | None,
 ) -> None:
-    _emit(on_line, f"Extracting archive into {install_dir}")
-    install_dir.mkdir(parents=True, exist_ok=True)
-    # Extract into a staging dir, then merge — keeps a partial extract off the live tree.
-    with tempfile.TemporaryDirectory(prefix="pkg-extract-", dir=str(install_dir.parent)) as tmp:
+    """Extract archive and replace ``install_dir`` contents (no merge).
+
+    Merging left deleted upstream files in place (e.g. Factorio 2.0→2.1 moved
+    ``quality/.../recycling.lua`` into ``recycler/``; a merge kept the stale
+    file and the game crashed). Always swap in a clean tree instead.
+    """
+
+    _emit(on_line, f"Extracting archive into {install_dir} (clean replace)")
+    install_dir.parent.mkdir(parents=True, exist_ok=True)
+    # Staging + backup live beside install_dir so renames stay on one filesystem.
+    with tempfile.TemporaryDirectory(
+        prefix="pkg-extract-", dir=str(install_dir.parent)
+    ) as tmp:
         staging = Path(tmp) / "root"
         staging.mkdir()
         try:
@@ -262,17 +300,30 @@ def _extract_archive(
         except (tarfile.TarError, OSError) as exc:
             raise PackageInstallError(f"Failed extracting archive: {exc}") from exc
 
-        # Replace tracked install contents carefully: copy new tree over install_dir.
-        for src in staging.rglob("*"):
-            rel = src.relative_to(staging)
-            dest = install_dir / rel
-            if src.is_dir():
-                dest.mkdir(parents=True, exist_ok=True)
-            elif src.is_symlink():
-                continue
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
+        backup = Path(str(install_dir) + ".replace-old")
+        if backup.exists():
+            shutil.rmtree(backup)
+        replaced = False
+        try:
+            if install_dir.exists():
+                install_dir.rename(backup)
+                replaced = True
+            staging.rename(install_dir)
+        except OSError as exc:
+            # Best-effort rollback if the swap failed mid-way.
+            if not install_dir.exists() and backup.exists():
+                try:
+                    backup.rename(install_dir)
+                except OSError:
+                    LOG.warning(
+                        "Failed restoring install dir after extract error",
+                        exc_info=True,
+                    )
+            raise PackageInstallError(
+                f"Failed replacing install tree at {install_dir}: {exc}"
+            ) from exc
+        if replaced and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
     _emit(on_line, "Extract complete")
 
 
@@ -298,15 +349,17 @@ def install_or_update(
     remote = fetch_remote_version(spec, timeout=min(60.0, timeout))
     local = read_local_version(root, spec)
     installed = _marker_installed(root, plugin.install_marker)
-    if installed and local == remote and not force:
+    layout_ok = read_layout_version(root) == LAYOUT_VERSION
+    if installed and local == remote and layout_ok and not force:
         _emit(on_line, f"Already up to date (version {remote})")
         return remote
 
-    _emit(
-        on_line,
-        f"Installing package version {remote}"
-        + (f" (was {local})" if local else " (fresh install)"),
-    )
+    reason = "fresh install"
+    if local:
+        reason = f"was {local}"
+    if installed and local == remote and not layout_ok:
+        reason = f"version {remote}, clean re-extract (layout {LAYOUT_VERSION})"
+    _emit(on_line, f"Installing package version {remote} ({reason})")
     url = download_url_for(spec, remote)
     with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
         archive = Path(tmp) / "package.tar"
@@ -331,6 +384,7 @@ def install_or_update(
             f"Package extract finished but install marker missing: {plugin.install_marker}"
         )
     write_local_version(root, spec, remote)
+    write_layout_version(root)
     # Best-effort ownership when running as root before drop.
     if run_uid is not None and hasattr(os, "chown"):
         try:
