@@ -1,5 +1,5 @@
 name: "Factorio Dedicated Server"
-description: "Factorio dedicated multiplayer server with free headless auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
+description: "Factorio dedicated multiplayer server (free factorio.com headless package, no SteamCMD) with auto-updates, player-aware restarts, world backups, and an Ingress status UI."
 version: "1.0.1"
 slug: "factorio_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/factorio-dedicated-server"
