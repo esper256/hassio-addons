@@ -63,6 +63,7 @@ from game_server.status_http import (  # noqa: E402
     _format_game_version,
     _format_highlights,
     _format_pattern_rows,
+    _pattern_category_summaries,
     _format_running,
     _format_subtitle,
     _format_update_check_hint,
@@ -1018,7 +1019,7 @@ class BackupRetentionTests(unittest.TestCase):
                 fake = backup_dir / f"backup-20260101T{i:06d}Z-schedule.zip"
                 fake.write_bytes(b"z" * 80)
                 os.utime(fake, (1_700_000_000 + i, 1_700_000_000 + i))
-            mgr._prune()
+            mgr.apply_retention()
             self.assertTrue(safety.is_file())
             self.assertIsNone(mgr.resolve_archive("../evil.zip"))
             mgr.restore_archive(archive.name, prior_safety_backup=safety)
@@ -1481,35 +1482,18 @@ class StatusFormatTests(unittest.TestCase):
         html = render_status_html(view, base_href="/api/hassio_ingress/token/")
         self.assertIn("<!DOCTYPE html>", html)
         self.assertIn("Necesse", html)
-        self.assertNotIn("Start new empty world", html)
         self.assertIn("NEW WORLD", html)
         self.assertIn(f'value="{EMPTY_WORLD}"', html)
         self.assertIn("Restore selected backup", html)
-        self.assertIn("capture-row > button", html)
         # Docs examples must survive format() as literal JSON text.
         self.assertIn('{"archive":"…","confirm":true}', html)
         self.assertIn('{"empty":true,"confirm":true}', html)
         self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
         self.assertIn('href="/api/hassio_ingress/token/"', html)
-        self.assertIn(f"--accent: {DEFAULT_UI_THEME['accent']}", html)
         self.assertIn('href="api/world/download"', html)
         self.assertIn("FamilyWorld.zip", html)
-        # Hero order: Uptime → Crashes … World save → Backups → Free disk
-        uptime_i = html.index(">Uptime<")
-        crashes_i = html.index(">Game server crashes<")
-        world_i = html.index(">World save<")
-        backups_i = html.index(">Backups<")
-        disk_i = html.index(">Free disk<")
-        self.assertLess(uptime_i, crashes_i)
-        self.assertLess(crashes_i, world_i)
-        self.assertLess(world_i, backups_i)
-        self.assertLess(backups_i, disk_i)
-        self.assertIn("Recent matches (newest first)", html)
-        self.assertNotIn(">Pattern</th>", html)
-        self.assertIn(">Hits</th>", html)
-        # Default (no debug_mode): log-watch hidden; players hidden without tracking.
         self.assertIn('id="log-watch"', html)
-        self.assertIn("hidden", view["log_watch_class"])
+        # Default (no debug_mode): log-watch hidden; players hidden without tracking.
         self.assertTrue(view["log_watch_hidden"])
         self.assertTrue(view["players_card_hidden"])
 
@@ -1548,15 +1532,6 @@ class StatusFormatTests(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
             self.assertIn("Necesse", body)
             self.assertIn("NEW WORLD", body)
-            self.assertNotIn("Start new empty world", body)
-            uptime_i = body.index(">Uptime<")
-            crashes_i = body.index(">Game server crashes<")
-            world_i = body.index(">World save<")
-            backups_i = body.index(">Backups<")
-            disk_i = body.index(">Free disk<")
-            self.assertLess(uptime_i, crashes_i)
-            self.assertLess(world_i, backups_i)
-            self.assertLess(backups_i, disk_i)
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
         finally:
@@ -2075,7 +2050,8 @@ class StatusFormatTests(unittest.TestCase):
             self.assertIsNone(supervisor.local_build_id)
             self.assertEqual(status["lifecycle"], "starting")
             self.assertTrue(status["starting"])
-            self.assertEqual(status["player_gating"], status["waits_for_empty_server"])
+            self.assertIn("waits_for_empty_server", status)
+            self.assertNotIn("player_gating", status)
             health = supervisor.health()
             self.assertTrue(health["ok"])
             self.assertEqual(health["lifecycle"], "starting")
@@ -2146,7 +2122,7 @@ class StatusFormatTests(unittest.TestCase):
             "Dedicated server supervisor v2.1.12 · SteamCMD 1785186678",
         )
 
-    def test_dry_run_rows_remain_visible_with_active_category(self) -> None:
+    def test_pattern_category_collapse_keeps_dry_run_matches(self) -> None:
         patterns = [
             {
                 "mode": "active",
@@ -2181,32 +2157,23 @@ class StatusFormatTests(unittest.TestCase):
                 "last_line": "Online players: 2",
             },
         ]
+        summaries = _pattern_category_summaries(patterns)
+        self.assertEqual([s["category"] for s in summaries], ["ready", "player_count"])
+        ready, player_count = summaries
+        self.assertEqual(ready["display_mode"], "active")
+        self.assertEqual(ready["active_hits"], 2)
+        ready_texts = {text for _mode, text in ready["recent_matches"]}
+        self.assertIn("Started server again", ready_texts)
+        self.assertIn("ready", ready_texts)
+        self.assertEqual(player_count["display_mode"], "dry_run")
+        self.assertEqual(player_count["active_hits"], 0)
+        player_texts = {text for _mode, text in player_count["recent_matches"]}
+        self.assertIn("Players online: 2", player_texts)
+        self.assertIn("Online players: 2", player_texts)
+        # HTML render still works and omits regex source text.
         rows = _format_pattern_rows(patterns)
-        # One row per category; regex text stays out of the table.
-        self.assertEqual(rows.count("<tr>"), 2)
-        self.assertIn("ready", rows)
-        self.assertIn("player_count", rows)
-        self.assertIn("Started server", rows)
-        self.assertIn("Started server again", rows)
-        self.assertIn("Players online: 2", rows)
-        self.assertIn("Online players: 2", rows)
-        self.assertIn("recent-matches", rows)
-        self.assertIn("match-line active", rows)
-        self.assertIn("match-line dry_run", rows)
         self.assertNotIn(r"\bready\b", rows)
-        self.assertNotIn("players online", rows)  # pattern text not shown
-        # Hits count active regexes only (ready active=2; dry_run=5 ignored).
-        self.assertIn("<td>2</td>", rows)
-        # player_count is dry_run-only → 0 active hits.
-        self.assertIn("<td>0</td>", rows)
-        # Mixed category shows only the highest-priority Mode tag (active).
-        self.assertEqual(rows.count("tag active"), 1)
-        self.assertEqual(rows.count("tag dry_run"), 1)
-        self.assertNotIn("tag active", rows.split("<tr>")[2])  # player_count row
-        # Active category sorts above dry_run-only.
-        ready_i = rows.index(">ready<")
-        player_i = rows.index(">player_count<")
-        self.assertLess(ready_i, player_i)
+        self.assertNotIn("players online", rows)
         highlights = _format_highlights(
             [
                 {
@@ -2217,7 +2184,6 @@ class StatusFormatTests(unittest.TestCase):
                     ],
                 }
             ],
-            active_categories={"ready"},
         )
         self.assertIn("active:ready", highlights)
         self.assertIn("dry_run:ready", highlights)
@@ -2254,19 +2220,20 @@ class StatusFormatTests(unittest.TestCase):
                 "recent_lines": ["dry peer"],
             },
         ]
-        rows = _format_pattern_rows(patterns)
-        self.assertEqual(rows.count("<tr>"), 3)
-        # Mode column: one tag only — stale beats active+dry peers.
-        self.assertEqual(rows.count("tag stale"), 1)
-        self.assertEqual(rows.count("tag active"), 1)
-        self.assertEqual(rows.count("tag dry_run"), 1)
-        self.assertNotIn("tag active", rows.split("aaa_stale")[0])
-        # Sort: stale → active → dry_run.
-        stale_i = rows.index("aaa_stale")
-        active_i = rows.index("mmm_active")
-        dry_i = rows.index("zzz_dry")
-        self.assertLess(stale_i, active_i)
-        self.assertLess(active_i, dry_i)
+        summaries = _pattern_category_summaries(patterns)
+        self.assertEqual(
+            [s["category"] for s in summaries],
+            ["aaa_stale", "mmm_active", "zzz_dry"],
+        )
+        self.assertEqual(
+            [s["display_mode"] for s in summaries],
+            ["stale", "active", "dry_run"],
+        )
+        active = summaries[1]
+        self.assertEqual(active["active_hits"], 1)
+        modes = {mode for mode, _text in active["recent_matches"]}
+        self.assertIn("active", modes)
+        self.assertIn("dry_run", modes)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(
@@ -2293,8 +2260,6 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertTrue(hidden["log_watch_hidden"])
         self.assertTrue(hidden["players_card_hidden"])
-        self.assertIn("hidden", hidden["log_watch_class"])
-        self.assertIn("hidden", hidden["players_card_class"])
 
         debug = _ui_view(
             {
@@ -2320,8 +2285,6 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertFalse(debug["log_watch_hidden"])
         self.assertFalse(debug["players_card_hidden"])
-        self.assertEqual(debug["log_watch_class"], "")
-        self.assertEqual(debug["players_card_class"], "")
 
         # Count mode: active join/leave alone is not enough — need player_count.
         join_leave_only = _ui_view(

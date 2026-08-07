@@ -12,22 +12,13 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
-from .config import SupervisorConfig, format_bool
+from .config import SupervisorConfig, format_option_value
 from .launch_prepare import launch_options, prepare_launch, render_template
 from .log_bridge import STDOUT_DEDUPER, strip_ansi
 from .plugin import GamePlugin
 from .privileges import make_preexec
 
 LOG = logging.getLogger("game_server.process")
-
-
-def _format_option_value(value: object, bool_style: str) -> str:
-    if isinstance(value, bool) or (
-        isinstance(value, str)
-        and value.lower() in {"true", "false", "1", "0", "yes", "no"}
-    ):
-        return format_bool(value, bool_style)
-    return str(value)
 
 
 def _render_argv_token(token: str, options: dict, bool_style: str) -> str:
@@ -102,7 +93,7 @@ class ProcessManager:
             value = options[option_key]
             if value is None or value == "":
                 continue
-            rendered = _format_option_value(value, self.plugin.bool_style)
+            rendered = format_option_value(value, self.plugin.bool_style)
             if flag.endswith("="):
                 cmd.append(f"{flag}{rendered}")
             else:
@@ -125,7 +116,7 @@ class ProcessManager:
                 pairs.extend(
                     [
                         str(setting_name),
-                        _format_option_value(value, self.plugin.bool_style),
+                        format_option_value(value, self.plugin.bool_style),
                     ]
                 )
             if pairs:

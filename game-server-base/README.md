@@ -36,7 +36,7 @@ A game add-on is a thin layer:
    ./game-server-base/sync-into-addons.sh
    ```
 
-   Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/`. Never overwrites `games/*.yaml`. Not part of the Docker build.
+   Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/`. Never overwrites `games/*.yaml`. Not part of the Docker build. CI runs `./game-server-base/check-addon-sync.sh` so forgotten syncs fail the build.
 
 7. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on Necesse’s.
 
@@ -74,8 +74,8 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
 - **New games must ship `log_patterns: {}`** (empty active). Put guesses in `log_pattern_candidates` plus the shared generics in `patterns.py`.
 - Generic + game candidates only **highlight** in Ingress Debug mode; they do **not** gate updates or player presence.
-- Prefer many broad, case-insensitive guesses (over-match) over one clever regex. Each regex is its own table row — they are not joined into a single pattern.
-- Turn on **Debug mode**, start the server, watch which dry_run rows hit, then promote a precise regex into `log_patterns` for that category.
+- Prefer many broad, case-insensitive guesses (over-match) over one clever regex. The debug table shows **one row per category** (Mode / Hits / recent matches); regex text stays out of the UI.
+- Turn on **Debug mode**, start the server, watch which categories light up (green = active, orange = dry-run), then promote a precise regex into `log_patterns` for that category.
 - Without active join/leave patterns, “update only when empty” cannot wait for players to leave.
 
 ---

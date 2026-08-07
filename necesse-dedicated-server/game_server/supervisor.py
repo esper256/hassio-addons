@@ -15,6 +15,7 @@ from . import package_install, steamcmd
 from .backup import BackupManager, EMPTY_WORLD
 from .config import SupervisorConfig, load_config
 from .disk import ensure_free_mb
+from .lifecycle import LIFECYCLE_HEALTHY
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
@@ -38,13 +39,6 @@ from .world_save import (
 
 LOG = logging.getLogger("game_server.supervisor")
 
-# Explicit supervisor/game phases for status + HA watchdog (/healthz).
-# Prefer this over the old boolean "starting" (= anything not stopped).
-LIFECYCLE_HEALTHY = frozenset(
-    {"running", "installing", "updating", "restoring", "starting", "waiting"}
-)
-
-
 class GameServerSupervisor:
     def __init__(
         self,
@@ -55,17 +49,25 @@ class GameServerSupervisor:
         self.config = config
         self.started_at = time.time()
         self._stop = threading.Event()
+        # Update / restore state machine (main loop + Ingress actions):
+        #
+        #   schedule_update → _update_pending
+        #     ├─ wait until _can_apply_update()
+        #     │    • window: _update_bypass_window OR within configured hours
+        #     │    • empty: update_when_empty_only unless _update_ignore_players
+        #     │      (force UI) or _empty_wait_expired() (max wait → ignore players)
+        #     │    • Steam gate / disk / _update_not_before backoff
+        #     └─ _apply_update() clears pending flags
+        #   version mismatch → _urgent_update_check* (probe before stop)
+        #   restore/upload → _restore_pending / _upload_pending (separate lock)
         self._update_pending = False
         self._update_reason: str | None = None
         self._update_bypass_window = False
-        # Manual UI force: apply even when players are online.
         self._update_ignore_players = False
-        # When the current pending update was first requested (for max empty-wait).
         self._update_pending_since: float | None = None
         self._update_not_before = 0.0
         self._apply_failures = 0
         self._update_lock = threading.Lock()
-        # Version-mismatch (etc.): probe Steam before any stop/apply.
         self._urgent_update_check = False
         self._urgent_update_check_bypass_window = False
         self._urgent_update_check_reason: str | None = None
@@ -566,8 +568,6 @@ class GameServerSupervisor:
             "last_restore_error": self.last_restore_error,
             # Plain-language status for the UI (avoid "gating" jargon).
             "waits_for_empty_server": waits_for_empty_server,
-            # Same values as waits_for_empty_server (legacy field name).
-            "player_gating": waits_for_empty_server,
             "player_tracking_mode": player_tracking_mode,
             "debug_mode": bool(self.config.debug_mode),
             "steam_gate": self.steam_gate.to_dict(),

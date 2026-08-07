@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from .backup import EMPTY_WORLD
 from .disk import format_bytes
+from .lifecycle import LIFECYCLE_HEALTHY
 from .log_bridge import strip_ansi
 from .version import app_version
-from .backup import EMPTY_WORLD
 
 LOG = logging.getLogger("game_server.status_http")
 
@@ -53,12 +54,6 @@ def resolve_ui_theme(overrides: dict[str, str] | None = None) -> dict[str, str]:
             theme[key] = value.strip()
     return theme
 
-# Phases where the HA watchdog should leave the add-on running.
-_HEALTHY_LIFECYCLES = frozenset(
-    {"running", "installing", "updating", "restoring", "starting", "waiting"}
-)
-
-
 def healthz_ok(snapshot: dict[str, Any]) -> bool:
     """Whether /healthz should report ok for this status/health snapshot."""
 
@@ -66,7 +61,7 @@ def healthz_ok(snapshot: dict[str, Any]) -> bool:
         return bool(snapshot["ok"])
     phase = str(snapshot.get("lifecycle") or "")
     if phase:
-        return phase in _HEALTHY_LIFECYCLES
+        return phase in LIFECYCLE_HEALTHY
     # Legacy fallback before lifecycle existed.
     return bool(snapshot.get("running")) or bool(snapshot.get("starting"))
 
@@ -1492,10 +1487,7 @@ def _ui_view(
     patterns = log_patterns.get("patterns") or []
     has_active = any((item.get("mode") or "") == "active" for item in patterns)
     active_categories = _active_pattern_categories(patterns)
-    highlights = _format_highlights(
-        monitor.get("highlighted_lines") or [],
-        active_categories=active_categories,
-    )
+    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
     players_known = bool(monitor.get("players_known"))
     tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
     presence_mode = tracking_mode == "presence"
@@ -1520,9 +1512,9 @@ def _ui_view(
             else "Unknown until player patterns are promoted"
         )
     debug_mode = bool(status.get("debug_mode"))
-    # Count mode: show the numeric card when an active player_count pattern exists
-    # (or debug). Presence mode: show Idle/Players Active when any player-tracking
-    # category is active (join/leave/empty/count).
+    # Without debug mode, hide the players card until an active pattern can
+    # populate it — otherwise the card is a permanent "—" that looks broken.
+    # Count mode needs player_count; presence mode accepts join/leave/empty/count.
     has_active_player_count = "player_count" in active_categories
     has_active_presence = bool(
         active_categories
@@ -1718,19 +1710,30 @@ def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
     return list(reversed(lines[-_RECENT_MATCH_LIMIT:]))
 
 
-def _format_category_recent_matches(items: list[dict[str, Any]]) -> str:
-    """Merge recent hits for a category; color by source regex mode.
+def _category_display_mode(items: list[dict[str, Any]]) -> str:
+    """Single Mode tag for a category: stale > active > dry_run."""
 
-    Active matches render green; dry-run-only matches render accent/orange.
-    Duplicate line text prefers the active color when both modes saw it.
+    if any(item.get("stale") and int(item.get("hits") or 0) > 0 for item in items):
+        return "stale"
+    if any((item.get("mode") or "") == "active" for item in items):
+        return "active"
+    return "dry_run"
+
+
+def _category_recent_matches(
+    items: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    """Merged recent lines for a category: (mode, text), newest-ish first.
+
+    Active matches win on duplicate text so the UI can color them green;
+    dry-run-only lines stay accent/orange.
     """
 
-    # Prefer active entries first so duplicates keep the active color.
     ordered = sorted(
         items,
         key=lambda item: (0 if (item.get("mode") or "") == "active" else 1),
     )
-    parts: list[str] = []
+    out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in ordered:
         mode = item.get("mode") or "dry_run"
@@ -1743,41 +1746,22 @@ def _format_category_recent_matches(items: list[dict[str, Any]]) -> str:
             seen.add(text)
             if len(text) > 160:
                 text = text[:160] + "…"
-            parts.append(
-                f"<div class='match-line {mode}'>{_html_escape(text)}</div>"
-            )
-            if len(parts) >= _CATEGORY_RECENT_MATCH_LIMIT:
-                break
-        if len(parts) >= _CATEGORY_RECENT_MATCH_LIMIT:
-            break
-    if not parts:
-        return ""
-    return f"<div class='recent-matches'>{''.join(parts)}</div>"
-
-
-def _category_display_mode(items: list[dict[str, Any]]) -> str:
-    """Single Mode tag for a category: stale > active > dry_run."""
-
-    if any(item.get("stale") and int(item.get("hits") or 0) > 0 for item in items):
-        return "stale"
-    if any((item.get("mode") or "") == "active" for item in items):
-        return "active"
-    return "dry_run"
+            out.append((mode, text))
+            if len(out) >= _CATEGORY_RECENT_MATCH_LIMIT:
+                return out
+    return out
 
 
 _MODE_SORT_RANK = {"stale": 0, "active": 1, "dry_run": 2}
 
 
-def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
-    """One table row per category; regex text stays out of the UI.
-
-    Dry-run peers remain in the hit data (and colored recent matches) so
-    over-matching candidates stay discoverable when log shapes drift.
-    Mode shows only the highest-priority status (stale > active > dry_run).
-    """
+def _pattern_category_summaries(
+    patterns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate pattern hit report into one summary dict per category."""
 
     if not patterns:
-        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
+        return []
 
     by_category: dict[str, list[dict[str, Any]]] = {}
     for item in patterns:
@@ -1798,34 +1782,66 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
             -active_hits,
         )
 
-    rows = []
+    summaries: list[dict[str, Any]] = []
     for category in sorted(by_category, key=_category_sort_key)[:120]:
         items = by_category[category]
-        display_mode = _category_display_mode(items)
-        mode_html = f"<span class='tag {display_mode}'>{display_mode}</span>"
-        active_hits = sum(
-            int(item.get("hits") or 0)
-            for item in items
-            if (item.get("mode") or "") == "active"
+        summaries.append(
+            {
+                "category": category,
+                "display_mode": _category_display_mode(items),
+                "active_hits": sum(
+                    int(item.get("hits") or 0)
+                    for item in items
+                    if (item.get("mode") or "") == "active"
+                ),
+                "recent_matches": _category_recent_matches(items),
+            }
         )
-        recent = _format_category_recent_matches(items)
+    return summaries
+
+
+def _format_category_recent_matches_html(
+    recent: list[tuple[str, str]],
+) -> str:
+    if not recent:
+        return ""
+    parts = [
+        f"<div class='match-line {mode}'>{_html_escape(text)}</div>"
+        for mode, text in recent
+    ]
+    return f"<div class='recent-matches'>{''.join(parts)}</div>"
+
+
+def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
+    """One table row per category; regex text stays out of the UI.
+
+    Dry-run peers remain in the hit data (and colored recent matches) so
+    over-matching candidates stay discoverable when log shapes drift.
+    Mode shows only the highest-priority status (stale > active > dry_run).
+    """
+
+    summaries = _pattern_category_summaries(patterns)
+    if not summaries:
+        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
+
+    rows = []
+    for item in summaries:
+        mode = str(item["display_mode"])
+        recent = _format_category_recent_matches_html(
+            list(item.get("recent_matches") or [])
+        )
         rows.append(
             "<tr>"
-            f"<td>{mode_html}</td>"
-            f"<td>{_html_escape(category)}</td>"
-            f"<td>{active_hits}</td>"
+            f"<td><span class='tag {mode}'>{mode}</span></td>"
+            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
+            f"<td>{int(item.get('active_hits') or 0)}</td>"
             f"<td>{recent}</td>"
             "</tr>"
         )
     return "\n".join(rows)
 
 
-def _format_highlights(
-    items: list[dict[str, Any]],
-    *,
-    active_categories: set[str] | None = None,
-) -> str:
-    del active_categories  # kept for call-site compatibility; dry-runs stay visible
+def _format_highlights(items: list[dict[str, Any]]) -> str:
     if not items:
         return (
             "(no pattern hits yet — once the server is online, dry_run candidates "

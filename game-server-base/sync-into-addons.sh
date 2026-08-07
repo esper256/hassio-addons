@@ -9,6 +9,7 @@
 #
 # Not a Docker/build step. Run by hand (or from CI) on the repo checkout. The
 # Dockerfile only COPY's the already-vendored <addon>/game_server/ tree.
+# CI enforces sync via check-addon-sync.sh.
 #
 # Targets: sibling directories that look like installable game add-ons
 # (config.yaml + games/). Never overwrites games/*.yaml or other add-on files.
