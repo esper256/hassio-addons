@@ -11,7 +11,11 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 
 This add-on does **not** use SteamCMD. On start it downloads Wube’s **free Linux headless package** from factorio.com into `/data/game` (no Steam ownership and no Factorio.com login for install). Players still need an owned Factorio client to join.
 
+**Release channel** (Configuration): **stable** (default) or **experimental**. Clients must match the channel you install. Changing channel pulls that build on the next update check / restart with update-on-start.
+
 Anonymous Steam for app `427520` fails with “No subscription” — that path is intentionally unused here.
+
+After a good start you should see `Hosting game` and `InGame`. A Factorio `Got EOF on stdin` Error line alone is not a failure (older builds logged it when stdin was closed).
 
 ## Factorio.com username and token
 
@@ -45,6 +49,7 @@ Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Rev
 | LAN visibility | Default on (Play on LAN) |
 | Public server listing | Off by default; needs Factorio.com username + token |
 | Factorio.com username / token | Public listing only — not used for package download |
+| Release channel | `stable` (default) or `experimental` |
 | Pause when empty | Pause with nobody online |
 | Autosave interval | Minutes between autosaves |
 | Update on start | Check/download headless package when the app starts (recommended) |

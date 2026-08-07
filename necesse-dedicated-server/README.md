@@ -35,6 +35,7 @@ That is the status page (build, players when known, world save, backups, restore
 | World name / password / slots / MOTD | What players join |
 | Pause when empty | Pause simulation with nobody online |
 | Java options | Default `-Xms512M -Xmx2G` |
+| Steam branch | `public` (default) or `experimental` — clients must match |
 | Update on start | SteamCMD before launch (recommended) |
 | Daily Steam check hour | Default **5** (5:00am local); clear to use the interval instead |
 | Update only when empty | Wait until Idle before restarting (presence join/leave); after 24h apply anyway |

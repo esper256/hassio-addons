@@ -1,6 +1,6 @@
 name: "Stationeers Dedicated Server"
 description: "Stationeers dedicated multiplayer server with SteamCMD auto-updates, player-aware restarts, generational world backups, and an Ingress status/log toolkit."
-version: "1.0.5"
+version: "1.0.6"
 slug: "stationeers_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/stationeers-dedicated-server"
 # SteamCMD / Stationeers dedicated server binaries are x86_64. HAOS on aarch64 will not offer this app.
@@ -43,6 +43,7 @@ options:
   difficulty: ""
   start_condition: ""
   start_location: ""
+  steam_branch: public
   update_on_start: true
   auto_update_interval_minutes: 1440
   auto_update_check_hour: 5
@@ -72,6 +73,7 @@ schema:
   difficulty: str?
   start_condition: str?
   start_location: str?
+  steam_branch: list(public|beta)
   update_on_start: bool
   auto_update_interval_minutes: int(0,)
   auto_update_check_hour: int(0,23)?

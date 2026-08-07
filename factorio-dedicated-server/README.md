@@ -13,12 +13,15 @@ This is **not** a SteamCMD game. Wube publishes a free headless Linux build; ano
 
 | | |
 | --- | --- |
-| **What the app downloads** | Stable headless archive from `factorio.com` into `/data/game` |
+| **What the app downloads** | Headless archive from `factorio.com` into `/data/game` |
+| **Channel** | **Stable** (default) or **Experimental** — clients must match |
 | **Steam on the host** | Not used — no Steam ownership or Steam login on the server |
 | **Factorio.com login to install** | Not required |
 | **Players** | Still need a normal owned Factorio client to join |
 
-Updates check the same factorio.com release API and replace the headless package when a newer stable build exists.
+Updates check the factorio.com release API for the selected channel and replace the headless package when a newer build exists.
+
+A log line `Got EOF on stdin; closing` (Factorio “Error”) after `Hosting game` / `InGame` is harmless noise when stdin is closed; current builds keep stdin open so you should not see it.
 
 ---
 
@@ -67,6 +70,7 @@ That is the status page (build, players when known, world save, backups, restore
 | LAN visibility | On by default (Play on LAN) |
 | Public server listing | Off by default; needs Factorio.com username + token (see above) |
 | Factorio.com username / token | Only for public listing — not used to download the server |
+| Release channel | `stable` (default) or `experimental` headless package |
 | Pause when empty | Pause simulation with nobody online |
 | Autosave interval | Minutes between Factorio autosaves (default 10) |
 | Update on start | Check/download a newer headless package before launch (recommended) |

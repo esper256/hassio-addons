@@ -1,6 +1,6 @@
 name: "Factorio Dedicated Server"
 description: "Factorio dedicated multiplayer server (free factorio.com headless package, no SteamCMD) with auto-updates, player-aware restarts, world backups, and an Ingress status UI."
-version: "1.0.1"
+version: "1.0.2"
 slug: "factorio_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/factorio-dedicated-server"
 # Factorio Linux headless binary is x86_64. HAOS on aarch64 will not offer this app.
@@ -37,6 +37,7 @@ options:
   visibility_public: false
   factorio_username: ""
   factorio_token: ""
+  release_channel: stable
   update_on_start: true
   auto_update_interval_minutes: 1440
   auto_update_check_hour: 5
@@ -62,6 +63,7 @@ schema:
   visibility_public: bool
   factorio_username: str?
   factorio_token: password
+  release_channel: list(stable|experimental)
   update_on_start: bool
   auto_update_interval_minutes: int(0,)
   auto_update_check_hour: int(0,23)?

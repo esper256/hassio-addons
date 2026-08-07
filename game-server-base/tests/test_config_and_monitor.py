@@ -184,6 +184,8 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("SERVER_SLOTS", factorio_keys)
         self.assertIn("VISIBILITY_PUBLIC", factorio_keys)
         self.assertIn("FACTORIO_TOKEN", factorio_keys)
+        self.assertIn("RELEASE_CHANNEL", factorio_keys)
+        self.assertIn("STEAM_BRANCH", factorio_keys)
         self.assertNotIn("JAVA_OPTS", factorio_keys)
 
 
@@ -208,6 +210,7 @@ class PluginTests(unittest.TestCase):
         assert plugin.package_install is not None
         self.assertEqual(plugin.package_install.kind, "http_archive")
         self.assertIn("{version}", plugin.package_install.download_url)
+        self.assertIn("{release_channel}", plugin.package_install.version_json_path)
         self.assertEqual(plugin.install_marker, "bin/x64/factorio")
         self.assertEqual(plugin.player_tracking_mode, "presence")
         self.assertEqual(plugin.ui_theme.get("accent"), "#ff7a1a")
@@ -215,6 +218,12 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(len(plugin.config_files), 2)
         self.assertTrue(plugin.log_patterns.player_join)
         self.assertTrue(plugin.log_patterns.ready)
+        plugin.apply_install_channel_options({"release_channel": "experimental"})
+        assert plugin.package_install is not None
+        self.assertEqual(
+            plugin.package_install.version_json_path, "experimental.headless"
+        )
+        self.assertIn("{version}", plugin.package_install.download_url)
         cfg = SupervisorConfig(
             drop_privileges=False,
             status_http_enabled=False,
@@ -2900,6 +2909,18 @@ class PackageInstallTests(unittest.TestCase):
             download_url_for(spec, "2.0.77"),
             "https://example.invalid/get/2.0.77/headless",
         )
+
+    def test_apply_install_channel_defaults_stable(self) -> None:
+        plugin = load_plugin(FACTORIO_PLUGIN)
+        plugin.apply_install_channel_options({})
+        assert plugin.package_install is not None
+        self.assertEqual(plugin.package_install.version_json_path, "stable.headless")
+
+    def test_steam_branch_option_overrides_plugin(self) -> None:
+        plugin = load_plugin(NECESSE_PLUGIN)
+        self.assertEqual(plugin.steam_branch, "public")
+        plugin.apply_install_channel_options({"steam_branch": "experimental"})
+        self.assertEqual(plugin.steam_branch, "experimental")
 
 
 class LaunchPrepareTests(unittest.TestCase):

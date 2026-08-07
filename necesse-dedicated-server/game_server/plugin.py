@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .launch_prepare import ConfigFileSpec, WorldPrepareSpec
 from .package_install import PackageInstallSpec
@@ -188,6 +188,50 @@ class GamePlugin:
     def uses_package_install(self) -> bool:
         return self.package_install is not None
 
+    def apply_install_channel_options(self, game_options: Mapping[str, Any] | None) -> None:
+        """Apply HA/Docker install-channel overrides onto this plugin in place.
+
+        - ``steam_branch`` — SteamCMD ``-beta`` name (default remains game.yaml)
+        - ``release_channel`` — substitutes ``{release_channel}`` in
+          ``package_install.version_json_path`` / ``download_url`` (e.g. Factorio
+          ``stable`` / ``experimental``)
+        """
+
+        options = dict(game_options or {})
+        raw_branch = options.get("steam_branch")
+        if raw_branch is not None and str(raw_branch).strip():
+            branch = str(raw_branch).strip()
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", branch):
+                raise ValueError(
+                    f"Invalid steam_branch {branch!r}; use letters, digits, "
+                    "`.`, `_`, or `-`"
+                )
+            self.steam_branch = branch
+
+        if self.package_install is None:
+            return
+        raw_channel = options.get("release_channel")
+        channel = (
+            str(raw_channel).strip()
+            if raw_channel is not None and str(raw_channel).strip()
+            else "stable"
+        )
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", channel):
+            raise ValueError(
+                f"Invalid release_channel {channel!r}; use letters, digits, "
+                "`.`, `_`, or `-`"
+            )
+        token = "{release_channel}"
+        spec = self.package_install
+        self.package_install = PackageInstallSpec(
+            kind=spec.kind,
+            version_url=spec.version_url,
+            version_json_path=spec.version_json_path.replace(token, channel),
+            download_url=spec.download_url.replace(token, channel),
+            strip_components=spec.strip_components,
+            version_filename=spec.version_filename,
+        )
+
     def docker_env_keys(self) -> list[str]:
         """UPPER_SNAKE env var names this game accepts as Docker/compose options.
 
@@ -229,6 +273,9 @@ class GamePlugin:
             java_env = (self.java_opts_env or "JAVA_OPTS").strip().upper()
             if java_env:
                 keys.add(java_env)
+        # Install channel / Steam beta branch (HA options or Docker env).
+        keys.add("RELEASE_CHANNEL")
+        keys.add("STEAM_BRANCH")
         return sorted(keys)
 
 

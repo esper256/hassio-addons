@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.37
+
+- **Steam branch** option: Public (default) or Experimental
+- Sync shared supervisor: install-channel overrides + keep game stdin open
+
 ## 2.1.36
 
 - Sync shared supervisor: HTTP `package_install` path for non-Steam games; recent game output is game process only (Necesse still uses SteamCMD)

@@ -50,7 +50,8 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | --- | --- |
 | `name` | Display / notification label |
 | `steam_app_id` | SteamCMD app id (required unless `package_install` is set) |
-| `package_install` | Optional non-Steam HTTP archive install (`version_url`, `version_json_path`, `download_url`, `strip_components`) |
+| `steam_branch` | Default SteamCMD branch (overridable by HA option `steam_branch`) |
+| `package_install` | Optional non-Steam HTTP archive install (`version_url`, `version_json_path`, `download_url`, `strip_components`). `version_json_path` may include `{release_channel}` (HA option `release_channel`, default `stable`) |
 | `executable` | argv to launch the server |
 | `install_marker` | File that means “install looks present” |
 | `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
