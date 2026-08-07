@@ -219,11 +219,11 @@ class PluginTests(unittest.TestCase):
         self.assertIsNotNone(plugin.world_prepare)
         self.assertEqual(len(plugin.config_files), 3)
         self.assertEqual(plugin.config_files[0].format, "mod_list")
-        # Dry-run first: no active patterns until promoted from Ingress hits.
-        self.assertEqual(plugin.log_patterns.player_join, [])
-        self.assertEqual(plugin.log_patterns.ready, [])
-        self.assertIn("Hosting game at", plugin.log_pattern_candidates.get("ready", []))
-        self.assertTrue(plugin.log_pattern_candidates.get("player_join"))
+        self.assertTrue(plugin.log_patterns.ready)
+        self.assertTrue(plugin.log_patterns.player_join)
+        self.assertTrue(plugin.log_patterns.player_leave)
+        self.assertTrue(plugin.log_patterns.game_version)
+        self.assertEqual(plugin.log_patterns.version_mismatch, [])
         plugin.apply_install_channel_options({"release_channel": "experimental"})
         assert plugin.package_install is not None
         self.assertEqual(
@@ -263,6 +263,54 @@ class PluginTests(unittest.TestCase):
         )
         self.assertIn("--create", prepare_cmd)
         self.assertIn("/data/world/saves/FamilyFactory.zip", prepare_cmd)
+
+    def test_factorio_active_patterns_match_real_log_lines(self) -> None:
+        plugin = load_plugin(FACTORIO_PLUGIN)
+        monitor = LogMonitor(plugin, Path("/tmp/factorio-pattern-test-logs"))
+        samples = [
+            (
+                "ready",
+                "   1.131 Hosting game at IP ADDR:({0.0.0.0:34197})",
+            ),
+            (
+                "ready",
+                "   1.368 Info ServerMultiplayerManager.cpp:809: updateTick(2471) "
+                "changing state from(CreatingGame) to(InGame)",
+            ),
+            (
+                "game_version",
+                "   0.000 2026-08-07 11:29:24; Factorio 2.1.14 "
+                "(build 87180, linux64, headless, space-age)",
+            ),
+            (
+                "player_join",
+                "2026-08-07 11:31:05 [JOIN] TheFrizz joined the game",
+            ),
+            (
+                "player_leave",
+                "2026-08-07 11:31:16 [LEAVE] TheFrizz left the game",
+            ),
+        ]
+        for category, line in samples:
+            before = {
+                p.pattern: p.stat.hits
+                for p in monitor._compiled
+                if p.category == category and p.mode == "active"
+            }
+            monitor.ingest_stdout_line(line)
+            after = {
+                p.pattern: p.stat.hits
+                for p in monitor._compiled
+                if p.category == category and p.mode == "active"
+            }
+            self.assertTrue(
+                any(after[pat] > before[pat] for pat in before),
+                f"no active {category} hit for {line!r}",
+            )
+        self.assertEqual(monitor.state.game_version, "2.1.14")
+        self.assertTrue(monitor.state.ready)
+        # Presence: leave clears occupancy after the join sample above.
+        self.assertFalse(monitor.state.players)
 
     def test_load_stationeers_plugin_builds_unity_cli(self) -> None:
         self.assertTrue(STATIONEERS_PLUGIN.is_file(), f"missing {STATIONEERS_PLUGIN}")

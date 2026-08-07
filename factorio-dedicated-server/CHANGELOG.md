@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6
+
+- Promote proven Factorio log patterns to **active**: ready (`Hosting game at` / CreatingGame→InGame), `Factorio X.Y.Z` version, `[JOIN]` / `[LEAVE]` presence
+- No version-mismatch pattern — Factorio did not log a usable line when an experimental client hit a stable server; option defaults off
+
 ## 1.0.5
 
 - Log patterns: ship **dry-run only** again (empty active `log_patterns`); Factorio-specific regexes moved to `log_pattern_candidates` until Ingress Debug mode proves hits
