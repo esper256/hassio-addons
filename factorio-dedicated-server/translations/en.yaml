@@ -25,16 +25,16 @@ configuration:
     description: Broadcast the server on the local network (Play on LAN).
   visibility_public:
     name: Public server listing
-    description: "Publish on the official Factorio matching server. Requires a Factorio.com username and token below. Default off (LAN / direct connect)."
+    description: "Publish on Factorio’s public matching server. Requires Factorio.com username + token below (from factorio.com/profile). Not needed for LAN or direct IP. Default off."
   factorio_username:
     name: Factorio.com username
-    description: Optional Factorio.com account username. Required only for public listing.
+    description: "Your factorio.com username (not Steam). Only needed when Public server listing is on. Leave empty for LAN / direct connect. Not used to download the headless server."
   factorio_token:
     name: Factorio.com token
-    description: Optional Factorio.com authentication token (preferred over password). Required only for public listing. Keep secret.
+    description: "Auth token from factorio.com/profile (Reveal) — use this, not your account password. Only needed for public listing. Not used to download the headless server. Keep secret."
   update_on_start:
     name: Update on start
-    description: Check factorio.com for a newer free headless package before launching the server.
+    description: Check factorio.com for a newer free headless package before launching the server (no login; not SteamCMD).
   auto_update_interval_minutes:
     name: Auto-update interval (minutes)
     description: Used only when “Daily update check hour” is empty. How often to ask factorio.com whether a newer headless package exists. 0 turns periodic checks off. Values below 15 are raised to 15.
@@ -52,10 +52,10 @@ configuration:
     description: Show Ingress log-watch pattern tooling (dry-run regex hits) and keep the Number of players card visible even when player-count patterns are still dry-run. Leave off for normal operation.
   update_window_start_hour:
     name: Update window start hour
-    description: Optional local hour (0-23) when routine Steam updates may begin. Leave empty for any time.
+    description: Optional local hour (0-23) when routine headless-package updates may begin. Leave empty for any time.
   update_window_end_hour:
     name: Update window end hour
-    description: Optional local hour (0-23) when routine Steam updates must stop. Leave empty for any time.
+    description: Optional local hour (0-23) when routine headless-package updates must stop. Leave empty for any time.
   restart_on_crash:
     name: Restart on crash
     description: Automatically relaunch the server process after an unexpected exit.
@@ -70,7 +70,7 @@ configuration:
     description: Daily backup of the active world save (.zip copied as-is) into /data/backups. History is thinned by the retention profile below.
   backup_on_update:
     name: Backup before update
-    description: Back up the world save immediately before a Steam update. Only the newest pre-update backup is kept.
+    description: Back up the world save immediately before a headless-package update. Only the newest pre-update backup is kept.
   backup_retention:
     name: Backup retention
     description: "Scheduled history uses daily→weekly→monthly thinning; pre-restore safety copies use the same profile (minimal=1 day, standard=7 days, extended=30 days). Only one pre-update backup is kept."

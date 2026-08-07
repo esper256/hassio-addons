@@ -7,11 +7,28 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 - Home Assistant OS / Supervised (**Apps** store)
 - Host architecture **amd64** (Linux headless package). Not offered on aarch64.
 
+## How the game is installed
+
+This add-on does **not** use SteamCMD. On start it downloads Wube’s **free Linux headless package** from factorio.com into `/data/game` (no Steam ownership and no Factorio.com login for install). Players still need an owned Factorio client to join.
+
+Anonymous Steam for app `427520` fails with “No subscription” — that path is intentionally unused here.
+
+## Factorio.com username and token
+
+These settings are **not** for installing or updating the server.
+
+| Goal | What you need |
+| --- | --- |
+| LAN / direct IP connect (default) | Leave **Public server listing** off; leave username and token empty |
+| Appear in the public Factorio browser | Turn **Public server listing** on, then set Factorio.com **username** + **token** |
+
+Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Reveal). Use the token, not your account password. This is matching-server auth only — keep the token secret.
+
 ## Quick start
 
 1. Set **Save name** and a **Game password** on Configuration (leave **Server name** blank for a generated `HAOS Factorio ####`).
-2. Keep **Public server listing** off unless you add Factorio.com username + token.
-3. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab).
+2. Leave **Public server listing** off and Factorio.com username/token empty unless you want the public browser (see above).
+3. **Start** the app (first headless package download can take several minutes — watch the app **Logs** tab; no login required).
 4. Forward Network UDP **34197** on your router to this Home Assistant host.
 5. In Factorio, Multiplayer → Connect to address → `your-ha-ip:34197` (or LAN browser if LAN visibility is on).
 6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
@@ -25,7 +42,9 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 | Save name | `.zip` under `/data/world/saves/` (created automatically if missing) |
 | Server name | Optional; blank → stable `HAOS Factorio ####` for this install |
 | Password / slots | Join controls (`0` slots = unlimited) |
-| LAN / public visibility | LAN default on; public needs Factorio.com credentials |
+| LAN visibility | Default on (Play on LAN) |
+| Public server listing | Off by default; needs Factorio.com username + token |
+| Factorio.com username / token | Public listing only — not used for package download |
 | Pause when empty | Pause with nobody online |
 | Autosave interval | Minutes between autosaves |
 | Update on start | Check/download headless package when the app starts (recommended) |

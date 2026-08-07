@@ -1,7 +1,7 @@
 # esper256 Home Assistant add-ons
 
-Steam dedicated game servers for **Home Assistant OS** (and plain Docker).  
-Each game app updates through SteamCMD, backs up the world, and can restart after crashes.
+Dedicated game servers for **Home Assistant OS** (and plain Docker).  
+Most titles update through SteamCMD; **Factorio** uses Wube’s free headless package from factorio.com. Each app backs up the world and can restart after crashes.
 
 ## Run a game
 
@@ -23,7 +23,7 @@ Install the game app from that repository, then follow its README (configure →
 
 Only folders with `config.yaml` appear in the store. `game-server-base/` is shared supervisor code, not an installable app.
 
-**Architecture:** current Steam games here are **amd64 only**. On aarch64 HAOS the store correctly hides them.
+**Architecture:** current games here are **amd64 only**. On aarch64 HAOS the store correctly hides them.
 
 ## Add another Steam game
 
