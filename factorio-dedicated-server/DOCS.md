@@ -29,9 +29,17 @@ Anonymous Steam for app `427520` fails with “No subscription” — that path 
 
 After a good start you should see `Hosting game` and `InGame`. A Factorio `Got EOF on stdin` Error line alone is not a failure (older builds logged it when stdin was closed).
 
-## Log patterns (Debug mode)
+## Log patterns
 
-This add-on ships with **no active** log patterns. Shared + Factorio guesses run as **dry_run** only (highlights in OPEN WEB UI when **Debug mode** is on). Each regex is its own row — they are not combined into one pattern. Prefer over-matching until a line is proven, then promote that regex into `games/game.yaml` → `log_patterns`. Until join/leave are promoted, “update only when empty” cannot wait for players.
+Active patterns (from real headless logs):
+
+| Event | Match |
+| --- | --- |
+| Ready | `Hosting game at…` and CreatingGame → InGame |
+| Version | `Factorio X.Y.Z (build …)` |
+| Player join / leave | `[JOIN] name joined the game` / `[LEAVE] name left the game` |
+
+**Version mismatch** is not supported: an experimental client against a stable server did not log a usable refusal line. Leave **Update on version mismatch** off.
 
 ## Factorio.com username and token
 
@@ -72,8 +80,9 @@ Get the token from [factorio.com/profile](https://www.factorio.com/profile) (Rev
 | Autosave interval | Minutes between autosaves |
 | Update on start | Check/download headless package when the app starts (recommended) |
 | Daily update check hour | Once-a-day factorio.com check (default **5**) |
-| Update only when empty | Restart for updates only when nobody is online (needs promoted player patterns) |
-| Debug mode | Ingress log-watch: dry_run candidate hits for pattern promotion |
+| Update only when empty | Restart for updates only when nobody is online (`[JOIN]` / `[LEAVE]`) |
+| Update on version mismatch | Unused for Factorio (no reliable log line) — leave off |
+| Debug mode | Ingress log-watch table (optional) |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update / version-mismatch alerts |
 | Network → UDP port | Host port players use (default 34197) |

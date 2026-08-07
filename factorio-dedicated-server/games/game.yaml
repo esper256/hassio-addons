@@ -127,26 +127,18 @@ ui_theme:
   glow: "#2a1a0a"
   wash: "#080808"
   depth: "#1a1008"
-# Presence mode once join/leave patterns are promoted from dry-run.
+# Presence via [JOIN]/[LEAVE] (proven in Ingress dry-run with a real client).
 player_tracking_mode: presence
-# Dry-run first: ship empty active patterns until Ingress Debug mode proves hits.
-# Factorio-specific guesses live only in log_pattern_candidates (+ generic defaults).
-log_patterns: {}
-log_pattern_candidates:
+# Promoted from real Factorio headless logs (2.1.14). No version_mismatch —
+# mismatched clients did not emit a usable refusal line we can key on.
+log_patterns:
   ready:
     - 'Hosting game at'
     - 'changing state from\(CreatingGame\) to\(InGame\)'
-    - 'Opening socket at'
-    - 'to\(InGame\)'
   game_version:
     - 'Factorio\s+(?P<version>\d+\.\d+\.\d+)'
-    - 'Map output version:\s+(?P<version>\d+\.\d+\.\d+)'
   player_join:
     - '\[JOIN\]\s+(?P<player>.+?)\s+joined the game'
-    - '\[JOIN\]'
   player_leave:
     - '\[LEAVE\]\s+(?P<player>.+?)\s+left the game'
-    - '\[LEAVE\]'
-  players_empty:
-    - 'changing state from\(InGame\) to\(Disconnecting'
-    - 'to\(Disconnecting'
+log_pattern_candidates: {}

@@ -49,13 +49,13 @@ configuration:
     description: Local hour (0–23) to ask factorio.com once per day for a newer headless package. Default is 5 (5:00am). Leave empty to use the interval setting instead.
   update_when_empty_only:
     name: Update only when empty
-    description: When a newer package is ready, wait until nobody is online before restarting so players are not interrupted. Requires working player join/leave detection (configured log patterns) — without that, emptiness cannot be determined and updates will not proceed while this is on.
+    description: When a newer package is ready, wait until nobody is online before restarting so players are not interrupted. Uses Factorio [JOIN]/[LEAVE] log lines.
   update_on_version_mismatch:
     name: Update on version mismatch
-    description: If clients are rejected for a wrong/outdated version, check factorio.com for a newer package and only then restart to update.
+    description: Unused for Factorio — mismatched clients do not emit a reliable log line the supervisor can detect. Leave off.
   debug_mode:
     name: Debug mode
-    description: Show Ingress log-watch pattern tooling (dry-run regex hits) and keep the Number of players card visible even when player-count patterns are still dry-run. Leave off for normal operation.
+    description: Show Ingress log-watch pattern tooling (dry-run regex hits) for optional further tuning. Leave off for normal operation.
   update_window_start_hour:
     name: Update window start hour
     description: Optional local hour (0-23) when routine headless-package updates may begin. Leave empty for any time.
