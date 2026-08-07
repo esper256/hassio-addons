@@ -495,6 +495,7 @@ class GameServerSupervisor:
                 "last_updated": None,
             }
         else:
+            assert self.plugin.steam_app_id is not None
             install_meta = steamcmd.read_local_install_meta(
                 self.config.install_dir, self.plugin.steam_app_id
             )

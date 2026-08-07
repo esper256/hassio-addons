@@ -121,7 +121,11 @@ def fetch_remote_version(
     """GET version_url and extract the version string via version_json_path."""
 
     try:
-        with urllib.request.urlopen(spec.version_url, timeout=timeout) as resp:
+        request = urllib.request.Request(
+            spec.version_url,
+            headers={"User-Agent": "hassio-game-server/1"},
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             raw = resp.read()
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise PackageInstallError(
