@@ -25,6 +25,7 @@ arg_map:
   server_slots: -slots
   data_dir: -datadir
   logs_dir: -logs
-# Empty active patterns by default (alpha-safe). Tests that need active
-# patterns mutate the loaded plugin in memory.
+# Required for new games: empty active patterns (dry-run first).
+# Put guesses in log_pattern_candidates; generics live in patterns.py.
+# Tests that need active patterns mutate the loaded plugin in memory.
 log_patterns: {}

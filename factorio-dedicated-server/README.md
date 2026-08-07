@@ -77,7 +77,8 @@ That is the status page (build, players when known, world save, backups, restore
 | Autosave interval | Minutes between Factorio autosaves (default 10) |
 | Update on start | Check/download a newer headless package before launch (recommended) |
 | Daily update check hour | Default **5** (5:00am local); clear to use the interval instead |
-| Update only when empty | Wait for nobody online before restarting (uses `[JOIN]` / `[LEAVE]` logs) |
+| Update only when empty | Wait for nobody online before restarting (needs **active** join/leave patterns — promote from Debug mode dry-run hits first) |
+| Debug mode | Show Ingress log-watch table (broad dry_run regex rows + hits) |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update failure / version mismatch |
 | Network → UDP port | Host port players use (default 34197) |

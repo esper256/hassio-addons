@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5
+
+- Log patterns: ship **dry-run only** again (empty active `log_patterns`); Factorio-specific regexes moved to `log_pattern_candidates` until Ingress Debug mode proves hits
+- Shared supervisor: broader generic dry-run guesses; UI keeps dry-run rows visible even when an active pattern exists
+
 ## 1.0.4
 
 - Fix package updates: **clean-replace** the headless install tree instead of merging (stale `quality/.../recycling.lua` from 2.0 left after a 2.1 overlay caused crash loops)
