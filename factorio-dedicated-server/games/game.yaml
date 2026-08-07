@@ -52,6 +52,23 @@ world_prepare:
     - "{data_dir}/config.ini"
 # Rewrite settings + write-data config before every launch from HA options.
 config_files:
+  # Headless from factorio.com is always the Space Age-capable binary (one
+  # download). DLC content is gated by these official mods — not a second binary.
+  # Default off = base-game mode so plain clients can join. Must be written before
+  # world_prepare/--create. Saves made with DLC on cannot simply disable later.
+  - path: "{data_dir}/mods/mod-list.json"
+    format: mod_list
+    mods:
+      - name: base
+        enabled: true
+      - name: elevated-rails
+        enabled_option: space_age
+      - name: quality
+        enabled_option: space_age
+      - name: space-age
+        enabled_option: space_age
+      - name: recycler
+        enabled_option: space_age
   - path: "{data_dir}/config.ini"
     format: ini
     fixed:

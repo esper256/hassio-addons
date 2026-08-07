@@ -57,7 +57,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
 | `argv_prefix` | Ordered tokens after the executable; `{option}` templates; empty → omitted |
 | `settings_flag` / `settings_map` / `fixed_settings` | Optional `-settings Key Value …` style block (Unity servers, etc.) |
-| `config_files` | Optional JSON/INI files rewritten from options before each launch (`path`, `format`, `fixed`, `map`, `types`) |
+| `config_files` | Optional JSON/INI/`mod_list` files rewritten from options before each launch (`path`, `format`, `fixed`, `map`, `types`, or `mods` for mod_list) |
 | `world_prepare` | Optional one-shot argv (same executable) when the active world is missing — e.g. create-save before host |
 | `env_options` | Extra UPPER_SNAKE Docker/compose env vars (optional). Keys from `arg_map` / `settings_map` / `{option}` templates are accepted automatically |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |

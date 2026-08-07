@@ -186,6 +186,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("FACTORIO_TOKEN", factorio_keys)
         self.assertIn("RELEASE_CHANNEL", factorio_keys)
         self.assertIn("STEAM_BRANCH", factorio_keys)
+        self.assertIn("SPACE_AGE", factorio_keys)
         self.assertNotIn("JAVA_OPTS", factorio_keys)
 
 
@@ -215,7 +216,8 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(plugin.player_tracking_mode, "presence")
         self.assertEqual(plugin.ui_theme.get("accent"), "#ff7a1a")
         self.assertIsNotNone(plugin.world_prepare)
-        self.assertEqual(len(plugin.config_files), 2)
+        self.assertEqual(len(plugin.config_files), 3)
+        self.assertEqual(plugin.config_files[0].format, "mod_list")
         self.assertTrue(plugin.log_patterns.player_join)
         self.assertTrue(plugin.log_patterns.ready)
         plugin.apply_install_channel_options({"release_channel": "experimental"})
@@ -234,6 +236,7 @@ class PluginTests(unittest.TestCase):
                 "server_port": 34197,
                 "data_dir": "/data/world",
                 "logs_dir": "/data/logs",
+                "space_age": False,
             },
         )
         cmd = ProcessManager(plugin, cfg).build_command()
@@ -3057,6 +3060,34 @@ class LaunchPrepareTests(unittest.TestCase):
         self.assertIn("SERVER_NAME", keys)
         self.assertIn("SERVER_SLOTS", keys)
         self.assertIn("DATA_DIR", keys)
+
+    def test_mod_list_config_toggles_from_option(self) -> None:
+        plugin = load_plugin(FACTORIO_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            options = {
+                "data_dir": str(world),
+                "working_dir": str(root / "game"),
+                "space_age": False,
+            }
+            write_config_files(plugin, options)
+            mod_list = world / "mods" / "mod-list.json"
+            self.assertTrue(mod_list.is_file())
+            payload = json.loads(mod_list.read_text(encoding="utf-8"))
+            by_name = {m["name"]: m["enabled"] for m in payload["mods"]}
+            self.assertTrue(by_name["base"])
+            self.assertFalse(by_name["quality"])
+            self.assertFalse(by_name["space-age"])
+            self.assertFalse(by_name["elevated-rails"])
+            self.assertFalse(by_name["recycler"])
+
+            options["space_age"] = True
+            write_config_files(plugin, options)
+            payload2 = json.loads(mod_list.read_text(encoding="utf-8"))
+            by_name2 = {m["name"]: m["enabled"] for m in payload2["mods"]}
+            self.assertTrue(by_name2["quality"])
+            self.assertTrue(by_name2["space-age"])
 
 
 if __name__ == "__main__":

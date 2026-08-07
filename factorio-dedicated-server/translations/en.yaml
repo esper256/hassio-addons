@@ -32,6 +32,9 @@ configuration:
   factorio_token:
     name: Factorio.com token
     description: "Auth token from factorio.com/profile (Reveal) — use this, not your account password. Only needed for public listing. Not used to download the headless server. Keep secret."
+  space_age:
+    name: Space Age DLC
+    description: "The headless server binary always includes Space Age capability; this toggles the official DLC mods. Off (default) = base-game mode (plain Factorio clients can join). On = load elevated-rails / quality / space-age / recycler; every player needs Space Age. Set before first world create. Turning off later usually needs OPEN WEB UI → NEW WORLD."
   release_channel:
     name: Release channel
     description: "Which factorio.com headless build to install. Stable matches the current retail client; Experimental tracks Wube’s newer test builds (clients must match). Changing channel downloads that build on the next update."

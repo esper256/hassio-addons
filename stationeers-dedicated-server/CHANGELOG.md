@@ -3,7 +3,7 @@
 ## 1.0.6
 
 - **Steam branch** option: Public (default) or Beta
-- Sync shared supervisor: install-channel overrides + keep game stdin open
+- Sync shared supervisor: install-channel overrides, keep game stdin open, generic `mod_list` config_files format
 
 ## 1.0.5
 
