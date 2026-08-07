@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .update_check import UpdateCheckResult
+
 LOG = logging.getLogger("game_server.package")
 
 LineCallback = Callable[[str], None]
@@ -35,20 +37,6 @@ VERSION_FILENAME = ".package_version"
 
 class PackageInstallError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class PackageUpdateCheckResult:
-    """Same shape as steamcmd.UpdateCheckResult for supervisor branching."""
-
-    update_available: bool
-    local_build_id: str | None
-    remote_build_id: str | None
-    error: str | None = None
-
-    @property
-    def check_ok(self) -> bool:
-        return self.error is None
 
 
 def _marker_installed(install_dir: str | Path, marker_relative: str) -> bool:
@@ -370,12 +358,12 @@ def update_available(
     plugin: _PackagePlugin,
     *,
     timeout: float = 60.0,
-) -> PackageUpdateCheckResult:
+) -> UpdateCheckResult:
     """Compare local package version to remote (same shape as Steam checks)."""
 
     spec = plugin.package_install
     if spec is None:
-        return PackageUpdateCheckResult(
+        return UpdateCheckResult(
             update_available=False,
             local_build_id=None,
             remote_build_id=None,
@@ -385,13 +373,13 @@ def update_available(
     try:
         remote = fetch_remote_version(spec, timeout=timeout)
     except PackageInstallError as exc:
-        return PackageUpdateCheckResult(
+        return UpdateCheckResult(
             update_available=False,
             local_build_id=local,
             remote_build_id=None,
             error=str(exc),
         )
-    return PackageUpdateCheckResult(
+    return UpdateCheckResult(
         update_available=bool(remote) and remote != local,
         local_build_id=local,
         remote_build_id=remote,

@@ -570,11 +570,6 @@ class BackupManager:
             except OSError:
                 LOG.warning("Failed to prune %s", stale)
 
-    def _prune(self) -> None:
-        """Backward-compatible alias for tests / callers."""
-
-        self.apply_retention()
-
     def list_archives(self) -> list[Path]:
         """Return scheduled/manual backup archives oldest → newest."""
 

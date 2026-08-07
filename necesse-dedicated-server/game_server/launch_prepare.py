@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .config import format_bool
+from .config import format_bool, format_option_value
 from .privileges import make_preexec
 from .world_save import locate_active_world
 
@@ -190,20 +190,11 @@ def render_template(text: str, options: Mapping[str, Any], bool_style: str) -> s
         value = options[key]
         if value is None or value == "":
             return ""
-        return _format_scalar(value, bool_style)
+        return format_option_value(value, bool_style)
 
     if "{" not in text:
         return text
     return _TEMPLATE_RE.sub(repl, text)
-
-
-def _format_scalar(value: object, bool_style: str) -> str:
-    if isinstance(value, bool) or (
-        isinstance(value, str)
-        and value.lower() in {"true", "false", "1", "0", "yes", "no"}
-    ):
-        return format_bool(value, bool_style)
-    return str(value)
 
 
 def _coerce_value(value: object, type_name: str, bool_style: str) -> Any:

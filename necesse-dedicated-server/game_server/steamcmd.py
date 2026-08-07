@@ -8,31 +8,17 @@ import re
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from .plugin import GamePlugin
-from .steam_gate import get_gate
 from .privileges import chown_paths, make_preexec
+from .steam_gate import get_gate
+from .update_check import UpdateCheckResult
 
 LOG = logging.getLogger("game_server.steamcmd")
 
-
-@dataclass(frozen=True)
-class UpdateCheckResult:
-    """Result of comparing local vs remote Steam build ids."""
-
-    update_available: bool
-    local_build_id: str | None
-    remote_build_id: str | None
-    # Set when the Steam check itself failed/was cancelled — not the same as
-    # "up to date".
-    error: str | None = None
-
-    @property
-    def check_ok(self) -> bool:
-        return self.error is None
+__all__ = ["UpdateCheckResult", "SteamCMDError"]
 
 MISSING_CONFIG_MARKERS = (
     "missing configuration",

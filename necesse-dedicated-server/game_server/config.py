@@ -325,3 +325,14 @@ def format_bool(value: Any, style: str) -> str:
     if style == "one_zero":
         return "1" if truthy else "0"
     return "true" if truthy else "false"
+
+
+def format_option_value(value: object, bool_style: str) -> str:
+    """Render an option for CLI/templates; coerce common bool spellings."""
+
+    if isinstance(value, bool) or (
+        isinstance(value, str)
+        and value.lower() in {"true", "false", "1", "0", "yes", "no"}
+    ):
+        return format_bool(value, bool_style)
+    return str(value)
