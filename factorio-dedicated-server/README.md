@@ -71,7 +71,7 @@ That is the status page (build, players when known, world save, backups, restore
 | LAN visibility | On by default (Play on LAN) |
 | Public server listing | Off by default; needs Factorio.com username + token (see above) |
 | Factorio.com username / token | Only for public listing — not used to download the server |
-| Space Age DLC | Default **off** (base game). On requires the DLC for every player. Set before first world create; turning off later usually needs NEW WORLD |
+| Space Age DLC | Default **off**. Headless is always the Space Age–capable binary; this only toggles DLC mods in `mod-list.json`. Off = base-game mode (plain clients OK). On = every player needs Space Age. Set before first world create; turning off later usually needs NEW WORLD |
 | Release channel | `stable` (default) or `experimental` headless package |
 | Pause when empty | Pause simulation with nobody online |
 | Autosave interval | Minutes between Factorio autosaves (default 10) |

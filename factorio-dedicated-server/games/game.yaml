@@ -52,9 +52,10 @@ world_prepare:
     - "{data_dir}/config.ini"
 # Rewrite settings + write-data config before every launch from HA options.
 config_files:
-  # Space Age ships as official mods; default off so base-game clients can join.
-  # Must be written before world_prepare/--create. Saves made with DLC on cannot
-  # simply disable these later — use NEW WORLD after turning Space Age off.
+  # Headless from factorio.com is always the Space Age-capable binary (one
+  # download). DLC content is gated by these official mods — not a second binary.
+  # Default off = base-game mode so plain clients can join. Must be written before
+  # world_prepare/--create. Saves made with DLC on cannot simply disable later.
   - path: "{data_dir}/mods/mod-list.json"
     format: mod_list
     mods:

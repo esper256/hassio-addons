@@ -11,7 +11,15 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 
 This add-on does **not** use SteamCMD. On start it downloads Wube’s **free Linux headless package** from factorio.com into `/data/game` (no Steam ownership and no Factorio.com login for install). Players still need an owned Factorio client to join.
 
-**Space Age DLC** (Configuration): default **off** = base game only. The headless package includes Space Age as official mods (`elevated-rails`, `quality`, `space-age`, and on newer builds `recycler`); with the option off we disable them in `mods/mod-list.json` before the world is created. Turn **on** only if every player owns Space Age. Changing this after a world exists usually requires OPEN WEB UI → **NEW WORLD**.
+**Space Age DLC** (Configuration): default **off** = base-game content only.
+
+How this maps to downloads/clients:
+
+- **Players:** owning Space Age means a Space Age–capable client binary that can load the DLC mods. A plain (non–Space Age) client **cannot** load those mods.
+- **This server:** factorio.com publishes **one** free Linux headless package, and it is already the Space Age–capable binary (it ships the DLC content). There is no separate “base-only headless” download.
+- **Our toggle:** does **not** swap binaries. It enables/disables the official DLC mods (`elevated-rails`, `quality`, `space-age`, and on newer builds `recycler`) in `mods/mod-list.json` before world create / launch. Off = that Space Age–capable headless runs in base-game mode (plain clients can join). On = DLC mods loaded (every player needs Space Age).
+
+Changing this after a world exists usually requires OPEN WEB UI → **NEW WORLD**.
 
 **Release channel** (Configuration): **stable** (default) or **experimental**. Clients must match the channel you install. Changing channel pulls that build on the next update check / restart with update-on-start. Prefer **stable** unless you intentionally want experimental clients.
 
