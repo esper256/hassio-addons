@@ -26,6 +26,7 @@ Documentation shown inside Home Assistant. Full guide (including Docker): [READM
 | Server slots / MOTD | Capacity and welcome text |
 | Pause when empty | Pause with nobody online |
 | Java options | Memory etc. (default `-Xms512M -Xmx2G`) |
+| Steam branch | `public` (default) or `experimental` — clients must match |
 | Update on start | SteamCMD when the app starts (recommended) |
 | Daily Steam check hour | Once-a-day Steam check (default **5**) |
 | Update only when empty | Restart for updates only when nobody is online |
