@@ -2199,8 +2199,14 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("<td>2</td>", rows)
         # player_count is dry_run-only → 0 active hits.
         self.assertIn("<td>0</td>", rows)
-        self.assertIn("tag active", rows)
-        self.assertIn("tag dry_run", rows)
+        # Mixed category shows only the highest-priority Mode tag (active).
+        self.assertEqual(rows.count("tag active"), 1)
+        self.assertEqual(rows.count("tag dry_run"), 1)
+        self.assertNotIn("tag active", rows.split("<tr>")[2])  # player_count row
+        # Active category sorts above dry_run-only.
+        ready_i = rows.index(">ready<")
+        player_i = rows.index(">player_count<")
+        self.assertLess(ready_i, player_i)
         highlights = _format_highlights(
             [
                 {
@@ -2215,6 +2221,52 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("active:ready", highlights)
         self.assertIn("dry_run:ready", highlights)
+
+    def test_pattern_rows_mode_priority_and_sort(self) -> None:
+        patterns = [
+            {
+                "mode": "dry_run",
+                "category": "zzz_dry",
+                "pattern": r"dry",
+                "hits": 3,
+                "recent_lines": ["dry hit"],
+            },
+            {
+                "mode": "active",
+                "category": "mmm_active",
+                "pattern": r"active",
+                "hits": 1,
+                "recent_lines": ["active hit"],
+            },
+            {
+                "mode": "active",
+                "category": "aaa_stale",
+                "pattern": r"stale",
+                "hits": 4,
+                "stale": True,
+                "recent_lines": ["old hit"],
+            },
+            {
+                "mode": "dry_run",
+                "category": "mmm_active",
+                "pattern": r"also dry",
+                "hits": 9,
+                "recent_lines": ["dry peer"],
+            },
+        ]
+        rows = _format_pattern_rows(patterns)
+        self.assertEqual(rows.count("<tr>"), 3)
+        # Mode column: one tag only — stale beats active+dry peers.
+        self.assertEqual(rows.count("tag stale"), 1)
+        self.assertEqual(rows.count("tag active"), 1)
+        self.assertEqual(rows.count("tag dry_run"), 1)
+        self.assertNotIn("tag active", rows.split("aaa_stale")[0])
+        # Sort: stale → active → dry_run.
+        stale_i = rows.index("aaa_stale")
+        active_i = rows.index("mmm_active")
+        dry_i = rows.index("zzz_dry")
+        self.assertLess(stale_i, active_i)
+        self.assertLess(active_i, dry_i)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(
