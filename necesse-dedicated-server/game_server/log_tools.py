@@ -59,7 +59,7 @@ KEYWORD_HINTS = {
     ],
 }
 
-# Prefer Necesse's latest-server-log.txt, then common dedicated-server names.
+# Stable "current log" names first, then common dedicated-server fallbacks.
 PREFERRED_LOG_NAMES = (
     "latest-server-log.txt",
     "latest.log",
@@ -93,8 +93,8 @@ def discover_log_file(
 ) -> Path | None:
     """Pick the best live game log for monitoring / Ingress capture.
 
-    Games do not always honor ``logs_dir`` (Necesse often writes under
-    ``data_dir`` / ``data_dir/data/logs``). Search those roots so live pattern
+    Games do not always honor ``logs_dir`` (some write under ``data_dir`` /
+    ``data_dir/data/logs`` instead). Search those roots so live pattern
     monitoring and the log toolkit stay aligned.
     """
 

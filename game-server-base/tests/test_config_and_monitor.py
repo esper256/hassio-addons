@@ -405,6 +405,166 @@ class PresenceLeaveResetTests(unittest.TestCase):
             self.assertEqual(mon.state.player_count, 0)
 
 
+class LogFollowIntegrityTests(unittest.TestCase):
+    """No gaps / no cross-source duplicate pattern fires while following logs."""
+
+    def test_file_echo_of_stdout_does_not_double_count(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.player_count, 1)
+            # Same line later from the on-disk log must not join twice.
+            mon._handle_line("Alice joined", source="file")
+            self.assertEqual(mon.state.players, {"Alice"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_stdout_echo_of_file_does_not_double_count(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon._handle_line("Bob joined", source="file")
+            self.assertEqual(mon.state.player_count, 1)
+            mon.ingest_stdout_line("Bob joined")
+            self.assertEqual(mon.state.players, {"Bob"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_same_source_identical_lines_still_apply(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            player_leave=[r"(?P<player>\S+) left"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Alice joined")
+            mon.ingest_stdout_line("Alice left")
+            mon.ingest_stdout_line("Alice joined")
+            self.assertEqual(mon.state.players, {"Alice"})
+            self.assertEqual(mon.state.player_count, 1)
+
+    def test_file_only_line_still_applies(self) -> None:
+        plugin = load_plugin(NECESSE_PLUGIN)
+        triggered: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            line = (
+                '[2026-08-04 08:45:04] Client "76561197968471340" '
+                "had wrong version (1.3.0)."
+            )
+            mon._handle_line(line, source="file")
+            self.assertEqual(mon.state.version_mismatch_count, 1)
+            self.assertEqual(triggered, [line])
+
+    def _join_hits(self, mon: LogMonitor) -> int:
+        return sum(
+            int(p["hits"])
+            for p in mon.pattern_report()["patterns"]
+            if p["category"] == "player_join" and p["mode"] == "active"
+        )
+
+    def test_rotate_drains_old_file_and_reads_new_from_start(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+            version_mismatch=[r"wrong version"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            world = root / "world"
+            logs.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            current = world / "latest-server-log.txt"
+            current.write_text("boot\n", encoding="utf-8")
+            mon = LogMonitor(plugin, logs)
+            mon.start()
+            try:
+                deadline = time.time() + 3
+                while time.time() < deadline and mon._pick_log_file() != current:
+                    time.sleep(0.05)
+                time.sleep(0.4)
+                with current.open("a", encoding="utf-8") as handle:
+                    handle.write("Alice joined\n")
+                    handle.flush()
+                deadline = time.time() + 3
+                while time.time() < deadline and mon.state.player_count != 1:
+                    time.sleep(0.05)
+                self.assertEqual(mon.state.player_count, 1)
+                self.assertEqual(self._join_hits(mon), 1)
+
+                # Rename-rotate: unread trailing line on old inode + new file lines.
+                rotated = world / "data" / "logs"
+                rotated.mkdir(parents=True)
+                old = rotated / "2026-08-04-session.txt"
+                current.rename(old)
+                with old.open("a", encoding="utf-8") as handle:
+                    handle.write("Client had wrong version\n")
+                    handle.flush()
+                current.write_text("Bob joined\n", encoding="utf-8")
+
+                deadline = time.time() + 4
+                while time.time() < deadline:
+                    if (
+                        mon.state.version_mismatch_count >= 1
+                        and "Bob" in mon.state.players
+                    ):
+                        break
+                    time.sleep(0.05)
+                self.assertGreaterEqual(mon.state.version_mismatch_count, 1)
+                self.assertIn("Bob", mon.state.players)
+                # Alice must not be replayed when the renamed inode is reopened.
+                self.assertEqual(self._join_hits(mon), 2)
+                self.assertEqual(mon.state.version_mismatch_count, 1)
+            finally:
+                mon.stop()
+
+    def test_truncate_continues_without_stale_eof(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"(?P<player>\S+) joined"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            world = root / "world"
+            logs.mkdir()
+            world.mkdir()
+            plugin.data_dir = str(world)
+            current = world / "latest-server-log.txt"
+            current.write_text("warmup\n", encoding="utf-8")
+            mon = LogMonitor(plugin, logs)
+            mon.start()
+            try:
+                time.sleep(0.4)
+                with current.open("a", encoding="utf-8") as handle:
+                    handle.write("Alice joined\n")
+                    handle.flush()
+                deadline = time.time() + 3
+                while time.time() < deadline and mon.state.player_count != 1:
+                    time.sleep(0.05)
+                self.assertEqual(mon.state.player_count, 1)
+                self.assertEqual(self._join_hits(mon), 1)
+
+                # copytruncate-style: same path, new content from offset 0.
+                current.write_text("Carol joined\n", encoding="utf-8")
+                deadline = time.time() + 3
+                while time.time() < deadline and "Carol" not in mon.state.players:
+                    time.sleep(0.05)
+                self.assertIn("Carol", mon.state.players)
+                self.assertEqual(self._join_hits(mon), 2)
+            finally:
+                mon.stop()
+
+
 class WorldSaveLocatorTests(unittest.TestCase):
     def test_named_path_prefers_plugin_template(self) -> None:
         plugin = load_plugin(FIXTURE)
@@ -2292,6 +2452,14 @@ class LogBridgeTests(unittest.TestCase):
         self.assertFalse(deduper.remember_if_new("  Player joined  "))
         self.assertTrue(deduper.remember_if_new("Player left"))
         self.assertFalse(deduper.remember_if_new(""))
+
+    def test_recent_line_seen_and_remember(self) -> None:
+        deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)
+        self.assertFalse(deduper.seen("Alice joined"))
+        deduper.remember("Alice joined")
+        self.assertTrue(deduper.seen("  Alice joined  "))
+        deduper.remember("Alice joined")
+        self.assertTrue(deduper.seen("Alice joined"))
 
     def test_strip_ansi(self) -> None:
         raw = "\x1b[34m[2026-08-03 12:59:33] Started server using port 14159\x1b[39m"

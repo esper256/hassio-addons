@@ -9,14 +9,19 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TextIO
 
-from .log_bridge import STDOUT_DEDUPER, strip_ansi
+from .log_bridge import STDOUT_DEDUPER, RecentLineDeduper, strip_ansi
 from .log_tools import discover_log_file
 from .patterns import DEFAULT_CANDIDATE_PATTERNS
 from .plugin import PLAYER_TRACKING_PRESENCE, GamePlugin
 
 LOG = logging.getLogger("game_server.monitor")
+
+# Cross-source (stdout vs file) pattern dedupe window. Long enough for delayed
+# file flushes; same-source identical lines are NOT suppressed (see _handle_line).
+_CROSS_SOURCE_TTL_SECONDS = 120.0
+_CROSS_SOURCE_MAXLEN = 512
 
 
 @dataclass
@@ -128,6 +133,14 @@ class LogMonitor:
         self._thread: threading.Thread | None = None
         self._compiled: list[_CompiledPattern] = []
         self._stats: dict[tuple[str, str, str], PatternStat] = {}
+        # Cross-source echoes: stdout-handled lines must not also fire from file
+        # (and vice versa). Same-source repeats still apply (real duplicate events).
+        self._stdout_lines = RecentLineDeduper(
+            maxlen=_CROSS_SOURCE_MAXLEN, ttl_seconds=_CROSS_SOURCE_TTL_SECONDS
+        )
+        self._file_lines = RecentLineDeduper(
+            maxlen=_CROSS_SOURCE_MAXLEN, ttl_seconds=_CROSS_SOURCE_TTL_SECONDS
+        )
         self._build_patterns()
 
     def _build_patterns(self) -> None:
@@ -244,18 +257,31 @@ class LogMonitor:
 
     def _pick_log_file(self) -> Path | None:
         # Same discovery as Ingress log toolkit: configured logs_dir plus data_dir
-        # fallbacks (Necesse writes under /data/world even when -logs is set).
+        # fallbacks (some games write under data_dir even when logs_dir is set).
         return discover_log_file(self.logs_dir, self.plugin.data_dir)
+
+    def _drain_handle(self, handle: TextIO[str]) -> None:
+        """Read remaining complete lines before switching away from a log file."""
+
+        try:
+            while True:
+                line = handle.readline()
+                if not line:
+                    break
+                self._handle_line(line.rstrip("\n"), source="file")
+        except OSError:
+            LOG.exception("Failed draining log handle before rotate")
 
     def _run(self) -> None:
         current: Path | None = None
-        handle = None
-        inode = None
+        handle: TextIO[str] | None = None
+        inode: int | None = None
         try:
             while not self._stop.is_set():
                 path = self._pick_log_file()
                 if path is None:
                     if handle is not None:
+                        self._drain_handle(handle)
                         handle.close()
                         handle = None
                         current = None
@@ -266,6 +292,7 @@ class LogMonitor:
                     stat = path.stat()
                 except FileNotFoundError:
                     if handle is not None:
+                        self._drain_handle(handle)
                         handle.close()
                         handle = None
                         current = None
@@ -274,29 +301,51 @@ class LogMonitor:
                     continue
 
                 reopen = handle is None or path != current or stat.st_ino != inode
+                truncated = False
                 if not reopen and handle is not None:
                     try:
-                        # Truncate/reuse same inode (common log rotate) leaves the
+                        # Truncate/reuse same inode (copytruncate) leaves the
                         # reader stuck at the old EOF; detect and rewind.
                         if stat.st_size < handle.tell():
                             reopen = True
+                            truncated = True
                     except OSError:
                         reopen = True
 
                 if reopen:
-                    same_inode = (
-                        current == path and inode is not None and inode == stat.st_ino
-                    )
+                    # Rotation/path change: finish the old file first so trailing
+                    # lines are not lost. Truncate: old offset is past EOF — skip.
+                    resume_offset: int | None = None
+                    prior_inode = inode
+                    if handle is not None and not truncated:
+                        self._drain_handle(handle)
+                        try:
+                            resume_offset = handle.tell()
+                        except OSError:
+                            resume_offset = None
                     if handle:
                         handle.close()
                     try:
                         handle = path.open("r", encoding="utf-8", errors="replace")
-                        # New file / first open: follow from EOF. Same inode that
-                        # shrank (truncate rotate): rewind so new lines are seen.
-                        if same_inode:
+                        if truncated:
+                            # Same inode shrank — read new content from start.
                             handle.seek(0)
-                        else:
+                        elif current is None:
+                            # First open of a long-lived server: follow from EOF
+                            # so we do not replay hours of history into patterns.
                             handle.seek(0, 2)
+                        elif (
+                            prior_inode is not None
+                            and prior_inode == stat.st_ino
+                            and resume_offset is not None
+                        ):
+                            # Rename of the file we already followed: keep offset
+                            # (do not replay from the start via the new path).
+                            handle.seek(resume_offset)
+                        else:
+                            # Brand-new inode/path: read from start so lines written
+                            # between create and open are not missed.
+                            handle.seek(0)
                         current = path
                         inode = stat.st_ino
                         LOG.info("Monitoring log file %s", path)
@@ -320,10 +369,23 @@ class LogMonitor:
         line = strip_ansi(line)
         if not line.strip():
             return
-        # File-only lines never appear on process stdout; mirror them into HA Logs.
-        # Lines already emitted as [game] from process stdout are skipped via dedupe.
+
+        # HA Logs mirroring: file lines that already appeared as [game] from
+        # process stdout are skipped; file-only lines become [game-log].
         if source == "file" and STDOUT_DEDUPER.remember_if_new(line):
             LOG.info("[game-log] %s", line)
+
+        # Pattern/event path: suppress cross-source echoes only. Two identical
+        # joins on stdout still both count; a file echo of a stdout line does not.
+        if source == "stdout":
+            if self._file_lines.seen(line):
+                return
+            self._stdout_lines.remember(line)
+        else:
+            if self._stdout_lines.seen(line):
+                return
+            self._file_lines.remember(line)
+
         self.state.last_log_line = line
         self.state.recent_lines.append(line)
 

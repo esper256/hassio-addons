@@ -2,7 +2,7 @@
 
 ## 1.0.3
 
-- Sync shared supervisor: presence unknown-leave clears to Idle; 24h max wait for empty before applying updates; log monitor follows `data_dir` logs and truncate/rotate
+- Sync shared supervisor: presence unknown-leave clears to Idle; 24h max wait for empty before applying updates; log monitor follows `data_dir` logs without cross-source double-fires; drains/reopens across truncate/rotate
 
 ## 1.0.2
 

@@ -63,7 +63,8 @@ ui_theme:
   depth: "#1a1710"
 # Idle vs occupied only — Necesse join/leave identity is unreliable enough that a
 # numeric headcount can stick (join SteamID vs leave display-name mismatch).
-# Presence: any join → occupied; any disconnect → idle (never stuck occupied).
+# Presence (generic): join → occupied; matching leave may keep others; unknown
+# leave identity → idle so occupancy cannot stick and block updates.
 # Do NOT activate “Found N saved players” or “empty server” GC lines as player_count.
 # version_mismatch: active — rejected clients queue a Steam update *check* first;
 # the server is only stopped when Steam reports a newer build (then bypass quiet

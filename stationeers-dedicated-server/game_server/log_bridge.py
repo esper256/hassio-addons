@@ -45,7 +45,7 @@ def configure_logging(level: int) -> None:
 
 
 class RecentLineDeduper:
-    """Suppress duplicate log mirrors within a short window."""
+    """Track recent log lines for de-duplication within a short window."""
 
     def __init__(self, maxlen: int = 64, ttl_seconds: float = 5.0) -> None:
         self._lock = threading.Lock()
@@ -56,6 +56,32 @@ class RecentLineDeduper:
     def _normalize(line: str) -> str:
         return strip_ansi(line).strip()
 
+    def _purge_locked(self, now: float) -> None:
+        while self._entries and now - self._entries[0][0] > self._ttl:
+            self._entries.popleft()
+
+    def remember(self, line: str) -> None:
+        """Record a line (even if it was already seen)."""
+
+        key = self._normalize(line)
+        if not key:
+            return
+        now = time.time()
+        with self._lock:
+            self._purge_locked(now)
+            self._entries.append((now, key))
+
+    def seen(self, line: str) -> bool:
+        """Return True if this line was recorded within the TTL window."""
+
+        key = self._normalize(line)
+        if not key:
+            return False
+        now = time.time()
+        with self._lock:
+            self._purge_locked(now)
+            return any(existing == key for _, existing in self._entries)
+
     def remember_if_new(self, line: str) -> bool:
         """Return True if this line is new within the TTL window (and remember it)."""
 
@@ -64,8 +90,7 @@ class RecentLineDeduper:
             return False
         now = time.time()
         with self._lock:
-            while self._entries and now - self._entries[0][0] > self._ttl:
-                self._entries.popleft()
+            self._purge_locked(now)
             if any(existing == key for _, existing in self._entries):
                 return False
             self._entries.append((now, key))
