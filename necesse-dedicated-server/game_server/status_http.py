@@ -1755,11 +1755,25 @@ def _format_category_recent_matches(items: list[dict[str, Any]]) -> str:
     return f"<div class='recent-matches'>{''.join(parts)}</div>"
 
 
+def _category_display_mode(items: list[dict[str, Any]]) -> str:
+    """Single Mode tag for a category: stale > active > dry_run."""
+
+    if any(item.get("stale") and int(item.get("hits") or 0) > 0 for item in items):
+        return "stale"
+    if any((item.get("mode") or "") == "active" for item in items):
+        return "active"
+    return "dry_run"
+
+
+_MODE_SORT_RANK = {"stale": 0, "active": 1, "dry_run": 2}
+
+
 def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     """One table row per category; regex text stays out of the UI.
 
     Dry-run peers remain in the hit data (and colored recent matches) so
     over-matching candidates stay discoverable when log shapes drift.
+    Mode shows only the highest-priority status (stale > active > dry_run).
     """
 
     if not patterns:
@@ -1772,17 +1786,14 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
 
     def _category_sort_key(category: str) -> tuple[Any, ...]:
         items = by_category[category]
+        display_mode = _category_display_mode(items)
         active_hits = sum(
             int(item.get("hits") or 0)
             for item in items
             if (item.get("mode") or "") == "active"
         )
-        has_active = any((item.get("mode") or "") == "active" for item in items)
-        any_hits = any(int(item.get("hits") or 0) for item in items)
         return (
-            0 if any_hits else 1,
-            0 if has_active else 1,
-            0 if active_hits else 1,
+            _MODE_SORT_RANK.get(display_mode, 9),
             category,
             -active_hits,
         )
@@ -1790,17 +1801,8 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     rows = []
     for category in sorted(by_category, key=_category_sort_key)[:120]:
         items = by_category[category]
-        modes: list[str] = []
-        for mode in ("active", "dry_run"):
-            if any((item.get("mode") or "") == mode for item in items):
-                modes.append(mode)
-        mode_html = "".join(
-            f"<span class='tag {mode}'>{mode}</span>" for mode in modes
-        ) or "<span class='tag dry_run'>dry_run</span>"
-        stale = any(
-            item.get("stale") and int(item.get("hits") or 0) > 0 for item in items
-        )
-        stale_html = " <span class='tag stale'>stale</span>" if stale else ""
+        display_mode = _category_display_mode(items)
+        mode_html = f"<span class='tag {display_mode}'>{display_mode}</span>"
         active_hits = sum(
             int(item.get("hits") or 0)
             for item in items
@@ -1809,7 +1811,7 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
         recent = _format_category_recent_matches(items)
         rows.append(
             "<tr>"
-            f"<td>{mode_html}{stale_html}</td>"
+            f"<td>{mode_html}</td>"
             f"<td>{_html_escape(category)}</td>"
             f"<td>{active_hits}</td>"
             f"<td>{recent}</td>"
