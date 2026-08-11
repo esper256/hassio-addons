@@ -2,9 +2,34 @@
 
 **Not an installable Home Assistant app** — no `config.yaml` on purpose. Only thin game folders (like Necesse) appear in the App store.
 
-Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse](../necesse-dedicated-server/README.md)).
+Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse docs](../necesse-dedicated-server/DOCS.md)).
 
 This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
+
+> **AI experiment:** like the rest of this repo, `game-server-base` is a deliberate AI-coding experiment. It works and is useful, and it has been **100% written with AI**. See the [repository README](../README.md).
+
+---
+
+## Home Assistant docs split
+
+Home Assistant shows two markdown files from each game folder ([presentation docs](https://developers.home-assistant.io/docs/add-ons/presentation/)):
+
+| File | Where it appears | Keep it |
+| --- | --- | --- |
+| `README.md` | App store intro | Short: what the app is + screenshot. No “add this repo” / Docker / other games. |
+| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **OPEN WEB UI**, essential settings. |
+
+Put GitHub landing content (install repository, multi-game gallery, Docker, AI note) in the **repo root** [README.md](../README.md) — HA never shows that file inside an app.
+
+---
+
+## What players see (Ingress)
+
+Each game add-on vendors this supervisor and exposes **OPEN WEB UI** through Home Assistant Ingress. Example from Necesse:
+
+![Example Ingress status UI (Necesse)](../necesse-dedicated-server/images/ingress-ui.png)
+
+Primary cards answer “is it up / can people play / do I need to act?” World backups and a collapsed **Troubleshooting** section sit below. Your game plugin supplies theme colors, world-save paths, and log patterns; the layout is shared.
 
 ---
 
@@ -17,7 +42,7 @@ A game add-on is a thin layer:
 1. Vendored copy of `game_server/` (keep in sync with the script below)
 2. Plugin: `games/game.yaml` (Steam app id, launch command, args, `world_save`, log patterns)
 3. Runtime packages in **that** add-on’s Dockerfile (Java, etc.)
-4. Home Assistant metadata: `config.yaml`, translations, ports, `README.md` / `DOCS.md`
+4. Home Assistant metadata: `config.yaml`, translations, ports, short `README.md`, spartan `DOCS.md`
 
 **Hard rule:** do not put game names, Steam app ids, ports, runtimes, or game option env keys into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer. Docker/compose game options are contributed by each plugin via `docker_env_keys()` (derived from `arg_map` / `settings_map` / templates, plus optional `env_options`).
 
@@ -29,7 +54,7 @@ A game add-on is a thin layer:
 2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
 3. Adjust the Dockerfile runtime for your binary.
 4. Update HA `config.yaml`: name, slug, ports, options/schema.
-5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join).
+5. Rewrite that add-on’s **short** `README.md` (store) and **spartan** `DOCS.md` (Documentation tab). Put install-from-GitHub / Docker narrative in the repo root README, not in the app folder.
 6. After any supervisor change, from the repo root:
 
    ```bash
@@ -66,7 +91,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
 | `log_patterns` | Active regexes (ready, players, version, `players_empty`, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
-| `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs Players Active; unknown leave → idle) |
+| `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs occupied; unknown leave → idle) |
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
@@ -95,7 +120,7 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 ## Tests
 
 ```bash
-PYTHONPATH=game-server-base python3 -m pytest game-server-base/tests -q
+PYTHONPATH=game-server-base python3 -m unittest discover -s game-server-base/tests -q
 ```
 
 After supervisor changes: sync → bump the game add-on version → rebuild/reinstall.
