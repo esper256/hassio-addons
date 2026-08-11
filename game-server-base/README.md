@@ -16,8 +16,8 @@ Home Assistant shows two markdown files from each game folder ([presentation doc
 
 | File | Where it appears | Keep it |
 | --- | --- | --- |
-| `README.md` | App store intro | Short: what the app is + screenshot. No “add this repo” / Docker / other games. |
-| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **OPEN WEB UI**, essential settings. |
+| `README.md` | Info / store panel under the HA chrome | Two short paragraphs: what it is (game name linked), then Documentation vs **Open Web UI**. No H1, no images (HA often breaks relative images), no amd64 / GitHub / Docker. |
+| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **OPEN WEB UI**, essential settings. Screenshots belong on GitHub (root README), not here. |
 
 Put GitHub landing content (install repository, multi-game gallery, Docker, AI note) in the **repo root** [README.md](../README.md) — HA never shows that file inside an app.
 

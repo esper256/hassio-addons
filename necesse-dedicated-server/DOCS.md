@@ -17,8 +17,6 @@ That page shows server status, players, game version / updates, world save, back
 
 The Info **Ingress** chip that only explains ingress is not the UI.
 
-![OPEN WEB UI](images/ingress-ui.png)
-
 ## Settings that matter
 
 | Setting | Notes |

@@ -7,13 +7,13 @@ Most titles update through SteamCMD; **Factorio** uses Wube’s free headless pa
 
 ## Games
 
-| Game | HA docs (in-app) | OPEN WEB UI |
+| Game | In-app docs | Store blurb |
 | --- | --- | --- |
-| **Necesse** | [DOCS.md](necesse-dedicated-server/DOCS.md) | ![Necesse](necesse-dedicated-server/images/ingress-ui.png) |
-| **Stationeers** | [DOCS.md](stationeers-dedicated-server/DOCS.md) | ![Stationeers](stationeers-dedicated-server/images/ingress-ui.png) |
-| **Factorio** | [DOCS.md](factorio-dedicated-server/DOCS.md) | ![Factorio](factorio-dedicated-server/images/ingress-ui.png) |
+| **Necesse** | [DOCS.md](necesse-dedicated-server/DOCS.md) | [README.md](necesse-dedicated-server/README.md) |
+| **Stationeers** | [DOCS.md](stationeers-dedicated-server/DOCS.md) | [README.md](stationeers-dedicated-server/README.md) |
+| **Factorio** | [DOCS.md](factorio-dedicated-server/DOCS.md) | [README.md](factorio-dedicated-server/README.md) |
 
-Each game folder’s `README.md` is a short store blurb (what Home Assistant shows in the App store). Day-to-day setup lives in that folder’s `DOCS.md` (Documentation tab after install). This root README is the GitHub landing page.
+Home Assistant shows each game folder’s `README.md` in the App store and `DOCS.md` on the Documentation tab after install. This root README is the GitHub landing page (install, Docker, screenshots).
 
 ### Necesse
 
