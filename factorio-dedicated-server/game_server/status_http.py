@@ -176,13 +176,28 @@ HTML_PAGE = """<!DOCTYPE html>
       margin: 0 0 0.35rem;
       letter-spacing: -0.02em;
     }}
-    h2 {{ margin: 1.75rem 0 0.6rem; font-size: 1.15rem; }}
+    h2 {{ margin: 1.75rem 0 0.55rem; font-size: 1.15rem; }}
+    .section-label {{
+      margin: 0.85rem 0 0.4rem;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--ink);
+    }}
     .sub {{ color: var(--muted); margin-bottom: 1.25rem; }}
     .grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 1rem;
     }}
+    .grid-primary {{ margin-bottom: 0.85rem; }}
+    .grid-secondary {{
+      margin: 1rem 0 0.25rem;
+      gap: 0.75rem;
+    }}
+    .grid-secondary .stat {{
+      padding: 0.75rem 0.9rem;
+    }}
+    .grid-secondary .stat .value {{ font-size: 1.1rem; }}
     .stat {{
       background: color-mix(in srgb, var(--panel) 88%, black);
       border: 1px solid color-mix(in srgb, var(--muted) 25%, transparent);
@@ -195,6 +210,24 @@ HTML_PAGE = """<!DOCTYPE html>
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
     .accent {{ color: var(--accent); }}
+    .update-banner {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0.35rem 0 1rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }}
+    .update-banner-title {{
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }}
+    .update-manual {{
+      margin: 0 0 0.85rem;
+    }}
     pre {{
       background: rgba(0,0,0,0.28);
       padding: 1rem;
@@ -212,6 +245,7 @@ HTML_PAGE = """<!DOCTYPE html>
       align-items: center;
       margin: 0.5rem 0 0.75rem;
     }}
+    .btn,
     .actions a, .actions button,
     .capture-row > a, .capture-row > button,
     label.file-btn {{
@@ -224,22 +258,69 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       cursor: pointer;
     }}
+    .btn:hover,
     .actions a:hover, .actions button:hover,
     .capture-row > a:hover, .capture-row > button:hover,
     label.file-btn:hover {{
       background: color-mix(in srgb, var(--accent) 12%, transparent);
     }}
+    .btn:disabled,
     .actions a:disabled, .actions button:disabled,
     .capture-row > a:disabled, .capture-row > button:disabled {{
       opacity: 0.5;
       cursor: not-allowed;
+    }}
+    .btn-primary {{
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 82%, black);
+      color: var(--ink);
+      font-weight: 600;
+    }}
+    .btn-primary:hover {{
+      background: color-mix(in srgb, var(--accent) 92%, black);
+    }}
+    .btn-caution {{
+      border-color: color-mix(in srgb, var(--bad) 70%, var(--accent));
+      color: color-mix(in srgb, var(--bad) 70%, var(--ink));
+    }}
+    .btn-caution:hover {{
+      background: color-mix(in srgb, var(--bad) 14%, transparent);
+    }}
+    .btn-ghost {{
+      border-color: color-mix(in srgb, var(--muted) 40%, transparent);
+      color: var(--muted);
+      padding: 0.3rem 0.55rem;
+      font-size: 0.9rem;
+    }}
+    .btn-ghost:hover {{
+      background: color-mix(in srgb, var(--muted) 12%, transparent);
+      color: var(--ink);
+    }}
+    .restore-block {{
+      margin: 0.35rem 0 1rem;
     }}
     .capture-row {{
       display: flex;
       flex-wrap: wrap;
       gap: 0.6rem;
       align-items: center;
-      margin: 0.5rem 0 0.65rem;
+      margin: 0.35rem 0 0.5rem;
+    }}
+    .capture-row-stack {{
+      flex-direction: column;
+      align-items: stretch;
+      max-width: 36rem;
+    }}
+    .capture-row-stack select,
+    .capture-row-stack .file-picker {{
+      width: 100%;
+      min-width: 0;
+    }}
+    .file-picker {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      align-items: center;
     }}
     .capture-row > label:not(.file-btn),
     .capture-row > .row-label {{
@@ -275,12 +356,12 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       min-width: min(100%, 28rem);
     }}
-    details.api, details.log-watch {{
+    details.api, details.log-watch, details.log-tools {{
       margin-top: 1rem;
       color: var(--muted);
       font-size: 0.9rem;
     }}
-    details.api summary, details.log-watch summary {{
+    details.api summary, details.log-watch summary, details.log-tools summary {{
       cursor: pointer;
       color: var(--accent);
     }}
@@ -294,8 +375,19 @@ HTML_PAGE = """<!DOCTYPE html>
       font-weight: 600;
       list-style: disclosure-closed;
     }}
-    details.log-watch[open] > summary {{
+    details.log-watch[open] > summary,
+    details.log-tools[open] > summary {{
       margin-bottom: 0.6rem;
+    }}
+    details.log-tools {{
+      margin-top: 1.5rem;
+      color: var(--ink);
+      font-size: 1rem;
+    }}
+    details.log-tools > summary {{
+      font-size: 1.15rem;
+      font-weight: 600;
+      list-style: disclosure-closed;
     }}
     details.api ul {{ padding-left: 1.1rem; }}
     table {{
@@ -337,19 +429,83 @@ HTML_PAGE = """<!DOCTYPE html>
     }}
     .recent-matches .match-line.active {{ color: var(--good); }}
     .recent-matches .match-line.dry_run {{ color: var(--accent); }}
+    @media (max-width: 640px) {{
+      body {{ padding: 1rem; }}
+      .grid {{
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem;
+      }}
+      .grid-secondary {{
+        grid-template-columns: 1fr;
+      }}
+      select {{
+        min-width: 0;
+        width: 100%;
+      }}
+      .capture-row {{
+        align-items: stretch;
+      }}
+      .capture-row > label:not(.file-btn),
+      .capture-row > .row-label {{
+        min-width: 0;
+      }}
+      .file-name {{
+        max-width: 100%;
+      }}
+      .update-banner {{
+        align-items: stretch;
+      }}
+      .update-banner .btn {{
+        width: 100%;
+        text-align: center;
+      }}
+      table {{
+        display: block;
+        overflow-x: auto;
+      }}
+    }}
   </style>
 </head>
 <body>
   <main>
     <h1>{game}</h1>
     <p class="sub" id="subtitle">{subtitle}</p>
-    <div class="grid" id="status-grid">
+    <div class="grid grid-primary" id="status-grid-primary">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
       <div class="stat {players_card_class}" id="card-players">
         <div class="label" id="l-players">{players_label}</div>
         <div class="value" id="v-players">{players}</div>
         <div class="hint" id="h-players">{players_hint}</div>
       </div>
+      <div class="stat">
+        <div class="label">Game version</div>
+        <div class="value" id="v-game-version">{game_version}</div>
+        <div class="hint" id="h-game-version-build">{game_version_build}</div>
+        <div class="hint" id="h-game-version-installed">{game_version_installed}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Update</div>
+        <div class="value" id="v-update">{update_pending}</div>
+        <div class="hint" id="h-update">{update_check_hint}</div>
+      </div>
+    </div>
+
+    <div class="update-banner {update_banner_class}" id="update-banner">
+      <div>
+        <div class="update-banner-title" id="update-banner-title">Update available</div>
+        <div class="hint" id="update-banner-hint">{update_banner_hint}</div>
+      </div>
+      <button type="button" class="btn btn-primary" id="btn-force-update" onclick="return forceUpdate(event)">
+        Update now
+      </button>
+    </div>
+    <p class="update-manual {update_manual_class}" id="update-manual">
+      <button type="button" class="btn btn-ghost" id="btn-force-update-manual" onclick="return forceUpdate(event)">
+        Update game server…
+      </button>
+    </p>
+
+    <div class="grid grid-secondary" id="status-grid-secondary">
       <div class="stat">
         <div class="label">Uptime</div>
         <div class="value" id="v-uptime">{uptime}</div>
@@ -359,17 +515,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="label">Game server crashes</div>
         <div class="value" id="v-crashes">{crashes}</div>
         <div class="hint" id="h-crashes">{crashes_hint}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Game version</div>
-        <div class="value" id="v-game-version">{game_version}</div>
-        <div class="hint" id="h-game-version-build">{game_version_build}</div>
-        <div class="hint" id="h-game-version-installed">{game_version_installed}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Update pending</div>
-        <div class="value" id="v-update">{update_pending}</div>
-        <div class="hint" id="h-update">{update_check_hint}</div>
       </div>
       <div class="stat">
         <div class="label">World save</div>
@@ -388,38 +533,36 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-disk">{disk_hint}</div>
       </div>
     </div>
-    <div class="actions" id="update-actions">
-      <button type="button" id="btn-force-update" onclick="return forceUpdate(event)">
-        Update game server now
-      </button>
-    </div>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restore replaces the live world only after you confirm, and only after a
-      successful pre-restore safety backup when any world data exists. Choose
-      <strong>NEW WORLD</strong> in the list for an empty world, or upload a save
-      below. Archives are deleted only by their family rules: retention profile
-      (scheduled), keep newest (pre-update), or age window (pre-restore).
+      Restoring stops the server and keeps a safety copy first. Anyone online is disconnected.
     </p>
-    <div class="capture-row">
-      <label for="backup-select">Saved backup</label>
-      <select id="backup-select">{backup_options}</select>
-      <button type="button" id="btn-restore" onclick="return restoreBackup(event)">
-        Restore selected backup
-      </button>
+    <div class="restore-block">
+      <div class="section-label">Restore from backup</div>
+      <div class="capture-row capture-row-stack">
+        <label class="hidden" for="backup-select">Saved backup</label>
+        <select id="backup-select">{backup_options}</select>
+        <button type="button" class="btn btn-caution" id="btn-restore" onclick="return restoreBackup(event)">
+          Restore
+        </button>
+      </div>
     </div>
-    <div class="capture-row {world_upload_class}" id="world-upload-row">
-      <span class="row-label">Upload save</span>
-      <input type="file" id="world-upload" class="file-input" accept="{world_upload_accept}"
-             onchange="onWorldUploadChosen()" />
-      <label class="file-btn" for="world-upload">Choose file</label>
-      <span class="file-name" id="world-upload-name">No file chosen</span>
-      <button type="button" id="btn-world-upload" onclick="return uploadWorld(event)">
-        Restore from upload
-      </button>
+    <div class="restore-block {world_upload_class}" id="world-upload-row">
+      <div class="section-label">Or upload a save</div>
+      <div class="capture-row capture-row-stack">
+        <div class="file-picker">
+          <input type="file" id="world-upload" class="file-input" accept="{world_upload_accept}"
+                 onchange="onWorldUploadChosen()" />
+          <label class="file-btn" for="world-upload">Choose file</label>
+          <span class="file-name" id="world-upload-name">No file chosen</span>
+        </div>
+        <button type="button" class="btn btn-caution" id="btn-world-upload" onclick="return uploadWorld(event)">
+          Restore from upload
+        </button>
+      </div>
+      <p class="sub" id="world-upload-hint">{world_upload_hint}</p>
     </div>
-    <p class="sub" id="world-upload-hint">{world_upload_hint}</p>
 
     <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
       <summary>Game server log watching pattern hits</summary>
@@ -442,24 +585,26 @@ HTML_PAGE = """<!DOCTYPE html>
       <pre id="highlights">{highlights}</pre>
     </details>
 
-    <h2>Log tools</h2>
-    <p class="sub">Human actions for diagnosing the live server. Prefer these over the JSON API links.</p>
-    <div class="actions">
-      <a href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
-      <a href="api/logs/raw?lines=400&amp;format=text">View recent game output</a>
-    </div>
-    <div class="capture-row">
-      <label for="capture-select">Saved captures</label>
-      <select id="capture-select">{capture_options}</select>
-      <a id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
-    </div>
+    <details class="log-tools" id="log-tools">
+      <summary>Troubleshooting logs</summary>
+      <p class="sub">Capture or download recent game output when something looks wrong.</p>
+      <div class="actions">
+        <a class="btn" href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
+        <a class="btn" href="api/logs/raw?lines=400&amp;format=text">View recent game output</a>
+      </div>
+      <div class="capture-row">
+        <label for="capture-select">Saved captures</label>
+        <select id="capture-select">{capture_options}</select>
+        <a class="btn" id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
+      </div>
+    </details>
 
     <details class="api">
       <summary>JSON API (automation / pattern tuning)</summary>
       <ul>
         <li><a href="api/status">Status JSON</a></li>
         <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
-        <li>POST <code>api/update</code> — schedule Steam update now (disconnects players)</li>
+        <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
         <li><a href="api/backups">Backups list JSON</a></li>
         <li><a href="api/world/download">Download active world save</a></li>
         <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
@@ -496,17 +641,13 @@ HTML_PAGE = """<!DOCTYPE html>
         emptyWorld
           ? (
             'Start a new empty world?\\n\\n' +
-            'The game server will stop. If any world data exists, it is saved first ' +
-            'as a pre-restore safety copy. Only after that backup succeeds are world ' +
-            'files cleared so the game can create a fresh world on restart.\\n\\n' +
+            'The server will stop and keep a safety copy of any existing world first. ' +
             'Anyone playing will be disconnected.'
           )
           : (
             'Restore this backup over the live world?\\n\\n' +
             name + '\\n\\n' +
-            'The game server will stop. If any world data exists, it is saved first ' +
-            'as a pre-restore safety copy. Only after that backup succeeds does the ' +
-            'selected archive replace the world; then the server restarts.\\n\\n' +
+            'The server will stop and keep a safety copy first. ' +
             'Anyone playing will be disconnected.'
           )
       );
@@ -560,10 +701,8 @@ HTML_PAGE = """<!DOCTYPE html>
       const file = input.files[0];
       const ok = window.confirm(
         'Restore the live world from this upload?\\n\\n' +
-        file.name + ' (' + file.size + ' bytes)\\n\\n' +
-        'The game server will stop. If any world data exists, it is saved first ' +
-        'as a pre-restore safety copy. How your file is applied depends on how this ' +
-        'game stores its world (single file vs folder), not on the upload name alone.\\n\\n' +
+        file.name + '\\n\\n' +
+        'The server will stop and keep a safety copy first. ' +
         'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
@@ -596,17 +735,20 @@ HTML_PAGE = """<!DOCTYPE html>
     async function forceUpdate(ev) {{
       ev.preventDefault();
       const ok = window.confirm(
-        'Update the game server from Steam now?\\n\\n' +
-        'The server will stop, update, and restart. Anyone playing will be disconnected.'
+        'Update the game server now?\\n\\n' +
+        'The server will stop, download the latest build, and restart. ' +
+        'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
-      const btn = document.getElementById('btn-force-update');
-      if (btn) btn.disabled = true;
+      const buttons = [
+        document.getElementById('btn-force-update'),
+        document.getElementById('btn-force-update-manual'),
+      ];
+      buttons.forEach((btn) => {{ if (btn) btn.disabled = true; }});
       try {{
         const res = await fetch('api/update', {{ method: 'POST' }});
         const data = await res.json();
         if (data.ok) {{
-          alert(data.message || 'Update scheduled.');
           softRefresh();
         }} else {{
           alert(data.error || 'Could not schedule update.');
@@ -614,7 +756,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }} catch (e) {{
         alert('Could not schedule update.');
       }} finally {{
-        if (btn) btn.disabled = false;
+        buttons.forEach((btn) => {{ if (btn) btn.disabled = false; }});
       }}
       return false;
     }}
@@ -663,6 +805,15 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('h-game-version-installed', u.game_version_installed);
         setText('v-update', u.update_pending);
         setText('h-update', u.update_check_hint);
+        setText('update-banner-hint', u.update_banner_hint);
+        const banner = document.getElementById('update-banner');
+        if (banner) {{
+          banner.classList.toggle('hidden', !!u.update_banner_hidden);
+        }}
+        const manual = document.getElementById('update-manual');
+        if (manual) {{
+          manual.classList.toggle('hidden', !!u.update_manual_hidden);
+        }}
         setText('v-backups', u.backups);
         setText('h-backups-oldest', u.backups_oldest);
         setText('h-backups-newest', u.backups_newest);
@@ -708,6 +859,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
 
 
 class StatusServer:
@@ -1246,15 +1398,21 @@ def _fmt_ago(timestamp: Any, *, now: float | None = None) -> str:
 
 def _format_subtitle(status: dict[str, Any]) -> str:
     version = str(status.get("app_version") or app_version())
-    steamcmd_ver = str(status.get("steamcmd_version") or "").strip()
     subtitle = f"Dedicated server supervisor v{version}"
-    if steamcmd_ver:
-        subtitle += f" · SteamCMD {steamcmd_ver}"
+    method = str(status.get("install_method") or "steamcmd").strip().lower()
+    if method == "package":
+        channel = str(status.get("release_channel") or "").strip()
+        if channel:
+            subtitle += f" · {channel} channel"
+    else:
+        steamcmd_ver = str(status.get("steamcmd_version") or "").strip()
+        if steamcmd_ver:
+            subtitle += f" · SteamCMD {steamcmd_ver}"
     return subtitle
 
 
 def _format_game_version(status: dict[str, Any]) -> tuple[str, str, str]:
-    """Return (human version, steam build hint, installed-ago hint)."""
+    """Return (human version, build hint, installed-ago hint)."""
 
     monitor = status.get("monitor") or {}
     version = str(
@@ -1263,7 +1421,15 @@ def _format_game_version(status: dict[str, Any]) -> tuple[str, str, str]:
     if not version:
         version = "unknown"
     build = str(status.get("local_build_id") or "").strip()
-    build_hint = f"Steam build {build}" if build else ""
+    method = str(status.get("install_method") or "steamcmd").strip().lower()
+    if build:
+        if method == "package":
+            # Package games often use the version string as the build id.
+            build_hint = "" if build == version else f"Package {build}"
+        else:
+            build_hint = f"Steam build {build}"
+    else:
+        build_hint = ""
     install_ts = status.get("install_last_updated_at")
     applied_ts = status.get("last_update_applied_at")
     if install_ts:
@@ -1340,13 +1506,13 @@ def _format_update_check_hint(status: dict[str, Any]) -> str:
             hint += " · last check had an error"
         return hint
     if interval <= 0:
-        return "Steam checks disabled"
+        return "Update checks disabled"
     if check_hour is not None:
         try:
             hour = max(0, min(23, int(check_hour)))
         except (TypeError, ValueError):
             hour = 5
-        return f"Next Steam check around {hour:02d}:00 local"
+        return f"Next update check around {hour:02d}:00 local"
     return "Not checked yet"
 
 
@@ -1499,17 +1665,17 @@ def _ui_view(
                 count = monitor.get("player_count")
                 present = None if count is None else int(count) > 0
             players = "Players Active" if present else "Idle"
-            players_hint = "From join / leave / empty-server patterns"
+            players_hint = "Detected from game log"
         else:
             players = "—"
-            players_hint = "Unknown until presence patterns hit"
+            players_hint = "Waiting for first player signal"
     else:
         players_label = "Number of players"
         players = str(monitor.get("player_count")) if players_known else "—"
         players_hint = (
-            "From active join/leave patterns"
+            "Detected from game log"
             if players_known
-            else "Unknown until player patterns are promoted"
+            else "Waiting for first player signal"
         )
     debug_mode = bool(status.get("debug_mode"))
     # Without debug mode, hide the players card until an active pattern can
@@ -1536,6 +1702,17 @@ def _ui_view(
     )
     disk, disk_class, disk_hint = _format_disk(status)
     running_label, running_class = _format_running(status)
+    update_pending = bool(status.get("update_pending"))
+    update_check_hint = _format_update_check_hint(status)
+    update_reason = str(status.get("update_reason") or "").strip()
+    if update_pending:
+        banner_hint = update_check_hint
+        if update_reason and update_reason not in banner_hint:
+            banner_hint = (
+                f"{banner_hint} · {update_reason}" if banner_hint else update_reason
+            )
+    else:
+        banner_hint = ""
     theme = resolve_ui_theme(ui_theme)
     view: dict[str, Any] = {
         "game": game_name,
@@ -1552,8 +1729,13 @@ def _ui_view(
         "game_version": game_version,
         "game_version_build": game_version_build,
         "game_version_installed": game_version_installed,
-        "update_pending": "yes" if status.get("update_pending") else "no",
-        "update_check_hint": _format_update_check_hint(status),
+        "update_pending": "Waiting" if update_pending else "Up to date",
+        "update_check_hint": update_check_hint,
+        "update_banner_hint": banner_hint or update_check_hint,
+        "update_banner_class": "" if update_pending else "hidden",
+        "update_banner_hidden": not update_pending,
+        "update_manual_class": "hidden" if update_pending else "",
+        "update_manual_hidden": update_pending,
         "backups": backups,
         "backups_oldest": backups_oldest,
         "backups_newest": backups_newest,
@@ -1599,6 +1781,9 @@ _STATUS_HTML_KEYS = (
     "game_version_installed",
     "update_pending",
     "update_check_hint",
+    "update_banner_hint",
+    "update_banner_class",
+    "update_manual_class",
     "backups",
     "backups_oldest",
     "backups_newest",
@@ -1649,6 +1834,9 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         game_version_installed=_html_escape(view["game_version_installed"]),
         update_pending=_html_escape(view["update_pending"]),
         update_check_hint=_html_escape(view["update_check_hint"]),
+        update_banner_hint=_html_escape(view.get("update_banner_hint") or ""),
+        update_banner_class=_html_escape(view.get("update_banner_class") or ""),
+        update_manual_class=_html_escape(view.get("update_manual_class") or ""),
         backups=_html_escape(str(view["backups"])),
         backups_oldest=_html_escape(view["backups_oldest"]),
         backups_newest=_html_escape(view["backups_newest"]),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.12
+
+- Ingress UI polish for release users: primary status cards, update banner only when pending, button hierarchy, shorter backup copy, stacked restore/upload, collapsed troubleshooting logs, mobile layout, Steam vs package update wording
+
 ## 1.0.8
 
 - Sync shared supervisor: broader dry-run log candidates; keep dry-run pattern rows visible alongside active ones
