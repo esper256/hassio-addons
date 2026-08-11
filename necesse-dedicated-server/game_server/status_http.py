@@ -209,24 +209,19 @@ HTML_PAGE = """<!DOCTYPE html>
     .stat .hint:empty {{ display: none; margin: 0; }}
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
+    .idle {{ color: var(--accent); }}
     .accent {{ color: var(--accent); }}
-    .update-banner {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem 1rem;
-      align-items: center;
-      justify-content: space-between;
-      margin: 0.35rem 0 1rem;
-      padding: 0.85rem 1rem;
-      border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    .stat .btn-in-card {{
+      display: block;
+      width: 100%;
+      margin-top: 0.55rem;
+      padding: 0.35rem 0.55rem;
+      font-size: 0.88rem;
+      text-align: center;
     }}
-    .update-banner-title {{
-      font-weight: 600;
-      margin-bottom: 0.2rem;
-    }}
-    .update-manual {{
-      margin: 0 0 0.85rem;
+    .stat .value.players-last-join {{
+      font-size: 1.05rem;
+      line-height: 1.25;
     }}
     pre {{
       background: rgba(0,0,0,0.28);
@@ -356,38 +351,38 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       min-width: min(100%, 28rem);
     }}
-    details.api, details.log-watch, details.log-tools {{
-      margin-top: 1rem;
-      color: var(--muted);
-      font-size: 0.9rem;
-    }}
-    details.api summary, details.log-watch summary, details.log-tools summary {{
-      cursor: pointer;
-      color: var(--accent);
-    }}
-    details.log-watch {{
-      margin-top: 1.75rem;
-      font-size: 1rem;
-      color: var(--ink);
-    }}
-    details.log-watch > summary {{
-      font-size: 1.15rem;
-      font-weight: 600;
-      list-style: disclosure-closed;
-    }}
-    details.log-watch[open] > summary,
-    details.log-tools[open] > summary {{
-      margin-bottom: 0.6rem;
-    }}
-    details.log-tools {{
+    details.trouble {{
       margin-top: 1.5rem;
       color: var(--ink);
       font-size: 1rem;
     }}
-    details.log-tools > summary {{
+    details.trouble > summary {{
+      cursor: pointer;
+      color: var(--accent);
       font-size: 1.15rem;
       font-weight: 600;
       list-style: disclosure-closed;
+    }}
+    details.trouble[open] > summary {{
+      margin-bottom: 0.6rem;
+    }}
+    /* Nested expanders share equal weight inside Troubleshooting. */
+    details.trouble details.log-watch,
+    details.trouble details.api {{
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    details.trouble details.log-watch > summary,
+    details.trouble details.api > summary {{
+      cursor: pointer;
+      color: var(--accent);
+      font-size: inherit;
+      font-weight: inherit;
+    }}
+    details.trouble details.log-watch[open] > summary,
+    details.trouble details.api[open] > summary {{
+      margin-bottom: 0.45rem;
     }}
     details.api ul {{ padding-left: 1.1rem; }}
     table {{
@@ -452,13 +447,6 @@ HTML_PAGE = """<!DOCTYPE html>
       .file-name {{
         max-width: 100%;
       }}
-      .update-banner {{
-        align-items: stretch;
-      }}
-      .update-banner .btn {{
-        width: 100%;
-        text-align: center;
-      }}
       table {{
         display: block;
         overflow-x: auto;
@@ -474,7 +462,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
       <div class="stat {players_card_class}" id="card-players">
         <div class="label" id="l-players">{players_label}</div>
-        <div class="value" id="v-players">{players}</div>
+        <div class="value {players_class}" id="v-players">{players}</div>
         <div class="hint" id="h-players">{players_hint}</div>
       </div>
       <div class="stat">
@@ -483,27 +471,15 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="hint" id="h-game-version-build">{game_version_build}</div>
         <div class="hint" id="h-game-version-installed">{game_version_installed}</div>
       </div>
-      <div class="stat">
+      <div class="stat" id="card-update">
         <div class="label">Update</div>
         <div class="value" id="v-update">{update_pending}</div>
         <div class="hint" id="h-update">{update_check_hint}</div>
+        <button type="button" class="btn btn-primary btn-in-card {update_btn_class}" id="btn-force-update" onclick="return forceUpdate(event)">
+          Update now
+        </button>
       </div>
     </div>
-
-    <div class="update-banner {update_banner_class}" id="update-banner">
-      <div>
-        <div class="update-banner-title" id="update-banner-title">Update available</div>
-        <div class="hint" id="update-banner-hint">{update_banner_hint}</div>
-      </div>
-      <button type="button" class="btn btn-primary" id="btn-force-update" onclick="return forceUpdate(event)">
-        Update now
-      </button>
-    </div>
-    <p class="update-manual {update_manual_class}" id="update-manual">
-      <button type="button" class="btn btn-ghost" id="btn-force-update-manual" onclick="return forceUpdate(event)">
-        Update game server…
-      </button>
-    </p>
 
     <div class="grid grid-secondary" id="status-grid-secondary">
       <div class="stat">
@@ -536,7 +512,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restoring stops the server and keeps a safety copy first. Anyone online is disconnected.
+      Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
     </p>
     <div class="restore-block">
       <div class="section-label">Restore from backup</div>
@@ -564,29 +540,28 @@ HTML_PAGE = """<!DOCTYPE html>
       <p class="sub" id="world-upload-hint">{world_upload_hint}</p>
     </div>
 
-    <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
-      <summary>Game server log watching pattern hits</summary>
-      <p class="sub">
-        <span class="tag active">active</span> can trigger updates/player state.
-        <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
-        Promote a precise hit into the game plugin <code>log_patterns</code> to make it
-        <span class="tag active">active</span>.
-        <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
-      </p>
-      <table>
-        <thead>
-          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
-        </thead>
-        <tbody id="pattern-rows">
-          {pattern_rows}
-        </tbody>
-      </table>
-      <h2>Highlighted lines</h2>
-      <pre id="highlights">{highlights}</pre>
-    </details>
-
-    <details class="log-tools" id="log-tools">
-      <summary>Troubleshooting logs</summary>
+    <details class="trouble" id="troubleshooting">
+      <summary>Troubleshooting</summary>
+      <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
+        <summary>Game server log watching pattern hits</summary>
+        <p class="sub">
+          <span class="tag active">active</span> can trigger updates/player state.
+          <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
+          Promote a precise hit into the game plugin <code>log_patterns</code> to make it
+          <span class="tag active">active</span>.
+          <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
+          </thead>
+          <tbody id="pattern-rows">
+            {pattern_rows}
+          </tbody>
+        </table>
+        <h2>Highlighted lines</h2>
+        <pre id="highlights">{highlights}</pre>
+      </details>
       <p class="sub">Capture or download recent game output when something looks wrong.</p>
       <div class="actions">
         <a class="btn" href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
@@ -597,23 +572,22 @@ HTML_PAGE = """<!DOCTYPE html>
         <select id="capture-select">{capture_options}</select>
         <a class="btn" id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
       </div>
-    </details>
-
-    <details class="api">
-      <summary>JSON API (automation / pattern tuning)</summary>
-      <ul>
-        <li><a href="api/status">Status JSON</a></li>
-        <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
-        <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
-        <li><a href="api/backups">Backups list JSON</a></li>
-        <li><a href="api/world/download">Download active world save</a></li>
-        <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
-        <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
-        <li><a href="api/logs/patterns">Pattern hit report</a></li>
-        <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
-        <li><a href="api/logs/captures">Captures list JSON</a></li>
-        <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
-      </ul>
+      <details class="api">
+        <summary>JSON API (automation / pattern tuning)</summary>
+        <ul>
+          <li><a href="api/status">Status JSON</a></li>
+          <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
+          <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
+          <li><a href="api/backups">Backups list JSON</a></li>
+          <li><a href="api/world/download">Download active world save</a></li>
+          <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
+          <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
+          <li><a href="api/logs/patterns">Pattern hit report</a></li>
+          <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
+          <li><a href="api/logs/captures">Captures list JSON</a></li>
+          <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
+        </ul>
+      </details>
     </details>
   </main>
   <script>
@@ -740,11 +714,8 @@ HTML_PAGE = """<!DOCTYPE html>
         'Anyone playing will be disconnected.'
       );
       if (!ok) return false;
-      const buttons = [
-        document.getElementById('btn-force-update'),
-        document.getElementById('btn-force-update-manual'),
-      ];
-      buttons.forEach((btn) => {{ if (btn) btn.disabled = true; }});
+      const btn = document.getElementById('btn-force-update');
+      if (btn) btn.disabled = true;
       try {{
         const res = await fetch('api/update', {{ method: 'POST' }});
         const data = await res.json();
@@ -756,7 +727,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }} catch (e) {{
         alert('Could not schedule update.');
       }} finally {{
-        buttons.forEach((btn) => {{ if (btn) btn.disabled = false; }});
+        if (btn) btn.disabled = false;
       }}
       return false;
     }}
@@ -790,7 +761,11 @@ HTML_PAGE = """<!DOCTYPE html>
           running.className = 'value ' + (u.running_class || '');
         }}
         setText('l-players', u.players_label);
-        setText('v-players', u.players);
+        const playersVal = document.getElementById('v-players');
+        if (playersVal) {{
+          playersVal.textContent = u.players == null ? '' : String(u.players);
+          playersVal.className = 'value ' + (u.players_class || '');
+        }}
         setText('h-players', u.players_hint);
         const playersCard = document.getElementById('card-players');
         if (playersCard) {{
@@ -805,14 +780,9 @@ HTML_PAGE = """<!DOCTYPE html>
         setText('h-game-version-installed', u.game_version_installed);
         setText('v-update', u.update_pending);
         setText('h-update', u.update_check_hint);
-        setText('update-banner-hint', u.update_banner_hint);
-        const banner = document.getElementById('update-banner');
-        if (banner) {{
-          banner.classList.toggle('hidden', !!u.update_banner_hidden);
-        }}
-        const manual = document.getElementById('update-manual');
-        if (manual) {{
-          manual.classList.toggle('hidden', !!u.update_manual_hidden);
+        const updateBtn = document.getElementById('btn-force-update');
+        if (updateBtn) {{
+          updateBtn.classList.toggle('hidden', !!u.update_btn_hidden);
         }}
         setText('v-backups', u.backups);
         setText('h-backups-oldest', u.backups_oldest);
@@ -1464,21 +1434,36 @@ def _format_crashes_hint(status: dict[str, Any]) -> str:
 
 
 def _format_backups(status: dict[str, Any]) -> tuple[str, str, str]:
-    """Return (count, oldest hint, newest hint)."""
+    """Return (count, oldest hint, newest hint).
+
+    Count matches restore-dropdown options excluding NEW WORLD (scheduled,
+    pre-update, and pre-restore archives).
+    """
 
     info = status.get("backups") or {}
-    try:
-        count = int(info.get("archive_count") if info.get("archive_count") is not None else 0)
-    except (TypeError, ValueError):
-        count = 0
-    if count <= 0:
-        # Fall back to archive name list if summary fields are absent.
-        archives = info.get("archives") or []
-        count = len(archives) if isinstance(archives, list) else 0
+    restorable = info.get("restorable") or []
+    named: list[dict[str, Any]] = []
+    if isinstance(restorable, list):
+        for item in restorable:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if name:
+                named.append(item)
+    count = len(named)
     if count <= 0:
         return "0", "No backups yet", ""
-    oldest_at = info.get("oldest_backup_at")
-    newest_at = info.get("newest_backup_at")
+    mtimes: list[float] = []
+    for item in named:
+        raw = item.get("mtime")
+        try:
+            if raw is not None:
+                mtimes.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    # Fall back to summary timestamps when restorable entries lack mtime.
+    oldest_at = min(mtimes) if mtimes else info.get("oldest_backup_at")
+    newest_at = max(mtimes) if mtimes else info.get("newest_backup_at")
     oldest = (
         f"Oldest: {_fmt_ago(oldest_at)}"
         if oldest_at
@@ -1532,8 +1517,9 @@ def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
         value = f"{free_mb / 1024:.1f} GiB"
     else:
         value = f"{free_mb:.0f} MiB"
-    # Min free threshold is enforced for backups/updates; omit from the hero card.
-    return value, ("good" if ok else "bad"), ""
+    # Only color the value when low — green on a healthy free-disk card
+    # overstates how important that secondary metric is.
+    return value, ("" if ok else "bad"), ""
 
 
 def _format_backup_options(status: dict[str, Any]) -> str:
@@ -1657,7 +1643,36 @@ def _ui_view(
     players_known = bool(monitor.get("players_known"))
     tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
     presence_mode = tracking_mode == "presence"
-    if presence_mode:
+    debug_mode = bool(status.get("debug_mode"))
+    # Without debug mode, hide the players card until an active pattern can
+    # populate it — otherwise the card is a permanent empty state that looks broken.
+    # Count mode needs player_count; join/leave games use the last-joined card.
+    has_active_player_count = "player_count" in active_categories
+    has_active_presence = bool(
+        active_categories
+        & {"player_join", "player_leave", "players_empty", "player_count"}
+    )
+    use_last_join_card = (not has_active_player_count) and (
+        "player_join" in active_categories
+    )
+    players_class = ""
+    if use_last_join_card:
+        players_label = "Players"
+        present = monitor.get("players_present")
+        if present is None:
+            count = monitor.get("player_count")
+            present = None if count is None else int(count) > 0
+        last_join = monitor.get("last_player_join_at")
+        if last_join:
+            players = f"Player last joined {_fmt_ago(last_join)}"
+            players_class = "good players-last-join" if present else "idle players-last-join"
+            players_hint = ""
+        else:
+            players = "No joins yet"
+            players_class = "idle"
+            players_hint = ""
+    elif presence_mode:
+        # Presence without a join pattern (e.g. empty-only) — keep Idle/Active.
         players_label = "Players"
         if players_known:
             present = monitor.get("players_present")
@@ -1665,28 +1680,17 @@ def _ui_view(
                 count = monitor.get("player_count")
                 present = None if count is None else int(count) > 0
             players = "Players Active" if present else "Idle"
-            players_hint = "Detected from game log"
+            players_class = "good" if present else "idle"
+            players_hint = ""
         else:
-            players = "—"
-            players_hint = "Waiting for first player signal"
+            players = "No joins yet"
+            players_class = "idle"
+            players_hint = ""
     else:
         players_label = "Number of players"
         players = str(monitor.get("player_count")) if players_known else "—"
-        players_hint = (
-            "Detected from game log"
-            if players_known
-            else "Waiting for first player signal"
-        )
-    debug_mode = bool(status.get("debug_mode"))
-    # Without debug mode, hide the players card until an active pattern can
-    # populate it — otherwise the card is a permanent "—" that looks broken.
-    # Count mode needs player_count; presence mode accepts join/leave/empty/count.
-    has_active_player_count = "player_count" in active_categories
-    has_active_presence = bool(
-        active_categories
-        & {"player_join", "player_leave", "players_empty", "player_count"}
-    )
-    if presence_mode:
+        players_hint = "Detected from game log" if players_known else "No count yet"
+    if presence_mode or use_last_join_card:
         players_card_hidden = (not debug_mode) and (not has_active_presence)
     else:
         players_card_hidden = (not debug_mode) and (not has_active_player_count)
@@ -1704,15 +1708,6 @@ def _ui_view(
     running_label, running_class = _format_running(status)
     update_pending = bool(status.get("update_pending"))
     update_check_hint = _format_update_check_hint(status)
-    update_reason = str(status.get("update_reason") or "").strip()
-    if update_pending:
-        banner_hint = update_check_hint
-        if update_reason and update_reason not in banner_hint:
-            banner_hint = (
-                f"{banner_hint} · {update_reason}" if banner_hint else update_reason
-            )
-    else:
-        banner_hint = ""
     theme = resolve_ui_theme(ui_theme)
     view: dict[str, Any] = {
         "game": game_name,
@@ -1722,6 +1717,7 @@ def _ui_view(
         "players_label": players_label,
         "players": players,
         "players_hint": players_hint,
+        "players_class": players_class,
         "players_card_class": "hidden" if players_card_hidden else "",
         "players_card_hidden": players_card_hidden,
         "uptime": uptime,
@@ -1729,13 +1725,11 @@ def _ui_view(
         "game_version": game_version,
         "game_version_build": game_version_build,
         "game_version_installed": game_version_installed,
-        "update_pending": "Waiting" if update_pending else "Up to date",
-        "update_check_hint": update_check_hint,
-        "update_banner_hint": banner_hint or update_check_hint,
-        "update_banner_class": "" if update_pending else "hidden",
-        "update_banner_hidden": not update_pending,
-        "update_manual_class": "hidden" if update_pending else "",
-        "update_manual_hidden": update_pending,
+        "update_pending": "Update available" if update_pending else "Up to date",
+        # When an update is waiting, the in-card button replaces the check hint.
+        "update_check_hint": "" if update_pending else update_check_hint,
+        "update_btn_class": "" if update_pending else "hidden",
+        "update_btn_hidden": not update_pending,
         "backups": backups,
         "backups_oldest": backups_oldest,
         "backups_newest": backups_newest,
@@ -1773,6 +1767,7 @@ _STATUS_HTML_KEYS = (
     "players_label",
     "players",
     "players_hint",
+    "players_class",
     "players_card_class",
     "uptime",
     "uptime_hint",
@@ -1781,9 +1776,7 @@ _STATUS_HTML_KEYS = (
     "game_version_installed",
     "update_pending",
     "update_check_hint",
-    "update_banner_hint",
-    "update_banner_class",
-    "update_manual_class",
+    "update_btn_class",
     "backups",
     "backups_oldest",
     "backups_newest",
@@ -1826,6 +1819,7 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         players_label=_html_escape(view.get("players_label") or "Number of players"),
         players=_html_escape(view["players"]),
         players_hint=_html_escape(view["players_hint"]),
+        players_class=_html_escape(view.get("players_class") or ""),
         players_card_class=_html_escape(view.get("players_card_class") or ""),
         uptime=_html_escape(view["uptime"]),
         uptime_hint=_html_escape(view["uptime_hint"]),
@@ -1834,9 +1828,7 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         game_version_installed=_html_escape(view["game_version_installed"]),
         update_pending=_html_escape(view["update_pending"]),
         update_check_hint=_html_escape(view["update_check_hint"]),
-        update_banner_hint=_html_escape(view.get("update_banner_hint") or ""),
-        update_banner_class=_html_escape(view.get("update_banner_class") or ""),
-        update_manual_class=_html_escape(view.get("update_manual_class") or ""),
+        update_btn_class=_html_escape(view.get("update_btn_class") or ""),
         backups=_html_escape(str(view["backups"])),
         backups_oldest=_html_escape(view["backups_oldest"]),
         backups_newest=_html_escape(view["backups_newest"]),

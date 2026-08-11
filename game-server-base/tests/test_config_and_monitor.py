@@ -539,11 +539,20 @@ class PresenceLeaveResetTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             mon = LogMonitor(plugin, tmp)
+            before = time.time()
             mon.ingest_stdout_line("Alice joined")
             self.assertEqual(mon.state.player_count, 1)
+            self.assertIsNotNone(mon.state.last_player_join_at)
+            self.assertGreaterEqual(mon.state.last_player_join_at or 0, before)
+            payload = mon.state.to_dict()
+            self.assertEqual(payload["last_player_join_at"], mon.state.last_player_join_at)
+            self.assertTrue(payload["players_present"])
             mon.ingest_stdout_line("SomeoneElse left")
             self.assertEqual(mon.state.players, set())
             self.assertEqual(mon.state.player_count, 0)
+            # Join timestamp is kept for the last-joined UI after leave.
+            self.assertIsNotNone(mon.state.last_player_join_at)
+            self.assertFalse(mon.state.to_dict()["players_present"])
 
 
 class LogFollowIntegrityTests(unittest.TestCase):
@@ -987,6 +996,24 @@ class BackupRetentionTests(unittest.TestCase):
             self.assertEqual(count, "2")
             self.assertTrue(oldest.startswith("Oldest: "))
             self.assertTrue(newest.startswith("Newest: "))
+
+            # Card count matches restore dropdown (scheduled + pre-update + pre-restore).
+            pre_update = backup_dir / "pre-update-20260803T180000Z.tar.gz"
+            pre_restore = backup_dir / "pre-restore-20260803T190000Z-manual.tar.gz"
+            pre_update.write_bytes(b"p" * 80)
+            pre_restore.write_bytes(b"q" * 80)
+            os.utime(pre_update, (1_700_050_000, 1_700_050_000))
+            os.utime(pre_restore, (1_700_060_000, 1_700_060_000))
+            payload = mgr.to_dict()
+            self.assertEqual(payload["archive_count"], 2)
+            self.assertEqual(len(payload["restorable"]), 4)
+            count, _, _ = _format_backups({"backups": payload})
+            self.assertEqual(count, "4")
+            options = _format_backup_options({"backups": payload})
+            self.assertEqual(options.count("<option value="), 5)  # 4 + NEW WORLD
+            self.assertIn("NEW WORLD", options)
+            self.assertIn(pre_update.name, options)
+            self.assertIn(pre_restore.name, options)
 
     def test_pre_restore_safety_copy_outside_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1487,17 +1514,24 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn('id="btn-restore"', html)
         self.assertIn("Restore from backup", html)
         self.assertIn("Or upload a save", html)
-        self.assertIn("Troubleshooting logs", html)
-        self.assertIn("Update available", html)
-        self.assertIn("Update game server…", html)
+        self.assertIn(">Troubleshooting<", html)
+        self.assertNotIn("Troubleshooting logs", html)
+        self.assertIn("Game server log watching pattern hits", html)
+        self.assertIn("JSON API (automation / pattern tuning)", html)
+        self.assertIn('id="troubleshooting"', html)
+        self.assertIn("Up to date", html)
+        self.assertIn("Update now", html)
+        self.assertIn("btn-in-card hidden", html)
         self.assertIn("grid-primary", html)
         self.assertIn("grid-secondary", html)
         self.assertIn(
-            "Restoring stops the server and keeps a safety copy first.",
+            "Restoring stops the server, makes a world backup, then restores the selected backup.",
             html,
         )
         self.assertNotIn("Prefer these over the JSON API", html)
+        self.assertNotIn("Update game server…", html)
         self.assertNotIn("Update game server now", html)
+        self.assertNotIn('id="update-banner"', html)
         # Docs examples must survive format() as literal JSON text.
         self.assertIn('{"archive":"…","confirm":true}', html)
         self.assertIn('{"empty":true,"confirm":true}', html)
@@ -1670,9 +1704,14 @@ class StatusFormatTests(unittest.TestCase):
         value, css, hint = _format_disk(
             {"disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512}}
         )
-        self.assertEqual(css, "good")
+        self.assertEqual(css, "")
         self.assertRegex(value, r"GiB|GB|MiB|MB")
         self.assertEqual(hint, "")
+        low_value, low_css, _ = _format_disk(
+            {"disk": {"ok": False, "free_mb": 100, "min_free_disk_mb": 512}}
+        )
+        self.assertEqual(low_css, "bad")
+        self.assertRegex(low_value, r"MiB|MB")
         themed = resolve_ui_theme({"accent": "#d4a25a", "good": "#6fbf8a"})
         self.assertEqual(themed["accent"], "#d4a25a")
         self.assertEqual(themed["bg"], DEFAULT_UI_THEME["bg"])
@@ -2155,15 +2194,65 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(version, "2.0.55")
         self.assertEqual(build, "")
 
-    def test_update_banner_and_plain_language_copy(self) -> None:
+    def test_update_card_button_and_presence_last_join(self) -> None:
         idle = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "update_pending": False,
+                "last_update_check_at": time.time() - 540,
+                "debug_mode": False,
+                "install_method": "steamcmd",
+                "monitor": {
+                    "players_known": True,
+                    "player_count": 0,
+                    "players_present": False,
+                    "last_player_join_at": time.time() - 3600,
+                },
+                "player_tracking_mode": "presence",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_join",
+                            "pattern": r"joined",
+                            "hits": 1,
+                        },
+                        {
+                            "mode": "active",
+                            "category": "player_leave",
+                            "pattern": r"left",
+                            "hits": 1,
+                        },
+                    ],
+                },
+                "backups": {"archive_count": 0, "restorable": []},
+                "disk": {"ok": True, "free_mb": 1024},
+            },
+            "Necesse",
+        )
+        self.assertEqual(idle["update_pending"], "Up to date")
+        self.assertTrue(idle["update_btn_hidden"])
+        self.assertEqual(idle["update_btn_class"], "hidden")
+        self.assertIn("Checked", idle["update_check_hint"])
+        self.assertTrue(idle["players"].startswith("Player last joined"))
+        self.assertIn("idle", idle["players_class"])
+        self.assertEqual(idle["players_hint"], "")
+
+        occupied = _ui_view(
             {
                 "running": True,
                 "lifecycle": "running",
                 "update_pending": False,
                 "debug_mode": False,
                 "install_method": "steamcmd",
-                "monitor": {"players_known": True, "player_count": 0, "players_present": False},
+                "monitor": {
+                    "players_known": True,
+                    "player_count": 1,
+                    "players_present": True,
+                    "last_player_join_at": time.time() - 120,
+                },
                 "player_tracking_mode": "presence",
                 "log_patterns": {
                     "player_tracking_enabled": True,
@@ -2181,12 +2270,8 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Necesse",
         )
-        self.assertEqual(idle["update_pending"], "Up to date")
-        self.assertTrue(idle["update_banner_hidden"])
-        self.assertFalse(idle["update_manual_hidden"])
-        self.assertEqual(idle["players"], "Idle")
-        self.assertEqual(idle["players_hint"], "Detected from game log")
-        self.assertNotIn("pattern", idle["players_hint"].lower())
+        self.assertTrue(occupied["players"].startswith("Player last joined"))
+        self.assertIn("good", occupied["players_class"])
 
         waiting = _ui_view(
             {
@@ -2205,15 +2290,18 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Factorio",
         )
-        self.assertEqual(waiting["update_pending"], "Waiting")
-        self.assertFalse(waiting["update_banner_hidden"])
-        self.assertTrue(waiting["update_manual_hidden"])
+        self.assertEqual(waiting["update_pending"], "Update available")
+        self.assertFalse(waiting["update_btn_hidden"])
+        self.assertEqual(waiting["update_btn_class"], "")
+        self.assertEqual(waiting["update_check_hint"], "")
         self.assertIn("experimental channel", waiting["subtitle"])
         self.assertNotIn("SteamCMD", waiting["subtitle"])
         html = render_status_html(waiting, base_href="/")
-        self.assertIn('id="update-banner"', html)
-        self.assertIn('class="update-manual hidden"', html)
-        self.assertNotIn('class="update-banner hidden"', html)
+        self.assertIn("Update available", html)
+        self.assertIn("Update now", html)
+        self.assertNotIn("btn-in-card hidden", html)
+        self.assertNotIn('id="update-banner"', html)
+        self.assertNotIn("Checked", html)
 
     def test_pattern_category_collapse_keeps_dry_run_matches(self) -> None:
         patterns = [
@@ -2379,14 +2467,14 @@ class StatusFormatTests(unittest.TestCase):
         self.assertFalse(debug["log_watch_hidden"])
         self.assertFalse(debug["players_card_hidden"])
 
-        # Count mode: active join/leave alone is not enough — need player_count.
+        # Join/leave-only games: show last-joined card (not a fake numeric count).
         join_leave_only = _ui_view(
             {
                 "running": True,
                 "lifecycle": "running",
                 "debug_mode": False,
                 "waits_for_empty_server": "yes",
-                "player_tracking_mode": "count",
+                "player_tracking_mode": "presence",
                 "log_patterns": {
                     "player_tracking_enabled": True,
                     "patterns": [
@@ -2412,12 +2500,20 @@ class StatusFormatTests(unittest.TestCase):
                         },
                     ],
                 },
-                "monitor": {"players_known": True, "player_count": 1},
+                "monitor": {
+                    "players_known": True,
+                    "player_count": 1,
+                    "players_present": True,
+                    "last_player_join_at": time.time() - 90,
+                },
             },
             "Necesse",
         )
         self.assertTrue(join_leave_only["log_watch_hidden"])
-        self.assertTrue(join_leave_only["players_card_hidden"])
+        self.assertFalse(join_leave_only["players_card_hidden"])
+        self.assertEqual(join_leave_only["players_label"], "Players")
+        self.assertTrue(join_leave_only["players"].startswith("Player last joined"))
+        self.assertIn("good", join_leave_only["players_class"])
 
         counted = _ui_view(
             {
@@ -2446,6 +2542,32 @@ class StatusFormatTests(unittest.TestCase):
         self.assertFalse(counted["players_card_hidden"])
         self.assertEqual(counted["players_label"], "Number of players")
         self.assertEqual(counted["players"], "1")
+        self.assertEqual(counted["players_hint"], "Detected from game log")
+
+        waiting_count = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": False,
+                "player_tracking_mode": "count",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_count",
+                            "pattern": r"Players online:\s*(?P<count>\d+)",
+                            "hits": 0,
+                        }
+                    ],
+                },
+                "monitor": {"players_known": False},
+            },
+            "ExampleGame",
+        )
+        self.assertEqual(waiting_count["players"], "—")
+        self.assertEqual(waiting_count["players_hint"], "No count yet")
+        self.assertNotIn("signal", waiting_count["players_hint"].lower())
 
         presence = _ui_view(
             {
@@ -2483,7 +2605,8 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertFalse(presence["players_card_hidden"])
         self.assertEqual(presence["players_label"], "Players")
-        self.assertEqual(presence["players"], "Idle")
+        self.assertEqual(presence["players"], "No joins yet")
+        self.assertIn("idle", presence["players_class"])
 
 
 class ProcessCommandBuildTests(unittest.TestCase):

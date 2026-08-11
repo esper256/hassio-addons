@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.45
+
+- Free disk uses normal ink when healthy; warning color only when low
+- Collapse pattern hits, log capture tools, and JSON API under one **Troubleshooting** expander
+- World backups copy: restoring stops the server, makes a world backup, then restores the selected backup
+
+## 2.1.44
+
+- Backup card counts every restorable archive (scheduled, pre-update, pre-restore) — same set as the restore dropdown minus NEW WORLD
+- Update card: when not up to date, show “Update available” and an in-card **Update now** button (replaces the “Checked … ago” hint)
+- Join/leave games: Players card shows “Player last joined … ago” (green when likely occupied, amber when idle); exact count games keep a numeric count with “No count yet” while waiting
+
 ## 2.1.43
 
 - Ingress UI polish for release users: primary status cards, update banner only when pending, button hierarchy, shorter backup copy, stacked restore/upload, collapsed troubleshooting logs, mobile layout, Steam vs package update wording
