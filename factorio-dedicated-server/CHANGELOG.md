@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.10
+
+- Ingress UI polish for release users: primary status cards, update banner only when pending, button hierarchy, shorter backup copy, stacked restore/upload, collapsed troubleshooting logs, mobile layout, Steam vs package update wording
+
 ## 1.0.6
 
 - Promote proven Factorio log patterns to **active**: ready (`Hosting game at` / CreatingGame→InGame), `Factorio X.Y.Z` version, `[JOIN]` / `[LEAVE]` presence

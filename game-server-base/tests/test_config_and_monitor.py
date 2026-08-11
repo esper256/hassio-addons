@@ -1484,7 +1484,20 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("Necesse", html)
         self.assertIn("NEW WORLD", html)
         self.assertIn(f'value="{EMPTY_WORLD}"', html)
-        self.assertIn("Restore selected backup", html)
+        self.assertIn('id="btn-restore"', html)
+        self.assertIn("Restore from backup", html)
+        self.assertIn("Or upload a save", html)
+        self.assertIn("Troubleshooting logs", html)
+        self.assertIn("Update available", html)
+        self.assertIn("Update game server…", html)
+        self.assertIn("grid-primary", html)
+        self.assertIn("grid-secondary", html)
+        self.assertIn(
+            "Restoring stops the server and keeps a safety copy first.",
+            html,
+        )
+        self.assertNotIn("Prefer these over the JSON API", html)
+        self.assertNotIn("Update game server now", html)
         # Docs examples must survive format() as literal JSON text.
         self.assertIn('{"archive":"…","confirm":true}', html)
         self.assertIn('{"empty":true,"confirm":true}', html)
@@ -2121,6 +2134,86 @@ class StatusFormatTests(unittest.TestCase):
             _format_subtitle({"app_version": "2.1.12", "steamcmd_version": "1785186678"}),
             "Dedicated server supervisor v2.1.12 · SteamCMD 1785186678",
         )
+        self.assertEqual(
+            _format_subtitle(
+                {
+                    "app_version": "1.0.9",
+                    "install_method": "package",
+                    "release_channel": "stable",
+                    "steamcmd_version": "should-be-ignored",
+                }
+            ),
+            "Dedicated server supervisor v1.0.9 · stable channel",
+        )
+        version, build, _installed = _format_game_version(
+            {
+                "game_version": "2.0.55",
+                "local_build_id": "2.0.55",
+                "install_method": "package",
+            }
+        )
+        self.assertEqual(version, "2.0.55")
+        self.assertEqual(build, "")
+
+    def test_update_banner_and_plain_language_copy(self) -> None:
+        idle = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "update_pending": False,
+                "debug_mode": False,
+                "install_method": "steamcmd",
+                "monitor": {"players_known": True, "player_count": 0, "players_present": False},
+                "player_tracking_mode": "presence",
+                "log_patterns": {
+                    "player_tracking_enabled": True,
+                    "patterns": [
+                        {
+                            "mode": "active",
+                            "category": "player_join",
+                            "pattern": r"joined",
+                            "hits": 1,
+                        }
+                    ],
+                },
+                "backups": {"archive_count": 0, "restorable": []},
+                "disk": {"ok": True, "free_mb": 1024},
+            },
+            "Necesse",
+        )
+        self.assertEqual(idle["update_pending"], "Up to date")
+        self.assertTrue(idle["update_banner_hidden"])
+        self.assertFalse(idle["update_manual_hidden"])
+        self.assertEqual(idle["players"], "Idle")
+        self.assertEqual(idle["players_hint"], "Detected from game log")
+        self.assertNotIn("pattern", idle["players_hint"].lower())
+
+        waiting = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "update_pending": True,
+                "update_reason": "steam_build",
+                "last_update_check_at": time.time() - 120,
+                "debug_mode": False,
+                "install_method": "package",
+                "release_channel": "experimental",
+                "monitor": {"players_known": False},
+                "log_patterns": {"patterns": []},
+                "backups": {"archive_count": 0, "restorable": []},
+                "disk": {"ok": True, "free_mb": 1024},
+            },
+            "Factorio",
+        )
+        self.assertEqual(waiting["update_pending"], "Waiting")
+        self.assertFalse(waiting["update_banner_hidden"])
+        self.assertTrue(waiting["update_manual_hidden"])
+        self.assertIn("experimental channel", waiting["subtitle"])
+        self.assertNotIn("SteamCMD", waiting["subtitle"])
+        html = render_status_html(waiting, base_href="/")
+        self.assertIn('id="update-banner"', html)
+        self.assertIn('class="update-manual hidden"', html)
+        self.assertNotIn('class="update-banner hidden"', html)
 
     def test_pattern_category_collapse_keeps_dry_run_matches(self) -> None:
         patterns = [
