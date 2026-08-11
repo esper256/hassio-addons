@@ -19,4 +19,5 @@ jobs:
         run: ./game-server-base/check-addon-sync.sh
 
       - name: Unit tests
-        run: python -m pytest game-server-base/tests -q
+        # Prefer unittest so CI does not need a separate pytest install.
+        run: python -m unittest discover -s game-server-base/tests -q
