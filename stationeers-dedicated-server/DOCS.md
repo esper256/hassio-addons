@@ -1,63 +1,52 @@
 # Stationeers Dedicated Server
 
-Documentation shown inside Home Assistant. Full guide (including Docker): [README.md](README.md).
+## Configure and start
 
-## Requirements
+1. On **Configuration**, set at least:
+   - **Save name** (default `FamilyStation` — no spaces)
+   - **World / map** (default `Mars2`; used when the save does not exist yet)
+   - **Server password** (recommended)
+2. Leave **Server name** blank for a stable generated `HAOS Stationeers ####`.
+3. Keep **List on server browser** off unless you want a public listing.
+4. **Start** the app. First Steam download can take several minutes — watch **Logs**.
+5. Forward **UDP 27016** (game) and **UDP 27015** (Steam query) on your router to this Home Assistant host.
+6. In Stationeers, join via direct connect to your HA host IP on port 27016 (or the public list if you enabled listing).
 
-- Home Assistant OS / Supervised (**Apps** store)
-- Host architecture **amd64** (SteamCMD). Not offered on aarch64.
-- Recent glibc on the container side (this image uses Debian Trixie)
+## OPEN WEB UI
 
-## Quick start
+With the app **started**, use **OPEN WEB UI** on the Info tab (optional: **Show in sidebar**).
 
-1. Set **Save name** and a **Server password** on Configuration (world defaults to **Mars2**; leave **Server name** blank for a generated `HAOS Stationeers ####`).
-2. Keep **List on server browser** off unless you want a public listing.
-3. **Start** the app (first Steam download can take several minutes — watch **Logs**).
-4. Forward Network UDP **27016** (game) and **27015** (Steam query) on your router to this Home Assistant host.
-5. In Stationeers, join via direct connect to `your-ha-ip:27016` (or the server list if you enabled public listing).
-6. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
+That page shows server status, players, game version / updates, world save, backups, restore, and troubleshooting tools. It uses Home Assistant Ingress — no extra host port.
 
-**OPEN WEB UI** (top of Info, while started) is the status page. The **Ingress** chip that only says the app supports ingress is an explanation, not the UI.
+The Info **Ingress** chip that only explains ingress is not the UI.
+
+![OPEN WEB UI](images/ingress-ui.png)
 
 ## Settings that matter
 
-| Setting | What it does |
+| Setting | Notes |
 | --- | --- |
-| Save name | Folder under `/data/world/saves/` |
-| World / map | Map for a **new** save (default `Mars2`; also `Lunar`, `Europa3`, …) |
-| Server name | Optional; blank → stable `HAOS Stationeers ####` for this install |
-| Password / slots | Join controls |
-| List on server browser | Public master-server listing (default **off**) |
-| Start condition | New worlds only — e.g. `DefaultStart`, `Brutal`, `BrutalCommunity` |
+| Save name / world map / password / slots | What players join (world default `Mars2`) |
+| Server name | Optional; blank → `HAOS Stationeers ####` |
+| List on server browser | Public listing (default off) |
 | Pause when empty | Pause with nobody online |
-| Autosave / interval | World persistence |
+| Autosave / interval | World persistence (default every 300s) |
+| Difficulty / start condition / location | Optional; only for **new** worlds |
 | Steam branch | `public` (default) or `beta` — clients must match |
-| Update on start | SteamCMD when the app starts (recommended) |
-| Daily Steam check hour | Once-a-day Steam check (default **5**) |
-| Update only when empty | Restart for updates only when nobody is online |
+| Update on start | SteamCMD before launch (recommended) |
+| Daily Steam check hour | Default **5** |
+| Update only when empty | Wait for nobody online before restarting |
 | Backup retention | `minimal` / `standard` / `extended` |
-| HA notifications | Crash / update / version-mismatch alerts |
-| Network → UDP ports | Host ports players use (defaults 27016 + 27015) |
+| HA notifications | Crash / update failure / version mismatch |
+| Network → UDP ports | Host ports (defaults 27016 + 27015) |
+
+Common **world / map** values for new saves: `Mars2` (default), `Lunar`, `Europa3`, `MimasHerschel`, `Vulcan`, `Venus`.
 
 ## Backups and restore
 
-Scheduled, pre-update, and pre-restore copies live under `/data/backups`. Stationeers worlds are save **folders** and are backed up as zip archives of that folder.
-
-In **OPEN WEB UI**: restore a listed backup, choose **NEW WORLD**, or **Restore from upload**. A safety copy is kept first when world data exists.
+Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
 
 ## Logs
 
-| Where | Contents |
-| --- | --- |
-| App **Logs** | Version banner, supervisor, `[game]`, `[steamcmd]` |
-| **OPEN WEB UI** | Status, restore, raw tail, log captures |
-
-## Data
-
-```text
-/data/game/   /data/world/   /data/logs/   /data/backups/   /data/supervisor/
-```
-
-## Changelog
-
-[CHANGELOG.md](CHANGELOG.md)
+- App **Logs** — supervisor, SteamCMD, and game output
+- **OPEN WEB UI** → **Troubleshooting** — captures and status tools

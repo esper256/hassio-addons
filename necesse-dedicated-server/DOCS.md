@@ -1,58 +1,44 @@
 # Necesse Dedicated Server
 
-Documentation shown inside Home Assistant. Full guide (including Docker): [README.md](README.md).
+## Configure and start
 
-## Requirements
+1. On **Configuration**, set at least:
+   - **World name** (default `FamilyWorld`)
+   - **Server password** (recommended)
+2. **Start** the app. First Steam download can take several minutes — watch **Logs**.
+3. Forward **UDP 14159** on your router to this Home Assistant host (change the Network port in HA only if 14159 is already taken).
+4. In Necesse, join your HA host IP on that port.
 
-- Home Assistant OS / Supervised (**Apps** store)
-- Host architecture **amd64** (SteamCMD). Not offered on aarch64.
+## OPEN WEB UI
 
-## Quick start
+With the app **started**, use **OPEN WEB UI** on the Info tab (optional: **Show in sidebar**).
 
-1. Set **World name** and a **Server password** on Configuration.
-2. **Start** the app (first Steam download can take several minutes — watch **Logs**).
-3. Forward Network UDP **14159** on your router to this Home Assistant host.
-4. In Necesse, join `your-ha-ip` on that port.
-5. Info tab → **OPEN WEB UI** for status, backups, and restore (optional: **Show in sidebar**).
+That page shows server status, players, game version / updates, world save, backups, restore, and troubleshooting tools. It uses Home Assistant Ingress — no extra host port.
 
-**OPEN WEB UI** (top of Info, while started) is the status page. The **Ingress** chip that only says the app supports ingress is an explanation, not the UI.
+The Info **Ingress** chip that only explains ingress is not the UI.
+
+![OPEN WEB UI](images/ingress-ui.png)
 
 ## Settings that matter
 
-| Setting | What it does |
+| Setting | Notes |
 | --- | --- |
-| World name | Save/world players join |
-| Server password | Join password |
-| Server slots / MOTD | Capacity and welcome text |
-| Pause when empty | Pause with nobody online |
-| Java options | Memory etc. (default `-Xms512M -Xmx2G`) |
+| World name / password / slots / MOTD | What players join |
+| Pause when empty | Pause simulation with nobody online |
+| Java options | Default `-Xms512M -Xmx2G` |
 | Steam branch | `public` (default) or `experimental` — clients must match |
-| Update on start | SteamCMD when the app starts (recommended) |
-| Daily Steam check hour | Once-a-day Steam check (default **5**) |
-| Update only when empty | Restart for updates only when nobody is online |
+| Update on start | SteamCMD before launch (recommended) |
+| Daily Steam check hour | Default **5**; clear to use the interval instead |
+| Update only when empty | Wait until Idle before restarting; after 24h apply anyway |
 | Backup retention | `minimal` / `standard` / `extended` |
-| HA notifications | Crash / update / version-mismatch alerts |
+| HA notifications | Crash / update failure / version mismatch |
 | Network → UDP port | Host port players use (default 14159) |
 
 ## Backups and restore
 
-Scheduled, pre-update, and pre-restore copies live under `/data/backups`. Necesse worlds are `.zip` files and are backed up as a direct copy of that save.
-
-In **OPEN WEB UI**: restore a listed backup, choose **NEW WORLD**, or **Restore from upload**. A safety copy is kept first when world data exists.
+Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
 
 ## Logs
 
-| Where | Contents |
-| --- | --- |
-| App **Logs** | Version banner, supervisor, `[game]`, `[steamcmd]` |
-| **OPEN WEB UI** | Status, restore, raw tail, log captures |
-
-## Data
-
-```text
-/data/game/   /data/world/   /data/logs/   /data/backups/   /data/supervisor/
-```
-
-## Changelog
-
-[CHANGELOG.md](CHANGELOG.md)
+- App **Logs** — supervisor, SteamCMD, and game output
+- **OPEN WEB UI** → **Troubleshooting** — captures and status tools

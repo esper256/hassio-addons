@@ -2,11 +2,24 @@
 
 **Not an installable Home Assistant app** — no `config.yaml` on purpose. Only thin game folders (like Necesse) appear in the App store.
 
-Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse](../necesse-dedicated-server/README.md)).
+Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse docs](../necesse-dedicated-server/DOCS.md)).
 
 This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
 
 > **AI experiment:** like the rest of this repo, `game-server-base` is a deliberate AI-coding experiment. It works and is useful, and it has been **100% written with AI**. See the [repository README](../README.md).
+
+---
+
+## Home Assistant docs split
+
+Home Assistant shows two markdown files from each game folder ([presentation docs](https://developers.home-assistant.io/docs/add-ons/presentation/)):
+
+| File | Where it appears | Keep it |
+| --- | --- | --- |
+| `README.md` | App store intro | Short: what the app is + screenshot. No “add this repo” / Docker / other games. |
+| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **OPEN WEB UI**, essential settings. |
+
+Put GitHub landing content (install repository, multi-game gallery, Docker, AI note) in the **repo root** [README.md](../README.md) — HA never shows that file inside an app.
 
 ---
 
@@ -29,7 +42,7 @@ A game add-on is a thin layer:
 1. Vendored copy of `game_server/` (keep in sync with the script below)
 2. Plugin: `games/game.yaml` (Steam app id, launch command, args, `world_save`, log patterns)
 3. Runtime packages in **that** add-on’s Dockerfile (Java, etc.)
-4. Home Assistant metadata: `config.yaml`, translations, ports, `README.md` / `DOCS.md`
+4. Home Assistant metadata: `config.yaml`, translations, ports, short `README.md`, spartan `DOCS.md`
 
 **Hard rule:** do not put game names, Steam app ids, ports, runtimes, or game option env keys into `game-server-base/`. If `rg -i yourgamename game-server-base` finds anything, it belongs in the game layer. Docker/compose game options are contributed by each plugin via `docker_env_keys()` (derived from `arg_map` / `settings_map` / templates, plus optional `env_options`).
 
@@ -41,7 +54,7 @@ A game add-on is a thin layer:
 2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
 3. Adjust the Dockerfile runtime for your binary.
 4. Update HA `config.yaml`: name, slug, ports, options/schema.
-5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join). Include an Ingress screenshot when you can.
+5. Rewrite that add-on’s **short** `README.md` (store) and **spartan** `DOCS.md` (Documentation tab). Put install-from-GitHub / Docker narrative in the repo root README, not in the app folder.
 6. After any supervisor change, from the repo root:
 
    ```bash
