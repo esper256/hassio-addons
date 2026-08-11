@@ -2,41 +2,51 @@
 
 A small ecosystem of **dedicated game server** apps for Home Assistant OS, built on one shared supervisor (`game-server-base`).
 
-Each game add-on is a thin layer: Steam (or package) identity, ports, and log patterns. The supervisor supplies auto-updates, player-aware restarts, generational world backups, crash recovery, and an Ingress **Open Web UI** for day-to-day management.
-
-![Open Web UI example (Necesse)](necesse-dedicated-server/images/ingress-ui.png)
-
 > **AI experiment:** This repository is a deliberate experiment in AI-assisted coding. The add-ons work and are useful, but the project has been **100% written with AI**.
 
 ## Games
 
-Pick a game guide for features, Home Assistant install steps, ports, Docker, and screenshots:
-
-| Game | GitHub guide |
+| Game | Guide |
 | --- | --- |
 | **[Necesse](https://necessegame.com/)** | [necesse-dedicated-server/GUIDE.md](necesse-dedicated-server/GUIDE.md) |
 | **[Stationeers](https://store.steampowered.com/app/544550/Stationeers/)** | [stationeers-dedicated-server/GUIDE.md](stationeers-dedicated-server/GUIDE.md) |
 | **[Factorio](https://factorio.com/)** | [factorio-dedicated-server/GUIDE.md](factorio-dedicated-server/GUIDE.md) |
 
-**Quick start in Home Assistant:** Settings → Apps → App store → ⋮ → Repositories → add `https://github.com/esper256/hassio-addons`, install the game app, then follow that game’s guide (and the in-app **Documentation** tab after install). Current titles are **amd64 only**.
+Current titles are **amd64 only**.
 
-Inside Home Assistant, each app shows a short `README.md` on Info and spartan `DOCS.md` on the Documentation tab. The `GUIDE.md` files above are for readers on GitHub.
+## Quick start (Home Assistant)
+
+1. **Settings → Apps → App store → ⋮ → Repositories** → add:
+
+   ```text
+   https://github.com/esper256/hassio-addons
+   ```
+
+2. Install the game you want from that repository.
+3. Open that game’s [guide](#games) for ports and first-run notes (and the in-app **Documentation** tab after install).
+4. Configure → **Start** → port-forward → join from the game client.
+
+## What each app provides
+
+Each Home Assistant app gives you automatic updates, world backups, Home Assistant notifications, and an HTTP dashboard to monitor the game server and supervisor — open it with **Open Web UI** on the app Info tab once the app is running:
+
+![Open Web UI example (Necesse)](necesse-dedicated-server/images/ingress-ui.png)
+
+---
 
 ## Shared supervisor
 
-`game-server-base` is not an installable app. It is the reusable engine every game folder vendors:
+`game-server-base` is not an installable app. It is the reusable engine every game folder vendors: SteamCMD or HTTP package install/update (with a Steam rate gate), process supervision, crash restarts, by-kind world backups and Ingress restore / NEW WORLD / upload, and a log-pattern toolkit so updates can wait for an empty server.
 
-- SteamCMD or HTTP package install/update, with a Steam rate gate
-- Process supervision and crash restarts
-- By-kind world backups (scheduled, pre-update, pre-restore) and Ingress restore / NEW WORLD / upload
-- Log-pattern toolkit (dry-run → promote) so updates can wait for an empty server
-- Ingress status HTTP used as **Open Web UI**
-
-Packaging another dedicated server is mostly: copy a game folder, fill in `games/game.yaml`, keep game identity out of the base package, sync, bump version.
+Each game add-on is a thin layer on top (Steam/package identity, ports, world paths, log patterns, theme). Packaging another dedicated server is mostly: copy a game folder, fill in `games/game.yaml`, keep game identity out of the base package, sync, bump version.
 
 → [How to package a game](game-server-base/README.md)
 
-## Layout
+## Docker without Home Assistant
+
+Each game folder includes a `docker-compose.yml` that *may* run outside HAOS. That path is **not tested** as a first-class product: you would need to supply a Home Assistant–style options JSON (and related env) yourself, and there is **no separate documentation** for that setup. Prefer the Home Assistant apps above unless you are comfortable reverse-engineering from the compose file and `config.yaml` options.
+
+## Repository layout
 
 | Path | Role |
 | --- | --- |
