@@ -351,38 +351,38 @@ HTML_PAGE = """<!DOCTYPE html>
       font: inherit;
       min-width: min(100%, 28rem);
     }}
-    details.api, details.log-watch, details.log-tools {{
-      margin-top: 1rem;
-      color: var(--muted);
-      font-size: 0.9rem;
-    }}
-    details.api summary, details.log-watch summary, details.log-tools summary {{
-      cursor: pointer;
-      color: var(--accent);
-    }}
-    details.log-watch {{
-      margin-top: 1.75rem;
-      font-size: 1rem;
-      color: var(--ink);
-    }}
-    details.log-watch > summary {{
-      font-size: 1.15rem;
-      font-weight: 600;
-      list-style: disclosure-closed;
-    }}
-    details.log-watch[open] > summary,
-    details.log-tools[open] > summary {{
-      margin-bottom: 0.6rem;
-    }}
-    details.log-tools {{
+    details.trouble {{
       margin-top: 1.5rem;
       color: var(--ink);
       font-size: 1rem;
     }}
-    details.log-tools > summary {{
+    details.trouble > summary {{
+      cursor: pointer;
+      color: var(--accent);
       font-size: 1.15rem;
       font-weight: 600;
       list-style: disclosure-closed;
+    }}
+    details.trouble[open] > summary {{
+      margin-bottom: 0.6rem;
+    }}
+    /* Nested expanders share equal weight inside Troubleshooting. */
+    details.trouble details.log-watch,
+    details.trouble details.api {{
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    details.trouble details.log-watch > summary,
+    details.trouble details.api > summary {{
+      cursor: pointer;
+      color: var(--accent);
+      font-size: inherit;
+      font-weight: inherit;
+    }}
+    details.trouble details.log-watch[open] > summary,
+    details.trouble details.api[open] > summary {{
+      margin-bottom: 0.45rem;
     }}
     details.api ul {{ padding-left: 1.1rem; }}
     table {{
@@ -512,7 +512,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restoring stops the server and keeps a safety copy first. Anyone online is disconnected.
+      Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
     </p>
     <div class="restore-block">
       <div class="section-label">Restore from backup</div>
@@ -540,29 +540,28 @@ HTML_PAGE = """<!DOCTYPE html>
       <p class="sub" id="world-upload-hint">{world_upload_hint}</p>
     </div>
 
-    <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
-      <summary>Game server log watching pattern hits</summary>
-      <p class="sub">
-        <span class="tag active">active</span> can trigger updates/player state.
-        <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
-        Promote a precise hit into the game plugin <code>log_patterns</code> to make it
-        <span class="tag active">active</span>.
-        <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
-      </p>
-      <table>
-        <thead>
-          <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
-        </thead>
-        <tbody id="pattern-rows">
-          {pattern_rows}
-        </tbody>
-      </table>
-      <h2>Highlighted lines</h2>
-      <pre id="highlights">{highlights}</pre>
-    </details>
-
-    <details class="log-tools" id="log-tools">
-      <summary>Troubleshooting logs</summary>
+    <details class="trouble" id="troubleshooting">
+      <summary>Troubleshooting</summary>
+      <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
+        <summary>Game server log watching pattern hits</summary>
+        <p class="sub">
+          <span class="tag active">active</span> can trigger updates/player state.
+          <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
+          Promote a precise hit into the game plugin <code>log_patterns</code> to make it
+          <span class="tag active">active</span>.
+          <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
+          </thead>
+          <tbody id="pattern-rows">
+            {pattern_rows}
+          </tbody>
+        </table>
+        <h2>Highlighted lines</h2>
+        <pre id="highlights">{highlights}</pre>
+      </details>
       <p class="sub">Capture or download recent game output when something looks wrong.</p>
       <div class="actions">
         <a class="btn" href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
@@ -573,23 +572,22 @@ HTML_PAGE = """<!DOCTYPE html>
         <select id="capture-select">{capture_options}</select>
         <a class="btn" id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
       </div>
-    </details>
-
-    <details class="api">
-      <summary>JSON API (automation / pattern tuning)</summary>
-      <ul>
-        <li><a href="api/status">Status JSON</a></li>
-        <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
-        <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
-        <li><a href="api/backups">Backups list JSON</a></li>
-        <li><a href="api/world/download">Download active world save</a></li>
-        <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
-        <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
-        <li><a href="api/logs/patterns">Pattern hit report</a></li>
-        <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
-        <li><a href="api/logs/captures">Captures list JSON</a></li>
-        <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
-      </ul>
+      <details class="api">
+        <summary>JSON API (automation / pattern tuning)</summary>
+        <ul>
+          <li><a href="api/status">Status JSON</a></li>
+          <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
+          <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
+          <li><a href="api/backups">Backups list JSON</a></li>
+          <li><a href="api/world/download">Download active world save</a></li>
+          <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
+          <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
+          <li><a href="api/logs/patterns">Pattern hit report</a></li>
+          <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
+          <li><a href="api/logs/captures">Captures list JSON</a></li>
+          <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
+        </ul>
+      </details>
     </details>
   </main>
   <script>
@@ -1519,8 +1517,9 @@ def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
         value = f"{free_mb / 1024:.1f} GiB"
     else:
         value = f"{free_mb:.0f} MiB"
-    # Min free threshold is enforced for backups/updates; omit from the hero card.
-    return value, ("good" if ok else "bad"), ""
+    # Only color the value when low — green on a healthy free-disk card
+    # overstates how important that secondary metric is.
+    return value, ("" if ok else "bad"), ""
 
 
 def _format_backup_options(status: dict[str, Any]) -> str:

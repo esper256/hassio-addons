@@ -1514,14 +1514,18 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn('id="btn-restore"', html)
         self.assertIn("Restore from backup", html)
         self.assertIn("Or upload a save", html)
-        self.assertIn("Troubleshooting logs", html)
+        self.assertIn(">Troubleshooting<", html)
+        self.assertNotIn("Troubleshooting logs", html)
+        self.assertIn("Game server log watching pattern hits", html)
+        self.assertIn("JSON API (automation / pattern tuning)", html)
+        self.assertIn('id="troubleshooting"', html)
         self.assertIn("Up to date", html)
         self.assertIn("Update now", html)
         self.assertIn("btn-in-card hidden", html)
         self.assertIn("grid-primary", html)
         self.assertIn("grid-secondary", html)
         self.assertIn(
-            "Restoring stops the server and keeps a safety copy first.",
+            "Restoring stops the server, makes a world backup, then restores the selected backup.",
             html,
         )
         self.assertNotIn("Prefer these over the JSON API", html)
@@ -1700,9 +1704,14 @@ class StatusFormatTests(unittest.TestCase):
         value, css, hint = _format_disk(
             {"disk": {"ok": True, "free_mb": 2048, "min_free_disk_mb": 512}}
         )
-        self.assertEqual(css, "good")
+        self.assertEqual(css, "")
         self.assertRegex(value, r"GiB|GB|MiB|MB")
         self.assertEqual(hint, "")
+        low_value, low_css, _ = _format_disk(
+            {"disk": {"ok": False, "free_mb": 100, "min_free_disk_mb": 512}}
+        )
+        self.assertEqual(low_css, "bad")
+        self.assertRegex(low_value, r"MiB|MB")
         themed = resolve_ui_theme({"accent": "#d4a25a", "good": "#6fbf8a"})
         self.assertEqual(themed["accent"], "#d4a25a")
         self.assertEqual(themed["bg"], DEFAULT_UI_THEME["bg"])
