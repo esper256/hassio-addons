@@ -1,92 +1,38 @@
-# esper256 Home Assistant add-ons
+# esper256 Home Assistant game servers
 
-Dedicated game servers for **Home Assistant OS** (and plain Docker).  
-Most titles update through SteamCMD; **Factorio** uses Wube’s free headless package from factorio.com. Each app backs up the world, can restart after crashes, and ships an **OPEN WEB UI** (Ingress) for status, restore, and troubleshooting.
+A small ecosystem of **dedicated game server** apps for Home Assistant OS, built on one shared supervisor (`game-server-base`).
+
+Each game add-on is a thin layer: Steam (or package) identity, ports, and log patterns. The supervisor supplies auto-updates, player-aware restarts, generational world backups, crash recovery, and an Ingress **Open Web UI** for day-to-day management.
+
+![Open Web UI example (Necesse)](necesse-dedicated-server/images/ingress-ui.png)
 
 > **AI experiment:** This repository is a deliberate experiment in AI-assisted coding. The add-ons work and are useful, but the project has been **100% written with AI**.
 
 ## Games
 
-| Game | In-app docs | Store blurb |
-| --- | --- | --- |
-| **Necesse** | [DOCS.md](necesse-dedicated-server/DOCS.md) | [README.md](necesse-dedicated-server/README.md) |
-| **Stationeers** | [DOCS.md](stationeers-dedicated-server/DOCS.md) | [README.md](stationeers-dedicated-server/README.md) |
-| **Factorio** | [DOCS.md](factorio-dedicated-server/DOCS.md) | [README.md](factorio-dedicated-server/README.md) |
+Pick a game guide for features, Home Assistant install steps, ports, Docker, and screenshots:
 
-Home Assistant shows each game folder’s `README.md` in the App store and `DOCS.md` on the Documentation tab after install. This root README is the GitHub landing page (install, Docker, screenshots).
+| Game | GitHub guide |
+| --- | --- |
+| **[Necesse](https://necessegame.com/)** | [necesse-dedicated-server/GUIDE.md](necesse-dedicated-server/GUIDE.md) |
+| **[Stationeers](https://store.steampowered.com/app/544550/Stationeers/)** | [stationeers-dedicated-server/GUIDE.md](stationeers-dedicated-server/GUIDE.md) |
+| **[Factorio](https://factorio.com/)** | [factorio-dedicated-server/GUIDE.md](factorio-dedicated-server/GUIDE.md) |
 
-### Necesse
+**Quick start in Home Assistant:** Settings → Apps → App store → ⋮ → Repositories → add `https://github.com/esper256/hassio-addons`, install the game app, then follow that game’s guide (and the in-app **Documentation** tab after install). Current titles are **amd64 only**.
 
-![Necesse OPEN WEB UI](necesse-dedicated-server/images/ingress-ui.png)
+Inside Home Assistant, each app shows a short `README.md` on Info and spartan `DOCS.md` on the Documentation tab. The `GUIDE.md` files above are for readers on GitHub.
 
-SteamCMD dedicated server. Default world `FamilyWorld`, player port **UDP 14159**.
+## Shared supervisor
 
-- In-app docs: [necesse-dedicated-server/DOCS.md](necesse-dedicated-server/DOCS.md)
-- Changelog: [necesse-dedicated-server/CHANGELOG.md](necesse-dedicated-server/CHANGELOG.md)
+`game-server-base` is not an installable app. It is the reusable engine every game folder vendors:
 
-### Stationeers
+- SteamCMD or HTTP package install/update, with a Steam rate gate
+- Process supervision and crash restarts
+- By-kind world backups (scheduled, pre-update, pre-restore) and Ingress restore / NEW WORLD / upload
+- Log-pattern toolkit (dry-run → promote) so updates can wait for an empty server
+- Ingress status HTTP used as **Open Web UI**
 
-![Stationeers OPEN WEB UI](stationeers-dedicated-server/images/ingress-ui.png)
-
-SteamCMD dedicated server (Debian Trixie image for glibc). Default save `FamilyStation` / map `Mars2`. Ports **UDP 27016** (game) + **UDP 27015** (Steam query).
-
-- In-app docs: [stationeers-dedicated-server/DOCS.md](stationeers-dedicated-server/DOCS.md)
-- Changelog: [stationeers-dedicated-server/CHANGELOG.md](stationeers-dedicated-server/CHANGELOG.md)
-
-### Factorio
-
-![Factorio OPEN WEB UI](factorio-dedicated-server/images/ingress-ui.png)
-
-Free factorio.com headless package (not SteamCMD). Default save `FamilyFactory`, player port **UDP 34197**. Stable or experimental channel; Space Age DLC optional.
-
-- In-app docs: [factorio-dedicated-server/DOCS.md](factorio-dedicated-server/DOCS.md)
-- Changelog: [factorio-dedicated-server/CHANGELOG.md](factorio-dedicated-server/CHANGELOG.md)
-
-## Install in Home Assistant
-
-Needs an **amd64** HAOS host. On aarch64 the App store will not offer these apps.
-
-1. **Settings → Apps → App store → ⋮ → Repositories** → add:
-
-   ```text
-   https://github.com/esper256/hassio-addons
-   ```
-
-2. Install the game app from that repository.
-3. Open the app’s **Documentation** tab for configuration, ports, and **OPEN WEB UI**.
-4. Configure → **Start** → port-forward → join from the game client.
-
-Only folders with `config.yaml` appear in the store. `game-server-base/` is shared supervisor code, not an installable app.
-
-## Docker / Portainer
-
-Each game folder has a `docker-compose.yml`. Example:
-
-```bash
-docker compose -f necesse-dedicated-server/docker-compose.yml up -d --build
-```
-
-Set passwords / world names in the compose environment. Status UI binds to **localhost:8099** only (no Home Assistant Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
-
-| Game | Player ports | Compose |
-| --- | --- | --- |
-| Necesse | UDP 14159 | [necesse-dedicated-server/docker-compose.yml](necesse-dedicated-server/docker-compose.yml) |
-| Stationeers | UDP 27016 + 27015 | [stationeers-dedicated-server/docker-compose.yml](stationeers-dedicated-server/docker-compose.yml) |
-| Factorio | UDP 34197 | [factorio-dedicated-server/docker-compose.yml](factorio-dedicated-server/docker-compose.yml) |
-
-## Data layout (typical)
-
-```text
-/data/game/          # Game install (Steam or package)
-/data/world/         # Saves / write-data
-/data/logs/          # Optional file logs
-/data/backups/       # World backups (scheduled, pre-update, pre-restore)
-/data/supervisor/    # status.json, gates, log captures
-```
-
-## Add another Steam game
-
-The shared supervisor is game-agnostic. Copy an existing game add-on, point `games/game.yaml` at your dedicated server, and keep game identity out of `game-server-base/`.
+Packaging another dedicated server is mostly: copy a game folder, fill in `games/game.yaml`, keep game identity out of the base package, sync, bump version.
 
 → [How to package a game](game-server-base/README.md)
 
@@ -94,8 +40,8 @@ The shared supervisor is game-agnostic. Copy an existing game add-on, point `gam
 
 | Path | Role |
 | --- | --- |
-| `necesse-dedicated-server/` | Necesse app (`README` store blurb, `DOCS` in-app guide) |
-| `stationeers-dedicated-server/` | Stationeers app |
-| `factorio-dedicated-server/` | Factorio app |
+| `*-dedicated-server/GUIDE.md` | GitHub end-user guide (features, install, screenshot) |
+| `*-dedicated-server/README.md` | Short HA Info / store blurb |
+| `*-dedicated-server/DOCS.md` | HA Documentation tab (configure / ports / Open Web UI) |
 | `game-server-base/` | Shared supervisor; sync into game apps with `sync-into-addons.sh` |
 | `tests/` | Repo checks for HA app `config.yaml` rules |

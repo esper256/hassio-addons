@@ -2,7 +2,7 @@
 
 **Not an installable Home Assistant app** — no `config.yaml` on purpose. Only thin game folders (like Necesse) appear in the App store.
 
-Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse docs](../necesse-dedicated-server/DOCS.md)).
+Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse guide](../necesse-dedicated-server/GUIDE.md)).
 
 This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
 
@@ -10,16 +10,17 @@ This guide is for packaging **another Steam dedicated server** on the same super
 
 ---
 
-## Home Assistant docs split
+## Docs split (HA vs GitHub)
 
 Home Assistant shows two markdown files from each game folder ([presentation docs](https://developers.home-assistant.io/docs/add-ons/presentation/)):
 
 | File | Where it appears | Keep it |
 | --- | --- | --- |
-| `README.md` | Info / store panel under the HA chrome | Two short paragraphs: what it is (game name linked), then Documentation vs **Open Web UI**. No H1, no images (HA often breaks relative images), no amd64 / GitHub / Docker. |
-| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **OPEN WEB UI**, essential settings. Screenshots belong on GitHub (root README), not here. |
+| `README.md` | Info / store panel under the HA chrome | Two short paragraphs: what it is (game name linked), then Documentation vs **Open Web UI**. No H1, no images, no amd64 / GitHub / Docker. |
+| `DOCS.md` | Documentation tab after install | Spartan: configure, ports, **Open Web UI**, essential settings. |
+| `GUIDE.md` | GitHub only (HA ignores it) | End-user landing: features, screenshot, install-from-repo, Docker. |
 
-Put GitHub landing content (install repository, multi-game gallery, Docker, AI note) in the **repo root** [README.md](../README.md) — HA never shows that file inside an app.
+The **repo root** [README.md](../README.md) is the ecosystem springboard (shared supervisor story + links into each `GUIDE.md`). One Ingress screenshot there is enough — per-game shots live in each guide.
 
 ---
 
@@ -54,7 +55,7 @@ A game add-on is a thin layer:
 2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
 3. Adjust the Dockerfile runtime for your binary.
 4. Update HA `config.yaml`: name, slug, ports, options/schema.
-5. Rewrite that add-on’s **short** `README.md` (store) and **spartan** `DOCS.md` (Documentation tab). Put install-from-GitHub / Docker narrative in the repo root README, not in the app folder.
+5. Rewrite that add-on’s **short** `README.md` (HA Info), **spartan** `DOCS.md` (Documentation tab), and **`GUIDE.md`** (GitHub end-user guide with screenshot). Keep the repo root README as an ecosystem springboard, not a second copy of every game guide.
 6. After any supervisor change, from the repo root:
 
    ```bash
