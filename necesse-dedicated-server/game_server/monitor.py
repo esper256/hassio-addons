@@ -76,6 +76,8 @@ class MonitorState:
     version_mismatch_count: int = 0
     last_version_mismatch_at: float | None = None
     last_version_mismatch_line: str | None = None
+    # Wall time of the most recent active player_join hit (presence UI).
+    last_player_join_at: float | None = None
     last_log_line: str | None = None
     recent_lines: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     # Recent lines that matched any pattern (active or dry-run), newest last.
@@ -96,6 +98,7 @@ class MonitorState:
                 else (None if count is None else int(count) > 0)
             ),
             "players_known": self.players_known,
+            "last_player_join_at": self.last_player_join_at,
             "ready": self.ready,
             "game_version": self.game_version,
             "game_version_seen_at": self.game_version_seen_at,
@@ -428,6 +431,7 @@ class LogMonitor:
             if name:
                 self.state.players.add(str(name).strip())
             self.state.players_known = True
+            self.state.last_player_join_at = time.time()
             if self.presence_tracking:
                 # Occupied — exact headcount unknown / unused.
                 self.state.player_count = max(1, len(self.state.players))
