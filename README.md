@@ -1,4 +1,4 @@
-# esper256 Home Assistant game servers
+# esper256's Home Assistant OS game servers
 
 A small ecosystem of **dedicated game server** apps for Home Assistant OS, built on one shared supervisor (`game-server-base`).
 
@@ -36,7 +36,7 @@ Each Home Assistant app gives you automatic updates, world backups, Home Assista
 
 ## Shared supervisor
 
-`game-server-base` is not an installable app. It is the reusable engine every game folder vendors: SteamCMD or HTTP package install/update (with a Steam rate gate), process supervision, crash restarts, by-kind world backups and Ingress restore / NEW WORLD / upload, and a log-pattern toolkit so updates can wait for an empty server.
+`game-server-base` is not an installable app. It is the reusable engine every game folder vendors. The base supervisor handles SteamCMD or HTTP package install and auto-update, process supervision, crash restarts, scheduled world save backups, and a log-pattern scraping toolkit to enable the supervisor to have some vision into the game server state.
 
 Each game add-on is a thin layer on top (Steam/package identity, ports, world paths, log patterns, theme). Packaging another dedicated server is mostly: copy a game folder, fill in `games/game.yaml`, keep game identity out of the base package, sync, bump version.
 
