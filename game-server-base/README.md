@@ -6,6 +6,18 @@ Most visitors want a **specific game**: start at the [repository README](../READ
 
 This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
 
+> **AI experiment:** like the rest of this repo, `game-server-base` is a deliberate AI-coding experiment. It works and is useful, and it has been **100% written with AI**. See the [repository README](../README.md).
+
+---
+
+## What players see (Ingress)
+
+Each game add-on vendors this supervisor and exposes **OPEN WEB UI** through Home Assistant Ingress. Example from Necesse:
+
+![Example Ingress status UI (Necesse)](../necesse-dedicated-server/images/ingress-ui.png)
+
+Primary cards answer “is it up / can people play / do I need to act?” World backups and a collapsed **Troubleshooting** section sit below. Your game plugin supplies theme colors, world-save paths, and log patterns; the layout is shared.
+
 ---
 
 ## What you are building
@@ -29,7 +41,7 @@ A game add-on is a thin layer:
 2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
 3. Adjust the Dockerfile runtime for your binary.
 4. Update HA `config.yaml`: name, slug, ports, options/schema.
-5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join).
+5. Rewrite that add-on’s `README.md` / `DOCS.md` for **players of your game** (install → configure → port-forward → join). Include an Ingress screenshot when you can.
 6. After any supervisor change, from the repo root:
 
    ```bash
@@ -66,7 +78,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
 | `log_patterns` | Active regexes (ready, players, version, `players_empty`, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
-| `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs Players Active; unknown leave → idle) |
+| `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs occupied; unknown leave → idle) |
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
@@ -95,7 +107,7 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 ## Tests
 
 ```bash
-PYTHONPATH=game-server-base python3 -m pytest game-server-base/tests -q
+PYTHONPATH=game-server-base python3 -m unittest discover -s game-server-base/tests -q
 ```
 
 After supervisor changes: sync → bump the game add-on version → rebuild/reinstall.

@@ -1,15 +1,17 @@
 # esper256 Home Assistant add-ons
 
 Dedicated game servers for **Home Assistant OS** (and plain Docker).  
-Most titles update through SteamCMD; **Factorio** uses Wube’s free headless package from factorio.com. Each app backs up the world and can restart after crashes.
+Most titles update through SteamCMD; **Factorio** uses Wube’s free headless package from factorio.com. Each app backs up the world, can restart after crashes, and ships an **OPEN WEB UI** (Ingress) for status, restore, and troubleshooting.
+
+> **AI experiment:** This repository is a deliberate experiment in AI-assisted coding. The add-ons work and are useful, but the project has been **100% written with AI**.
 
 ## Run a game
 
-| Game | Guide |
-| --- | --- |
-| **Necesse** | [necesse-dedicated-server/README.md](necesse-dedicated-server/README.md) |
-| **Stationeers** | [stationeers-dedicated-server/README.md](stationeers-dedicated-server/README.md) |
-| **Factorio** | [factorio-dedicated-server/README.md](factorio-dedicated-server/README.md) |
+| Game | Guide | OPEN WEB UI |
+| --- | --- | --- |
+| **Necesse** | [necesse-dedicated-server/README.md](necesse-dedicated-server/README.md) | [screenshot](necesse-dedicated-server/images/ingress-ui.png) |
+| **Stationeers** | [stationeers-dedicated-server/README.md](stationeers-dedicated-server/README.md) | [screenshot](stationeers-dedicated-server/images/ingress-ui.png) |
+| **Factorio** | [factorio-dedicated-server/README.md](factorio-dedicated-server/README.md) | [screenshot](factorio-dedicated-server/images/ingress-ui.png) |
 
 ### Add this repository in Home Assistant
 
@@ -19,7 +21,7 @@ Most titles update through SteamCMD; **Factorio** uses Wube’s free headless pa
 https://github.com/esper256/hassio-addons
 ```
 
-Install the game app from that repository, then follow its README (configure → start → port-forward → join).
+Install the game app from that repository, then follow its README: configure → start → port-forward → join. With the app started, open **OPEN WEB UI** on the Info tab for the status page (no extra host port).
 
 Only folders with `config.yaml` appear in the store. `game-server-base/` is shared supervisor code, not an installable app.
 

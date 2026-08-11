@@ -3,7 +3,11 @@
 Run a **Necesse** dedicated multiplayer server on Home Assistant OS (or Docker).  
 SteamCMD keeps the build current, the world is backed up automatically, and **OPEN WEB UI** shows status, restore, and logs.
 
+![Necesse OPEN WEB UI](images/ingress-ui.png)
+
 Other games / packaging your own: [repository README](../README.md) · [game-server-base](../game-server-base/README.md)
+
+> This add-on is part of an [AI-coding experiment](../README.md#esper256-home-assistant-add-ons): useful and working, written entirely with AI.
 
 ---
 
@@ -24,7 +28,13 @@ Needs an **amd64** HAOS host (SteamCMD). On aarch64 the App store will not offer
 
 With the app **started**, open the Info tab → **OPEN WEB UI** (optional: **Show in sidebar**).
 
-That is the status page (build, players when known, world save, backups, restore, logs). It uses Home Assistant Ingress — no host port to publish. The Info “Ingress” chip that only explains ingress is not the UI.
+That page is the control surface for day-to-day use:
+
+- Server running / players / game version / update
+- World save download, backups, restore, and upload
+- Collapsed **Troubleshooting** (log captures and JSON API)
+
+It uses Home Assistant Ingress — no host port to publish. The Info “Ingress” chip that only explains ingress is not the UI.
 
 ---
 
@@ -61,9 +71,9 @@ Optional quiet hours (`update_window_start_hour` / `end`) further limit when a p
 
 Necesse worlds are single `.zip` files; backups **copy that file as-is** (no double compression). Older `*.tar.gz` datadir snapshots can still be restored.
 
-**Restore (OPEN WEB UI)** — pick a backup or **NEW WORLD** → confirm, or **Restore from upload**. The server stops, keeps a pre-restore safety copy when there is data, replaces the world, and restarts.
+**Restore (OPEN WEB UI)** — pick a backup or **NEW WORLD** → confirm, or **Restore from upload**. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
 
-**Logs** — app **Logs** tab for supervisor / Steam / game; **OPEN WEB UI** for status, restore, and downloadable captures.
+**Logs** — app **Logs** tab for supervisor / Steam / game; **OPEN WEB UI** → **Troubleshooting** for captures and pattern tools.
 
 ---
 
