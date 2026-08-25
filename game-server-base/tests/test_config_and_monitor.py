@@ -1566,9 +1566,12 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn("Up to date", html)
         self.assertIn("Update now", html)
         self.assertIn("Promote patterns with AI", html)
-        self.assertIn("Unused pattern guesses", html)
+        self.assertIn("Not configured log patterns", html)
+        self.assertNotIn("Unused pattern guesses", html)
+        self.assertNotIn(">unused<", html)
         self.assertIn("Copy prompt", html)
         self.assertIn("https://github.com/esper256/hassio-addons", html)
+        self.assertIn("necesse-dedicated-server/games/game.yaml", view["promote_prompt"])
         self.assertNotIn("Highlighted lines", html)
         self.assertNotIn("View recent game output", html)
         self.assertTrue(view["unused_patterns_hidden"])
@@ -2400,7 +2403,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn("ready", ready_texts)
         ready_modes = {mode for mode, _text in ready["recent_matches"]}
         self.assertEqual(ready_modes, {"configured"})
-        self.assertEqual(player_count["display_mode"], "unused")
+        self.assertEqual(player_count["display_mode"], "not configured")
         self.assertEqual(player_count["active_hits"], 0)
         self.assertEqual(player_count["hits"], 2)
         player_texts = {text for _mode, text in player_count["recent_matches"]}
@@ -2411,6 +2414,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn(r"\bready\b", configured_rows)
         self.assertNotIn("player_count", configured_rows)
         self.assertNotIn("Players online: 2", configured_rows)
+        self.assertNotIn("match-line not-configured", configured_rows)
         self.assertNotIn("match-line unused", configured_rows)
         self.assertIn("player_count", unused_rows)
         self.assertIn("Players online: 2", unused_rows)
@@ -2471,7 +2475,7 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertEqual(
             [s["display_mode"] for s in summaries],
-            ["stale", "configured", "configured", "unused"],
+            ["stale", "configured", "configured", "not configured"],
         )
         stale, configured, mismatch, unused = summaries
         self.assertEqual(configured["active_hits"], 1)
@@ -2485,9 +2489,9 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("old hit", stale_texts)
         self.assertIn("maybe new format", stale_texts)
         self.assertIn("configured", stale_modes)
-        self.assertIn("unused", stale_modes)
+        self.assertIn("not configured", stale_modes)
         self.assertEqual(mismatch["display_mode"], "configured")
-        self.assertEqual(unused["display_mode"], "unused")
+        self.assertEqual(unused["display_mode"], "not configured")
         configured_rows, unused_rows, unused_hidden = _format_pattern_tables(patterns)
         self.assertFalse(unused_hidden)
         self.assertIn("aaa_stale", configured_rows)
@@ -2509,7 +2513,13 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("aaa_stale", prompt)
         self.assertIn("maybe new format", prompt)
         self.assertIn("https://github.com/esper256/hassio-addons", prompt)
-        self.assertIn("games/game.yaml", prompt)
+        self.assertIn("necesse-dedicated-server/games/game.yaml", prompt)
+        self.assertIn("re.IGNORECASE", prompt)
+        self.assertIn("named group player", prompt)
+        self.assertIn("named group version", prompt)
+        self.assertIn("maybe new", prompt)
+        self.assertIn("wrong version", prompt)
+        self.assertNotIn("Unused (no plugin regex", prompt)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(

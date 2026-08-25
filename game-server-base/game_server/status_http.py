@@ -422,7 +422,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .tag.active,
     .tag.configured {{ border-color: var(--good); color: var(--good); }}
     .tag.dry_run,
-    .tag.unused {{ border-color: var(--accent); color: var(--accent); }}
+    .tag.unused,
+    .tag.not-configured {{ border-color: var(--accent); color: var(--accent); }}
     .tag.stale {{ border-color: var(--bad); color: var(--bad); }}
     code {{ color: var(--ink); }}
     .hidden {{ display: none !important; }}
@@ -441,7 +442,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .recent-matches .match-line.active,
     .recent-matches .match-line.configured {{ color: var(--good); }}
     .recent-matches .match-line.dry_run,
-    .recent-matches .match-line.unused {{ color: var(--accent); }}
+    .recent-matches .match-line.unused,
+    .recent-matches .match-line.not-configured {{ color: var(--accent); }}
     @media (max-width: 640px) {{
       body {{ padding: 1rem; }}
       .grid {{
@@ -563,9 +565,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
         <summary>Game server log watching pattern hits</summary>
         <p class="sub">
-          <span class="tag configured">configured</span> a plugin regex is wired.
-          <span class="tag stale">stale</span> that regex used to match a previous server binary, but has not hit since this process started.
-          <span class="tag unused">unused</span> no plugin regex yet — the server may not log this.
+          <span class="tag configured">configured</span>
+          <span class="tag not-configured">not configured</span>
+          <span class="tag stale">stale</span> configured, but no hits this process.
         </p>
         <table>
           <thead>
@@ -576,11 +578,7 @@ HTML_PAGE = """<!DOCTYPE html>
           </tbody>
         </table>
         <details class="unused-patterns {unused_patterns_class}" id="unused-patterns">
-          <summary>Unused pattern guesses</summary>
-          <p class="sub">
-            Broad fallback regexes for categories with no plugin pattern.
-            Shown here instead of the table above while configured patterns are matching this process.
-          </p>
+          <summary>Not configured log patterns</summary>
           <table>
             <thead>
               <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
@@ -592,10 +590,9 @@ HTML_PAGE = """<!DOCTYPE html>
         </details>
         <h2>Promote patterns with AI</h2>
         <p class="sub">
-          Copy this prompt into an AI chat to inspect unused or stale log lines, propose tighter
-          <code>games/game.yaml</code> regexes, and open a pull request on GitHub.
+          Copy this into an AI chat to propose <code>games/game.yaml</code> regexes and open a GitHub pull request.
         </p>
-        <textarea id="promote-prompt" class="promote-prompt" readonly rows="12">{promote_prompt}</textarea>
+        <textarea id="promote-prompt" class="promote-prompt" readonly rows="18">{promote_prompt}</textarea>
         <div class="actions">
           <button type="button" class="btn" id="btn-copy-prompt" onclick="return copyPromotePrompt(event)">Copy prompt</button>
         </div>
@@ -1713,9 +1710,13 @@ def _ui_view(
     pattern_rows, unused_pattern_rows, unused_patterns_hidden = _format_pattern_tables(
         patterns
     )
-    promote_prompt = _format_promote_prompt(game_name, patterns)
-    players_known = bool(monitor.get("players_known"))
     tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
+    promote_prompt = _format_promote_prompt(
+        game_name,
+        patterns,
+        player_tracking_mode=tracking_mode,
+    )
+    players_known = bool(monitor.get("players_known"))
     presence_mode = tracking_mode == "presence"
     debug_mode = bool(status.get("debug_mode"))
     # Without debug mode, hide the players card until an active pattern can
@@ -1992,17 +1993,25 @@ def _ui_pattern_mode(mode: str) -> str:
         return "configured"
     if mode == "stale":
         return "stale"
-    return "unused"
+    return "not configured"
+
+
+def _mode_css_class(mode: str) -> str:
+    """CSS class for a display mode that may contain spaces."""
+
+    if mode in ("unused", "not configured", "not_configured", "not-configured"):
+        return "not-configured"
+    return mode
 
 
 def _category_display_mode(items: list[dict[str, Any]]) -> str:
-    """Single Mode tag for a category: stale > configured > unused."""
+    """Single Mode tag for a category: stale > configured > not configured."""
 
     if any(_item_is_stale(item) for item in items):
         return "stale"
     if any((item.get("mode") or "") == "active" for item in items):
         return "configured"
-    return "unused"
+    return "not configured"
 
 
 def _category_recent_matches(
@@ -2013,8 +2022,8 @@ def _category_recent_matches(
     """Merged recent lines for a category: (ui-mode, text), newest-ish first.
 
     Configured matches win on duplicate text so the UI can color them green.
-    Unused/guess lines are included when the configured regex is stale or the
-    category has no plugin pattern — not when configured patterns are healthy.
+    Not-configured guess lines are included when the configured regex is stale
+    or the category has no plugin pattern — not when configured patterns are healthy.
     """
 
     ordered = sorted(
@@ -2043,7 +2052,8 @@ def _category_recent_matches(
     return out
 
 
-_MODE_SORT_RANK = {"stale": 0, "configured": 1, "unused": 2}
+_MODE_SORT_RANK = {"stale": 0, "configured": 1, "not configured": 2}
+_NOT_CONFIGURED = "not configured"
 
 
 def _pattern_category_summaries(
@@ -2077,7 +2087,7 @@ def _pattern_category_summaries(
     for category in sorted(by_category, key=_category_sort_key)[:120]:
         items = by_category[category]
         display_mode = _category_display_mode(items)
-        include_unused = display_mode in ("stale", "unused")
+        include_unused = display_mode in ("stale", _NOT_CONFIGURED)
         unused_hits = sum(
             int(item.get("hits") or 0)
             for item in items
@@ -2093,7 +2103,7 @@ def _pattern_category_summaries(
                 "category": category,
                 "display_mode": display_mode,
                 "active_hits": active_hits,
-                "hits": unused_hits if display_mode == "unused" else active_hits,
+                "hits": unused_hits if display_mode == _NOT_CONFIGURED else active_hits,
                 "recent_matches": _category_recent_matches(
                     items, include_unused=include_unused
                 ),
@@ -2108,7 +2118,7 @@ def _format_category_recent_matches_html(
     if not recent:
         return ""
     parts = [
-        f"<div class='match-line {mode}'>{_html_escape(text)}</div>"
+        f"<div class='match-line {_mode_css_class(mode)}'>{_html_escape(text)}</div>"
         for mode, text in recent
     ]
     return f"<div class='recent-matches'>{''.join(parts)}</div>"
@@ -2116,12 +2126,13 @@ def _format_category_recent_matches_html(
 
 def _pattern_row_html(item: dict[str, Any]) -> str:
     mode = str(item["display_mode"])
+    css = _mode_css_class(mode)
     recent = _format_category_recent_matches_html(
         list(item.get("recent_matches") or [])
     )
     return (
         "<tr>"
-        f"<td><span class='tag {mode}'>{mode}</span></td>"
+        f"<td><span class='tag {css}'>{_html_escape(mode)}</span></td>"
         f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
         f"<td>{int(item.get('hits') or 0)}</td>"
         f"<td>{recent}</td>"
@@ -2132,11 +2143,11 @@ def _pattern_row_html(item: dict[str, Any]) -> str:
 def _format_pattern_tables(
     patterns: list[dict[str, Any]],
 ) -> tuple[str, str, bool]:
-    """Configured/stale rows, unused-guess rows, and whether to hide unused."""
+    """Configured/stale rows, not-configured rows, and whether to hide the expander."""
 
     summaries = _pattern_category_summaries(patterns)
-    configured = [item for item in summaries if item["display_mode"] != "unused"]
-    unused = [item for item in summaries if item["display_mode"] == "unused"]
+    configured = [item for item in summaries if item["display_mode"] != _NOT_CONFIGURED]
+    unused = [item for item in summaries if item["display_mode"] == _NOT_CONFIGURED]
     if configured:
         pattern_rows = "\n".join(_pattern_row_html(item) for item in configured)
     else:
@@ -2144,7 +2155,7 @@ def _format_pattern_tables(
     if unused:
         unused_rows = "\n".join(_pattern_row_html(item) for item in unused)
     else:
-        unused_rows = "<tr><td colspan='4'>(no unused pattern guesses)</td></tr>"
+        unused_rows = "<tr><td colspan='4'>(no not configured log patterns)</td></tr>"
     return pattern_rows, unused_rows, not unused
 
 
@@ -2155,61 +2166,186 @@ def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
     return rows
 
 
-def _format_promote_prompt(game_name: str, patterns: list[dict[str, Any]]) -> str:
-    """Preamble + evidence so an AI can promote tighter game.yaml regexes."""
+def _addon_game_yaml_relpath(game_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (game_name or "game").strip().lower()).strip("-")
+    return f"{slug}-dedicated-server/games/game.yaml"
 
-    summaries = _pattern_category_summaries(patterns)
-    stale = [item for item in summaries if item["display_mode"] == "stale"]
-    unused = [item for item in summaries if item["display_mode"] == "unused"]
-    configured = [item for item in summaries if item["display_mode"] == "configured"]
-    evidence: list[str] = []
-    for item in stale + unused:
-        category = str(item.get("category") or "")
-        matches = list(item.get("recent_matches") or [])
-        if not matches:
-            evidence.append(f"[{category}/{item['display_mode']}] (no recent matching lines)")
-            continue
-        for mode, text in matches:
-            evidence.append(f"[{category}/{mode}] {text}")
 
-    def _cats(items: list[dict[str, Any]]) -> str:
-        names = [str(item.get("category") or "") for item in items if item.get("category")]
-        return ", ".join(names) if names else "(none)"
+def _yaml_regex(pattern: str) -> str:
+    """Single-quoted YAML so backslashes survive."""
 
-    evidence_block = (
-        "\n".join(evidence)
-        if evidence
-        else (
-            "(no unused or stale matches yet — paste recent server log lines "
-            "if a category looks wrong)"
+    return "'" + str(pattern).replace("'", "''") + "'"
+
+
+def _prompt_sample_line(item: dict[str, Any]) -> str:
+    lines = _recent_matches_for_pattern(item)
+    if lines:
+        return lines[0]
+    last = strip_ansi(str(item.get("last_line") or "")).strip()
+    return last
+
+
+_PROMOTE_CATEGORY_ORDER = (
+    "ready",
+    "game_version",
+    "player_join",
+    "player_leave",
+    "player_count",
+    "players_empty",
+    "version_mismatch",
+)
+_PROMOTE_CATEGORY_HELP = {
+    "ready": "Server finished starting. No capture groups required.",
+    "game_version": (
+        "Human game version like 1.3.1, not a Steam build id. "
+        "Named group: version"
+    ),
+    "player_join": "Someone joined. Named group: player. Optional: steam_id",
+    "player_leave": (
+        "Someone left. Prefer steam_id when the line has one, else player. "
+        "Identity should match join."
+    ),
+    "player_count": (
+        "Exact headcount. Named group: count (integer). "
+        "Only if the game logs a real count."
+    ),
+    "players_empty": "Nobody is online. No capture groups required.",
+    "version_mismatch": (
+        "A client was rejected for version. Optional named groups: "
+        "steam_id, client_version"
+    ),
+}
+
+
+def _format_promote_prompt(
+    game_name: str,
+    patterns: list[dict[str, Any]],
+    *,
+    player_tracking_mode: str = "count",
+) -> str:
+    """Preamble + live regexes and sample lines so an AI can wire game.yaml."""
+
+    yaml_path = _addon_game_yaml_relpath(game_name)
+    tracking = (player_tracking_mode or "count").strip().lower()
+    if tracking == "presence":
+        tracking_note = (
+            "presence — idle vs occupied from join/leave/empty. "
+            "Do not add player_count unless the game logs a trustworthy numeric count."
         )
-    )
-    return (
-        f"You are helping improve Home Assistant add-on log parsers for {game_name}.\n"
-        "\n"
-        "Repository: https://github.com/esper256/hassio-addons\n"
-        "Edit the add-on's games/game.yaml:\n"
-        "- log_patterns: tight regexes that drive ready/player/version state\n"
-        "- log_pattern_candidates: optional game-specific guesses (still unused)\n"
-        "\n"
-        "Task:\n"
-        "1. Read the candidate log lines below.\n"
-        "2. For unused categories, propose a precise Python regex (named groups "
-        "such as player, version, or count when useful) to promote into log_patterns.\n"
-        "3. For stale categories, the configured regex matched a previous server "
-        "binary but has not matched since this process started — infer the new "
-        "log format and replace or add patterns.\n"
-        "4. Do not promote broad guesses that would over-match. One precise "
-        "pattern per log shape.\n"
-        "5. Open a pull request against https://github.com/esper256/hassio-addons "
-        "with the games/game.yaml change.\n"
-        "\n"
-        f"Configured and matching this process: {_cats(configured)}\n"
-        f"Stale (configured, 0 hits this process, used to match): {_cats(stale)}\n"
-        f"Unused (no plugin regex; broad guesses only): {_cats(unused)}\n"
-        "\n"
-        "Candidate log lines (newest first per category):\n"
-        f"{evidence_block}\n"
+    else:
+        tracking_note = (
+            "count — use player_count when the game logs an exact headcount."
+        )
+
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for item in patterns:
+        by_category.setdefault(str(item.get("category") or ""), []).append(item)
+    categories = [name for name in _PROMOTE_CATEGORY_ORDER if name in by_category]
+    categories.extend(sorted(name for name in by_category if name not in set(categories)))
+
+    work_blocks: list[str] = []
+    example_blocks: list[str] = []
+    for category in categories:
+        items = by_category[category]
+        display = _category_display_mode(items)
+        help_text = _PROMOTE_CATEGORY_HELP.get(category, "")
+        configured_items = [
+            item for item in items if (item.get("mode") or "") == "active"
+        ]
+        guess_hits = [
+            item
+            for item in items
+            if (item.get("mode") or "") != "active" and int(item.get("hits") or 0) > 0
+        ]
+        lines_out: list[str] = [f"### {category}  [{display}]"]
+        if help_text:
+            lines_out.append(help_text)
+        if configured_items:
+            lines_out.append("Configured regexes (re.IGNORECASE, re.search):")
+            for item in configured_items:
+                hits = int(item.get("hits") or 0)
+                if "session_hits" in item:
+                    session_hits = int(item.get("session_hits") or 0)
+                    hit_note = (
+                        f"hits this process={session_hits}, lifetime hits={hits}"
+                    )
+                else:
+                    hit_note = f"hits={hits}"
+                sample = _prompt_sample_line(item)
+                lines_out.append(f"  - {_yaml_regex(str(item.get('pattern') or ''))}")
+                lines_out.append(f"    {hit_note}")
+                if sample:
+                    lines_out.append(f"    last match: {sample}")
+        else:
+            lines_out.append("No plugin regex in log_patterns.")
+        if guess_hits and display in ("stale", _NOT_CONFIGURED):
+            lines_out.append(
+                "Not-configured guesses that hit (too broad to copy as-is):"
+            )
+            for item in guess_hits[:8]:
+                sample = _prompt_sample_line(item)
+                lines_out.append(
+                    f"  - {_yaml_regex(str(item.get('pattern') or ''))}  "
+                    f"hits={int(item.get('hits') or 0)}"
+                )
+                if sample:
+                    lines_out.append(f"    sample: {sample}")
+        elif display == _NOT_CONFIGURED and not guess_hits:
+            lines_out.append("No sample log lines yet for this category.")
+        block = "\n".join(lines_out)
+        if display in ("stale", _NOT_CONFIGURED):
+            work_blocks.append(block)
+        elif configured_items:
+            example_blocks.append(block)
+
+    if work_blocks:
+        work_section = "\n\n".join(work_blocks)
+    else:
+        work_section = (
+            "Nothing looks stale or not configured from pattern hits. "
+            "If a category is wrong, paste recent server log lines here."
+        )
+    example_section = "\n\n".join(example_blocks) if example_blocks else "(none)"
+
+    return "\n".join(
+        [
+            f"Write Python regexes for the {game_name} dedicated-server add-on.",
+            "",
+            "Repo: https://github.com/esper256/hassio-addons",
+            f"Edit: {yaml_path}  (log_patterns section)",
+            "Open a pull request against that repo with only this game.yaml change.",
+            "",
+            "How matching works:",
+            "- Each log_patterns regex is compiled with re.IGNORECASE and used as re.search on every log line (ANSI already stripped).",
+            "- Only log_patterns change supervisor state. log_pattern_candidates and generic guesses never trigger actions.",
+            "- Quote YAML strings with single quotes so backslashes survive.",
+            "- One precise pattern per log shape. Do not promote the broad guess regexes below.",
+            "- Prefer the named groups listed per category. Do not match on timestamps alone.",
+            "- If a category has no trustworthy line, omit it from log_patterns (leave it not configured).",
+            "",
+            "Categories the supervisor reads:",
+            "  ready             server finished starting. no capture groups",
+            "  game_version      named group version (human version like 1.3.1, not a Steam build id)",
+            "  player_join       named group player. optional steam_id",
+            "  player_leave      prefer steam_id when present, else player. identity should match join",
+            "  player_count      named group count (integer). only if the game logs a real headcount",
+            "  players_empty     nobody online. no capture groups",
+            "  version_mismatch  optional steam_id, client_version",
+            "",
+            f"Player tracking mode: {tracking_note}",
+            "",
+            "Expected YAML shape:",
+            "log_patterns:",
+            "  <category>:",
+            "    - '<python regex>'",
+            "",
+            "Needs work (stale or not configured):",
+            work_section,
+            "",
+            "Working configured patterns (style examples — keep unless stale):",
+            example_section,
+            "",
+        ]
     )
 
 
