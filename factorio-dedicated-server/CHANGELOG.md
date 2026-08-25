@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.13
+
+- Hero card messages match the server status: lowercase (“running”, “player last joined…”, “up to date”)
+- Pattern watching: **configured** / **stale** / **unused** (stale means a previous binary matched, this process has not); unused guesses collapse under an expander
+- Replace highlighted lines with a copy-to-clipboard AI prompt for promoting `games/game.yaml` regexes; drop the extra “view recent game output” button (HA Logs already covers that)
+
 ## 1.0.12
 
 - Free disk uses normal ink when healthy; warning color only when low

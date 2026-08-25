@@ -61,8 +61,8 @@ from game_server.status_http import (  # noqa: E402
     _format_crashes_hint,
     _format_disk,
     _format_game_version,
-    _format_highlights,
     _format_pattern_rows,
+    _format_pattern_tables,
     _pattern_category_summaries,
     _format_running,
     _format_subtitle,
@@ -909,6 +909,49 @@ class MonitorTests(unittest.TestCase):
             )
             self.assertEqual(len(ready_stat["recent_lines"]), 1)
 
+    def test_stale_requires_prior_process_hits_without_session_hits(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            game_version=[r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b"],
+            version_mismatch=[r"client rejected:\s*wrong version"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("Started server, game version 1.3.1.")
+
+            def _active(category: str) -> dict:
+                return next(
+                    item
+                    for item in mon.pattern_report()["patterns"]
+                    if item["category"] == category and item["mode"] == "active"
+                )
+
+            game_version = _active("game_version")
+            self.assertGreater(game_version["hits"], 0)
+            self.assertGreater(game_version["session_hits"], 0)
+            self.assertFalse(game_version["stale"])
+            mismatch = _active("version_mismatch")
+            self.assertEqual(mismatch["hits"], 0)
+            self.assertEqual(mismatch["session_hits"], 0)
+            self.assertFalse(mismatch["stale"])
+
+            for stat in mon._stats.values():
+                if stat.category == "game_version" and stat.mode == "active":
+                    stat.last_hit_at = time.time() - 10 * 3600
+            self.assertFalse(_active("game_version")["stale"])
+
+            mon.reset_session()
+            game_version = _active("game_version")
+            self.assertEqual(game_version["session_hits"], 0)
+            self.assertGreater(game_version["hits"], 0)
+            self.assertTrue(game_version["stale"])
+            self.assertFalse(_active("version_mismatch")["stale"])
+
+            mon.ingest_stdout_line("Restarted, game version 1.3.2.")
+            game_version = _active("game_version")
+            self.assertFalse(game_version["stale"])
+            self.assertGreater(game_version["session_hits"], 0)
+
     def test_active_game_version_capture(self) -> None:
         plugin = load_plugin(FIXTURE)
         plugin.log_patterns = LogPatterns(
@@ -1519,8 +1562,16 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("Game server log watching pattern hits", html)
         self.assertIn("JSON API (automation / pattern tuning)", html)
         self.assertIn('id="troubleshooting"', html)
-        self.assertIn("Up to date", html)
+        self.assertIn("up to date", html)
+        self.assertNotIn("Up to date", html)
         self.assertIn("Update now", html)
+        self.assertIn("Promote patterns with AI", html)
+        self.assertIn("Unused pattern guesses", html)
+        self.assertIn("Copy prompt", html)
+        self.assertIn("https://github.com/esper256/hassio-addons", html)
+        self.assertNotIn("Highlighted lines", html)
+        self.assertNotIn("View recent game output", html)
+        self.assertTrue(view["unused_patterns_hidden"])
         self.assertIn("btn-in-card hidden", html)
         self.assertIn("grid-primary", html)
         self.assertIn("grid-secondary", html)
@@ -2232,11 +2283,11 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Necesse",
         )
-        self.assertEqual(idle["update_pending"], "Up to date")
+        self.assertEqual(idle["update_pending"], "up to date")
         self.assertTrue(idle["update_btn_hidden"])
         self.assertEqual(idle["update_btn_class"], "hidden")
         self.assertIn("Checked", idle["update_check_hint"])
-        self.assertTrue(idle["players"].startswith("Player last joined"))
+        self.assertTrue(idle["players"].startswith("player last joined"))
         self.assertIn("idle", idle["players_class"])
         self.assertEqual(idle["players_hint"], "")
 
@@ -2270,7 +2321,7 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Necesse",
         )
-        self.assertTrue(occupied["players"].startswith("Player last joined"))
+        self.assertTrue(occupied["players"].startswith("player last joined"))
         self.assertIn("good", occupied["players_class"])
 
         waiting = _ui_view(
@@ -2290,20 +2341,21 @@ class StatusFormatTests(unittest.TestCase):
             },
             "Factorio",
         )
-        self.assertEqual(waiting["update_pending"], "Update available")
+        self.assertEqual(waiting["update_pending"], "update available")
         self.assertFalse(waiting["update_btn_hidden"])
         self.assertEqual(waiting["update_btn_class"], "")
         self.assertEqual(waiting["update_check_hint"], "")
         self.assertIn("experimental channel", waiting["subtitle"])
         self.assertNotIn("SteamCMD", waiting["subtitle"])
         html = render_status_html(waiting, base_href="/")
-        self.assertIn("Update available", html)
+        self.assertIn("update available", html)
+        self.assertNotIn("Update available", html)
         self.assertIn("Update now", html)
         self.assertNotIn("btn-in-card hidden", html)
         self.assertNotIn('id="update-banner"', html)
         self.assertNotIn("Checked", html)
 
-    def test_pattern_category_collapse_keeps_dry_run_matches(self) -> None:
+    def test_healthy_configured_hides_unused_guess_matches(self) -> None:
         patterns = [
             {
                 "mode": "active",
@@ -2341,33 +2393,29 @@ class StatusFormatTests(unittest.TestCase):
         summaries = _pattern_category_summaries(patterns)
         self.assertEqual([s["category"] for s in summaries], ["ready", "player_count"])
         ready, player_count = summaries
-        self.assertEqual(ready["display_mode"], "active")
+        self.assertEqual(ready["display_mode"], "configured")
         self.assertEqual(ready["active_hits"], 2)
         ready_texts = {text for _mode, text in ready["recent_matches"]}
         self.assertIn("Started server again", ready_texts)
-        self.assertIn("ready", ready_texts)
-        self.assertEqual(player_count["display_mode"], "dry_run")
+        self.assertNotIn("ready", ready_texts)
+        ready_modes = {mode for mode, _text in ready["recent_matches"]}
+        self.assertEqual(ready_modes, {"configured"})
+        self.assertEqual(player_count["display_mode"], "unused")
         self.assertEqual(player_count["active_hits"], 0)
+        self.assertEqual(player_count["hits"], 2)
         player_texts = {text for _mode, text in player_count["recent_matches"]}
         self.assertIn("Players online: 2", player_texts)
         self.assertIn("Online players: 2", player_texts)
-        # HTML render still works and omits regex source text.
-        rows = _format_pattern_rows(patterns)
-        self.assertNotIn(r"\bready\b", rows)
-        self.assertNotIn("players online", rows)
-        highlights = _format_highlights(
-            [
-                {
-                    "line": "Started server on port 1",
-                    "matches": [
-                        {"mode": "active", "category": "ready"},
-                        {"mode": "dry_run", "category": "ready"},
-                    ],
-                }
-            ],
-        )
-        self.assertIn("active:ready", highlights)
-        self.assertIn("dry_run:ready", highlights)
+        configured_rows, unused_rows, unused_hidden = _format_pattern_tables(patterns)
+        self.assertFalse(unused_hidden)
+        self.assertNotIn(r"\bready\b", configured_rows)
+        self.assertNotIn("player_count", configured_rows)
+        self.assertNotIn("Players online: 2", configured_rows)
+        self.assertNotIn("match-line unused", configured_rows)
+        self.assertIn("player_count", unused_rows)
+        self.assertIn("Players online: 2", unused_rows)
+        self.assertIn("Online players: 2", unused_rows)
+        self.assertEqual(_format_pattern_rows(patterns), configured_rows)
 
     def test_pattern_rows_mode_priority_and_sort(self) -> None:
         patterns = [
@@ -2395,26 +2443,73 @@ class StatusFormatTests(unittest.TestCase):
             },
             {
                 "mode": "dry_run",
+                "category": "aaa_stale",
+                "pattern": r"maybe new",
+                "hits": 2,
+                "recent_lines": ["maybe new format"],
+            },
+            {
+                "mode": "dry_run",
                 "category": "mmm_active",
                 "pattern": r"also dry",
                 "hits": 9,
                 "recent_lines": ["dry peer"],
             },
+            {
+                "mode": "active",
+                "category": "version_mismatch",
+                "pattern": r"wrong version",
+                "hits": 0,
+                "session_hits": 0,
+                "stale": False,
+            },
         ]
         summaries = _pattern_category_summaries(patterns)
         self.assertEqual(
             [s["category"] for s in summaries],
-            ["aaa_stale", "mmm_active", "zzz_dry"],
+            ["aaa_stale", "mmm_active", "version_mismatch", "zzz_dry"],
         )
         self.assertEqual(
             [s["display_mode"] for s in summaries],
-            ["stale", "active", "dry_run"],
+            ["stale", "configured", "configured", "unused"],
         )
-        active = summaries[1]
-        self.assertEqual(active["active_hits"], 1)
-        modes = {mode for mode, _text in active["recent_matches"]}
-        self.assertIn("active", modes)
-        self.assertIn("dry_run", modes)
+        stale, configured, mismatch, unused = summaries
+        self.assertEqual(configured["active_hits"], 1)
+        configured_modes = {mode for mode, _text in configured["recent_matches"]}
+        configured_texts = {text for _mode, text in configured["recent_matches"]}
+        self.assertEqual(configured_modes, {"configured"})
+        self.assertIn("active hit", configured_texts)
+        self.assertNotIn("dry peer", configured_texts)
+        stale_texts = {text for _mode, text in stale["recent_matches"]}
+        stale_modes = {mode for mode, _text in stale["recent_matches"]}
+        self.assertIn("old hit", stale_texts)
+        self.assertIn("maybe new format", stale_texts)
+        self.assertIn("configured", stale_modes)
+        self.assertIn("unused", stale_modes)
+        self.assertEqual(mismatch["display_mode"], "configured")
+        self.assertEqual(unused["display_mode"], "unused")
+        configured_rows, unused_rows, unused_hidden = _format_pattern_tables(patterns)
+        self.assertFalse(unused_hidden)
+        self.assertIn("aaa_stale", configured_rows)
+        self.assertIn("mmm_active", configured_rows)
+        self.assertIn("version_mismatch", configured_rows)
+        self.assertNotIn("zzz_dry", configured_rows)
+        self.assertIn("zzz_dry", unused_rows)
+        self.assertIn("dry hit", unused_rows)
+        prompt = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": True,
+                "log_patterns": {"patterns": patterns},
+                "monitor": {"players_known": False},
+            },
+            "Necesse",
+        )["promote_prompt"]
+        self.assertIn("aaa_stale", prompt)
+        self.assertIn("maybe new format", prompt)
+        self.assertIn("https://github.com/esper256/hassio-addons", prompt)
+        self.assertIn("games/game.yaml", prompt)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(
@@ -2466,6 +2561,9 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertFalse(debug["log_watch_hidden"])
         self.assertFalse(debug["players_card_hidden"])
+        self.assertFalse(debug["unused_patterns_hidden"])
+        self.assertIn("player_count", debug["unused_pattern_rows"])
+        self.assertIn("(no configured patterns)", debug["pattern_rows"])
 
         # Join/leave-only games: show last-joined card (not a fake numeric count).
         join_leave_only = _ui_view(
@@ -2512,7 +2610,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertTrue(join_leave_only["log_watch_hidden"])
         self.assertFalse(join_leave_only["players_card_hidden"])
         self.assertEqual(join_leave_only["players_label"], "Players")
-        self.assertTrue(join_leave_only["players"].startswith("Player last joined"))
+        self.assertTrue(join_leave_only["players"].startswith("player last joined"))
         self.assertIn("good", join_leave_only["players_class"])
 
         counted = _ui_view(
@@ -2605,7 +2703,7 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertFalse(presence["players_card_hidden"])
         self.assertEqual(presence["players_label"], "Players")
-        self.assertEqual(presence["players"], "No joins yet")
+        self.assertEqual(presence["players"], "no joins yet")
         self.assertIn("idle", presence["players_class"])
 
 
