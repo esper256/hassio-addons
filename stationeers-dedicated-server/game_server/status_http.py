@@ -223,7 +223,8 @@ HTML_PAGE = """<!DOCTYPE html>
       font-size: 1.05rem;
       line-height: 1.25;
     }}
-    pre {{
+    pre,
+    textarea.promote-prompt {{
       background: rgba(0,0,0,0.28);
       padding: 1rem;
       overflow: auto;
@@ -231,6 +232,16 @@ HTML_PAGE = """<!DOCTYPE html>
       line-height: 1.4;
       border: 1px solid color-mix(in srgb, var(--muted) 20%, transparent);
       max-height: 320px;
+    }}
+    textarea.promote-prompt {{
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 12rem;
+      margin-top: 0.45rem;
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      resize: vertical;
     }}
     a {{ color: var(--accent); }}
     .actions {{
@@ -368,12 +379,14 @@ HTML_PAGE = """<!DOCTYPE html>
     }}
     /* Nested expanders share equal weight inside Troubleshooting. */
     details.trouble details.log-watch,
+    details.trouble details.unused-patterns,
     details.trouble details.api {{
       margin-top: 1rem;
       color: var(--muted);
       font-size: 0.9rem;
     }}
     details.trouble details.log-watch > summary,
+    details.trouble details.unused-patterns > summary,
     details.trouble details.api > summary {{
       cursor: pointer;
       color: var(--accent);
@@ -381,6 +394,7 @@ HTML_PAGE = """<!DOCTYPE html>
       font-weight: inherit;
     }}
     details.trouble details.log-watch[open] > summary,
+    details.trouble details.unused-patterns[open] > summary,
     details.trouble details.api[open] > summary {{
       margin-bottom: 0.45rem;
     }}
@@ -405,8 +419,11 @@ HTML_PAGE = """<!DOCTYPE html>
       margin-right: 0.25rem;
       font-size: 0.72rem;
     }}
-    .tag.active {{ border-color: var(--good); color: var(--good); }}
-    .tag.dry_run {{ border-color: var(--accent); color: var(--accent); }}
+    .tag.active,
+    .tag.configured {{ border-color: var(--good); color: var(--good); }}
+    .tag.dry_run,
+    .tag.unused,
+    .tag.not-configured {{ border-color: var(--accent); color: var(--accent); }}
     .tag.stale {{ border-color: var(--bad); color: var(--bad); }}
     code {{ color: var(--ink); }}
     .hidden {{ display: none !important; }}
@@ -422,8 +439,11 @@ HTML_PAGE = """<!DOCTYPE html>
       overflow: hidden;
       text-overflow: ellipsis;
     }}
-    .recent-matches .match-line.active {{ color: var(--good); }}
-    .recent-matches .match-line.dry_run {{ color: var(--accent); }}
+    .recent-matches .match-line.active,
+    .recent-matches .match-line.configured {{ color: var(--good); }}
+    .recent-matches .match-line.dry_run,
+    .recent-matches .match-line.unused,
+    .recent-matches .match-line.not-configured {{ color: var(--accent); }}
     @media (max-width: 640px) {{
       body {{ padding: 1rem; }}
       .grid {{
@@ -545,11 +565,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <details class="log-watch {log_watch_class}" id="log-watch"{log_watch_open}>
         <summary>Game server log watching pattern hits</summary>
         <p class="sub">
-          <span class="tag active">active</span> can trigger updates/player state.
-          <span class="tag dry_run">dry_run</span> only highlights candidates (many broad guesses; over-match is OK).
-          Promote a precise hit into the game plugin <code>log_patterns</code> to make it
-          <span class="tag active">active</span>.
-          <span class="tag stale">stale</span> means a pattern used to hit but has not recently.
+          <span class="tag configured">configured</span>
+          <span class="tag not-configured">not configured</span>
+          <span class="tag stale">stale</span> configured, but no hits this process.
         </p>
         <table>
           <thead>
@@ -559,13 +577,29 @@ HTML_PAGE = """<!DOCTYPE html>
             {pattern_rows}
           </tbody>
         </table>
-        <h2>Highlighted lines</h2>
-        <pre id="highlights">{highlights}</pre>
+        <details class="unused-patterns {unused_patterns_class}" id="unused-patterns">
+          <summary>Not configured log patterns</summary>
+          <table>
+            <thead>
+              <tr><th>Mode</th><th>Category</th><th>Hits</th><th>Recent matches (newest first)</th></tr>
+            </thead>
+            <tbody id="unused-pattern-rows">
+              {unused_pattern_rows}
+            </tbody>
+          </table>
+        </details>
+        <h2>Promote patterns with AI</h2>
+        <p class="sub">
+          Copy this into an AI chat to propose <code>games/game.yaml</code> regexes and open a GitHub pull request.
+        </p>
+        <textarea id="promote-prompt" class="promote-prompt" readonly rows="18">{promote_prompt}</textarea>
+        <div class="actions">
+          <button type="button" class="btn" id="btn-copy-prompt" onclick="return copyPromotePrompt(event)">Copy prompt</button>
+        </div>
       </details>
-      <p class="sub">Capture or download recent game output when something looks wrong.</p>
+      <p class="sub">Capture a snapshot of recent game logs when something looks wrong.</p>
       <div class="actions">
         <a class="btn" href="api/logs/capture" onclick="return postCapture(event)">Capture logs now</a>
-        <a class="btn" href="api/logs/raw?lines=400&amp;format=text">View recent game output</a>
       </div>
       <div class="capture-row">
         <label for="capture-select">Saved captures</label>
@@ -585,7 +619,7 @@ HTML_PAGE = """<!DOCTYPE html>
           <li><a href="api/logs/patterns">Pattern hit report</a></li>
           <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
           <li><a href="api/logs/captures">Captures list JSON</a></li>
-          <li><a href="api/logs/raw?lines=400">Recent game output JSON</a></li>
+          <li><a href="api/logs/raw?lines=400">Recent log tail JSON</a></li>
         </ul>
       </details>
     </details>
@@ -731,6 +765,34 @@ HTML_PAGE = """<!DOCTYPE html>
       }}
       return false;
     }}
+    async function copyPromotePrompt(ev) {{
+      ev.preventDefault();
+      const el = document.getElementById('promote-prompt');
+      const btn = document.getElementById('btn-copy-prompt');
+      const text = el ? el.value : '';
+      if (!text) return false;
+      try {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(text);
+        }} else if (el) {{
+          el.focus();
+          el.select();
+          document.execCommand('copy');
+        }}
+        if (btn) {{
+          const prev = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(() => {{ btn.textContent = prev || 'Copy prompt'; }}, 1500);
+        }}
+      }} catch (e) {{
+        if (el) {{
+          el.focus();
+          el.select();
+        }}
+        alert('Copy the prompt from the text box.');
+      }}
+      return false;
+    }}
     function downloadCapture(ev) {{
       ev.preventDefault();
       const select = document.getElementById('capture-select');
@@ -809,7 +871,13 @@ HTML_PAGE = """<!DOCTYPE html>
         }}
         setText('h-disk', u.disk_hint);
         setHtml('pattern-rows', u.pattern_rows);
-        setText('highlights', u.highlights);
+        setHtml('unused-pattern-rows', u.unused_pattern_rows);
+        const unusedBox = document.getElementById('unused-patterns');
+        if (unusedBox) {{
+          unusedBox.classList.toggle('hidden', !!u.unused_patterns_hidden);
+        }}
+        const prompt = document.getElementById('promote-prompt');
+        if (prompt) prompt.value = u.promote_prompt || '';
         const sel = document.getElementById('capture-select');
         if (sel && u.capture_options) {{
           const prev = sel.value;
@@ -1639,9 +1707,16 @@ def _ui_view(
     patterns = log_patterns.get("patterns") or []
     has_active = any((item.get("mode") or "") == "active" for item in patterns)
     active_categories = _active_pattern_categories(patterns)
-    highlights = _format_highlights(monitor.get("highlighted_lines") or [])
-    players_known = bool(monitor.get("players_known"))
+    pattern_rows, unused_pattern_rows, unused_patterns_hidden = _format_pattern_tables(
+        patterns
+    )
     tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
+    promote_prompt = _format_promote_prompt(
+        game_name,
+        patterns,
+        player_tracking_mode=tracking_mode,
+    )
+    players_known = bool(monitor.get("players_known"))
     presence_mode = tracking_mode == "presence"
     debug_mode = bool(status.get("debug_mode"))
     # Without debug mode, hide the players card until an active pattern can
@@ -1664,26 +1739,26 @@ def _ui_view(
             present = None if count is None else int(count) > 0
         last_join = monitor.get("last_player_join_at")
         if last_join:
-            players = f"Player last joined {_fmt_ago(last_join)}"
+            players = f"player last joined {_fmt_ago(last_join)}"
             players_class = "good players-last-join" if present else "idle players-last-join"
             players_hint = ""
         else:
-            players = "No joins yet"
+            players = "no joins yet"
             players_class = "idle"
             players_hint = ""
     elif presence_mode:
-        # Presence without a join pattern (e.g. empty-only) — keep Idle/Active.
+        # Presence without a join pattern (e.g. empty-only) — keep idle/active.
         players_label = "Players"
         if players_known:
             present = monitor.get("players_present")
             if present is None:
                 count = monitor.get("player_count")
                 present = None if count is None else int(count) > 0
-            players = "Players Active" if present else "Idle"
+            players = "players active" if present else "idle"
             players_class = "good" if present else "idle"
             players_hint = ""
         else:
-            players = "No joins yet"
+            players = "no joins yet"
             players_class = "idle"
             players_hint = ""
     else:
@@ -1725,7 +1800,7 @@ def _ui_view(
         "game_version": game_version,
         "game_version_build": game_version_build,
         "game_version_installed": game_version_installed,
-        "update_pending": "Update available" if update_pending else "Up to date",
+        "update_pending": "update available" if update_pending else "up to date",
         # When an update is waiting, the in-card button replaces the check hint.
         "update_check_hint": "" if update_pending else update_check_hint,
         "update_btn_class": "" if update_pending else "hidden",
@@ -1748,8 +1823,11 @@ def _ui_view(
         "log_watch_open": "" if has_active else " open",
         "log_watch_class": "hidden" if log_watch_hidden else "",
         "log_watch_hidden": log_watch_hidden,
-        "pattern_rows": _format_pattern_rows(patterns),
-        "highlights": highlights,
+        "pattern_rows": pattern_rows,
+        "unused_pattern_rows": unused_pattern_rows,
+        "unused_patterns_class": "hidden" if unused_patterns_hidden else "",
+        "unused_patterns_hidden": unused_patterns_hidden,
+        "promote_prompt": promote_prompt,
         "capture_options": _format_capture_options(status.get("log_captures") or []),
         "backup_options": _format_backup_options(status),
         "empty_world_token": EMPTY_WORLD,
@@ -1793,7 +1871,9 @@ _STATUS_HTML_KEYS = (
     "log_watch_open",
     "log_watch_class",
     "pattern_rows",
-    "highlights",
+    "unused_pattern_rows",
+    "unused_patterns_class",
+    "promote_prompt",
     "capture_options",
     "backup_options",
     "empty_world_token",
@@ -1846,7 +1926,9 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         log_watch_open=view["log_watch_open"],
         log_watch_class=_html_escape(view.get("log_watch_class") or ""),
         pattern_rows=view["pattern_rows"],
-        highlights=_html_escape(view["highlights"]),
+        unused_pattern_rows=view.get("unused_pattern_rows") or "",
+        unused_patterns_class=_html_escape(view.get("unused_patterns_class") or ""),
+        promote_prompt=_html_escape(view.get("promote_prompt") or ""),
         capture_options=view["capture_options"],
         backup_options=view["backup_options"],
         empty_world_token=_html_escape(view.get("empty_world_token") or EMPTY_WORLD),
@@ -1890,23 +1972,58 @@ def _recent_matches_for_pattern(item: dict[str, Any]) -> list[str]:
     return list(reversed(lines[-_RECENT_MATCH_LIMIT:]))
 
 
-def _category_display_mode(items: list[dict[str, Any]]) -> str:
-    """Single Mode tag for a category: stale > active > dry_run."""
+def _item_is_stale(item: dict[str, Any]) -> bool:
+    """Configured regex used to match a previous process, 0 hits this process."""
 
-    if any(item.get("stale") and int(item.get("hits") or 0) > 0 for item in items):
+    if "stale" in item:
+        return bool(item.get("stale"))
+    if (item.get("mode") or "") != "active":
+        return False
+    if "session_hits" not in item:
+        return False
+    session_hits = int(item.get("session_hits") or 0)
+    hits = int(item.get("hits") or 0)
+    return session_hits == 0 and hits > 0
+
+
+def _ui_pattern_mode(mode: str) -> str:
+    """Map monitor mode (active/dry_run) to Ingress labels."""
+
+    if mode in ("active", "configured"):
+        return "configured"
+    if mode == "stale":
+        return "stale"
+    return "not configured"
+
+
+def _mode_css_class(mode: str) -> str:
+    """CSS class for a display mode that may contain spaces."""
+
+    if mode in ("unused", "not configured", "not_configured", "not-configured"):
+        return "not-configured"
+    return mode
+
+
+def _category_display_mode(items: list[dict[str, Any]]) -> str:
+    """Single Mode tag for a category: stale > configured > not configured."""
+
+    if any(_item_is_stale(item) for item in items):
         return "stale"
     if any((item.get("mode") or "") == "active" for item in items):
-        return "active"
-    return "dry_run"
+        return "configured"
+    return "not configured"
 
 
 def _category_recent_matches(
     items: list[dict[str, Any]],
+    *,
+    include_unused: bool,
 ) -> list[tuple[str, str]]:
-    """Merged recent lines for a category: (mode, text), newest-ish first.
+    """Merged recent lines for a category: (ui-mode, text), newest-ish first.
 
-    Active matches win on duplicate text so the UI can color them green;
-    dry-run-only lines stay accent/orange.
+    Configured matches win on duplicate text so the UI can color them green.
+    Not-configured guess lines are included when the configured regex is stale
+    or the category has no plugin pattern — not when configured patterns are healthy.
     """
 
     ordered = sorted(
@@ -1916,9 +2033,12 @@ def _category_recent_matches(
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in ordered:
-        mode = item.get("mode") or "dry_run"
-        if mode not in ("active", "dry_run"):
-            mode = "dry_run"
+        raw_mode = item.get("mode") or "dry_run"
+        if raw_mode not in ("active", "dry_run"):
+            raw_mode = "dry_run"
+        if raw_mode == "dry_run" and not include_unused:
+            continue
+        ui_mode = _ui_pattern_mode(raw_mode)
         for line in _recent_matches_for_pattern(item):
             text = strip_ansi(line).strip()
             if not text or text in seen:
@@ -1926,13 +2046,14 @@ def _category_recent_matches(
             seen.add(text)
             if len(text) > 160:
                 text = text[:160] + "…"
-            out.append((mode, text))
+            out.append((ui_mode, text))
             if len(out) >= _CATEGORY_RECENT_MATCH_LIMIT:
                 return out
     return out
 
 
-_MODE_SORT_RANK = {"stale": 0, "active": 1, "dry_run": 2}
+_MODE_SORT_RANK = {"stale": 0, "configured": 1, "not configured": 2}
+_NOT_CONFIGURED = "not configured"
 
 
 def _pattern_category_summaries(
@@ -1965,16 +2086,27 @@ def _pattern_category_summaries(
     summaries: list[dict[str, Any]] = []
     for category in sorted(by_category, key=_category_sort_key)[:120]:
         items = by_category[category]
+        display_mode = _category_display_mode(items)
+        include_unused = display_mode in ("stale", _NOT_CONFIGURED)
+        unused_hits = sum(
+            int(item.get("hits") or 0)
+            for item in items
+            if (item.get("mode") or "") != "active"
+        )
+        active_hits = sum(
+            int(item.get("hits") or 0)
+            for item in items
+            if (item.get("mode") or "") == "active"
+        )
         summaries.append(
             {
                 "category": category,
-                "display_mode": _category_display_mode(items),
-                "active_hits": sum(
-                    int(item.get("hits") or 0)
-                    for item in items
-                    if (item.get("mode") or "") == "active"
+                "display_mode": display_mode,
+                "active_hits": active_hits,
+                "hits": unused_hits if display_mode == _NOT_CONFIGURED else active_hits,
+                "recent_matches": _category_recent_matches(
+                    items, include_unused=include_unused
                 ),
-                "recent_matches": _category_recent_matches(items),
             }
         )
     return summaries
@@ -1986,59 +2118,235 @@ def _format_category_recent_matches_html(
     if not recent:
         return ""
     parts = [
-        f"<div class='match-line {mode}'>{_html_escape(text)}</div>"
+        f"<div class='match-line {_mode_css_class(mode)}'>{_html_escape(text)}</div>"
         for mode, text in recent
     ]
     return f"<div class='recent-matches'>{''.join(parts)}</div>"
 
 
-def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
-    """One table row per category; regex text stays out of the UI.
+def _pattern_row_html(item: dict[str, Any]) -> str:
+    mode = str(item["display_mode"])
+    css = _mode_css_class(mode)
+    recent = _format_category_recent_matches_html(
+        list(item.get("recent_matches") or [])
+    )
+    return (
+        "<tr>"
+        f"<td><span class='tag {css}'>{_html_escape(mode)}</span></td>"
+        f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
+        f"<td>{int(item.get('hits') or 0)}</td>"
+        f"<td>{recent}</td>"
+        "</tr>"
+    )
 
-    Dry-run peers remain in the hit data (and colored recent matches) so
-    over-matching candidates stay discoverable when log shapes drift.
-    Mode shows only the highest-priority status (stale > active > dry_run).
-    """
+
+def _format_pattern_tables(
+    patterns: list[dict[str, Any]],
+) -> tuple[str, str, bool]:
+    """Configured/stale rows, not-configured rows, and whether to hide the expander."""
 
     summaries = _pattern_category_summaries(patterns)
-    if not summaries:
-        return "<tr><td colspan='4'>(no patterns configured)</td></tr>"
-
-    rows = []
-    for item in summaries:
-        mode = str(item["display_mode"])
-        recent = _format_category_recent_matches_html(
-            list(item.get("recent_matches") or [])
-        )
-        rows.append(
-            "<tr>"
-            f"<td><span class='tag {mode}'>{mode}</span></td>"
-            f"<td>{_html_escape(str(item.get('category') or ''))}</td>"
-            f"<td>{int(item.get('active_hits') or 0)}</td>"
-            f"<td>{recent}</td>"
-            "</tr>"
-        )
-    return "\n".join(rows)
+    configured = [item for item in summaries if item["display_mode"] != _NOT_CONFIGURED]
+    unused = [item for item in summaries if item["display_mode"] == _NOT_CONFIGURED]
+    if configured:
+        pattern_rows = "\n".join(_pattern_row_html(item) for item in configured)
+    else:
+        pattern_rows = "<tr><td colspan='4'>(no configured patterns)</td></tr>"
+    if unused:
+        unused_rows = "\n".join(_pattern_row_html(item) for item in unused)
+    else:
+        unused_rows = "<tr><td colspan='4'>(no not configured log patterns)</td></tr>"
+    return pattern_rows, unused_rows, not unused
 
 
-def _format_highlights(items: list[dict[str, Any]]) -> str:
-    if not items:
-        return (
-            "(no pattern hits yet — once the server is online, dry_run candidates "
-            "should light up lines like “server started” or “player joined”)"
+def _format_pattern_rows(patterns: list[dict[str, Any]]) -> str:
+    """Configured + stale table body (unused guesses live in the expander)."""
+
+    rows, _unused, _hidden = _format_pattern_tables(patterns)
+    return rows
+
+
+def _addon_game_yaml_relpath(game_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (game_name or "game").strip().lower()).strip("-")
+    return f"{slug}-dedicated-server/games/game.yaml"
+
+
+def _yaml_regex(pattern: str) -> str:
+    """Single-quoted YAML so backslashes survive."""
+
+    return "'" + str(pattern).replace("'", "''") + "'"
+
+
+def _prompt_sample_line(item: dict[str, Any]) -> str:
+    lines = _recent_matches_for_pattern(item)
+    if lines:
+        return lines[0]
+    last = strip_ansi(str(item.get("last_line") or "")).strip()
+    return last
+
+
+_PROMOTE_CATEGORY_ORDER = (
+    "ready",
+    "game_version",
+    "player_join",
+    "player_leave",
+    "player_count",
+    "players_empty",
+    "version_mismatch",
+)
+_PROMOTE_CATEGORY_HELP = {
+    "ready": "Server finished starting. No capture groups required.",
+    "game_version": (
+        "Human game version like 1.3.1, not a Steam build id. "
+        "Named group: version"
+    ),
+    "player_join": "Someone joined. Named group: player. Optional: steam_id",
+    "player_leave": (
+        "Someone left. Prefer steam_id when the line has one, else player. "
+        "Identity should match join."
+    ),
+    "player_count": (
+        "Exact headcount. Named group: count (integer). "
+        "Only if the game logs a real count."
+    ),
+    "players_empty": "Nobody is online. No capture groups required.",
+    "version_mismatch": (
+        "A client was rejected for version. Optional named groups: "
+        "steam_id, client_version"
+    ),
+}
+
+
+def _format_promote_prompt(
+    game_name: str,
+    patterns: list[dict[str, Any]],
+    *,
+    player_tracking_mode: str = "count",
+) -> str:
+    """Preamble + live regexes and sample lines so an AI can wire game.yaml."""
+
+    yaml_path = _addon_game_yaml_relpath(game_name)
+    tracking = (player_tracking_mode or "count").strip().lower()
+    if tracking == "presence":
+        tracking_note = (
+            "presence — idle vs occupied from join/leave/empty. "
+            "Do not add player_count unless the game logs a trustworthy numeric count."
         )
-    lines = []
-    for item in items[-30:]:
-        matches = list(item.get("matches") or [])
-        if not matches:
-            continue
-        tags = ", ".join(
-            f"{m.get('mode')}:{m.get('category')}" for m in matches[:8]
+    else:
+        tracking_note = (
+            "count — use player_count when the game logs an exact headcount."
         )
-        lines.append(f"[{tags}] {strip_ansi(str(item.get('line') or ''))}")
-    if not lines:
-        return "(no pattern hits to show yet)"
-    return "\n".join(lines)
+
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for item in patterns:
+        by_category.setdefault(str(item.get("category") or ""), []).append(item)
+    categories = [name for name in _PROMOTE_CATEGORY_ORDER if name in by_category]
+    categories.extend(sorted(name for name in by_category if name not in set(categories)))
+
+    work_blocks: list[str] = []
+    example_blocks: list[str] = []
+    for category in categories:
+        items = by_category[category]
+        display = _category_display_mode(items)
+        help_text = _PROMOTE_CATEGORY_HELP.get(category, "")
+        configured_items = [
+            item for item in items if (item.get("mode") or "") == "active"
+        ]
+        guess_hits = [
+            item
+            for item in items
+            if (item.get("mode") or "") != "active" and int(item.get("hits") or 0) > 0
+        ]
+        lines_out: list[str] = [f"### {category}  [{display}]"]
+        if help_text:
+            lines_out.append(help_text)
+        if configured_items:
+            lines_out.append("Configured regexes (re.IGNORECASE, re.search):")
+            for item in configured_items:
+                hits = int(item.get("hits") or 0)
+                if "session_hits" in item:
+                    session_hits = int(item.get("session_hits") or 0)
+                    hit_note = (
+                        f"hits this process={session_hits}, lifetime hits={hits}"
+                    )
+                else:
+                    hit_note = f"hits={hits}"
+                sample = _prompt_sample_line(item)
+                lines_out.append(f"  - {_yaml_regex(str(item.get('pattern') or ''))}")
+                lines_out.append(f"    {hit_note}")
+                if sample:
+                    lines_out.append(f"    last match: {sample}")
+        else:
+            lines_out.append("No plugin regex in log_patterns.")
+        if guess_hits and display in ("stale", _NOT_CONFIGURED):
+            lines_out.append(
+                "Not-configured guesses that hit (too broad to copy as-is):"
+            )
+            for item in guess_hits[:8]:
+                sample = _prompt_sample_line(item)
+                lines_out.append(
+                    f"  - {_yaml_regex(str(item.get('pattern') or ''))}  "
+                    f"hits={int(item.get('hits') or 0)}"
+                )
+                if sample:
+                    lines_out.append(f"    sample: {sample}")
+        elif display == _NOT_CONFIGURED and not guess_hits:
+            lines_out.append("No sample log lines yet for this category.")
+        block = "\n".join(lines_out)
+        if display in ("stale", _NOT_CONFIGURED):
+            work_blocks.append(block)
+        elif configured_items:
+            example_blocks.append(block)
+
+    if work_blocks:
+        work_section = "\n\n".join(work_blocks)
+    else:
+        work_section = (
+            "Nothing looks stale or not configured from pattern hits. "
+            "If a category is wrong, paste recent server log lines here."
+        )
+    example_section = "\n\n".join(example_blocks) if example_blocks else "(none)"
+
+    return "\n".join(
+        [
+            f"Write Python regexes for the {game_name} dedicated-server add-on.",
+            "",
+            "Repo: https://github.com/esper256/hassio-addons",
+            f"Edit: {yaml_path}  (log_patterns section)",
+            "Open a pull request against that repo with only this game.yaml change.",
+            "",
+            "How matching works:",
+            "- Each log_patterns regex is compiled with re.IGNORECASE and used as re.search on every log line (ANSI already stripped).",
+            "- Only log_patterns change supervisor state. log_pattern_candidates and generic guesses never trigger actions.",
+            "- Quote YAML strings with single quotes so backslashes survive.",
+            "- One precise pattern per log shape. Do not promote the broad guess regexes below.",
+            "- Prefer the named groups listed per category. Do not match on timestamps alone.",
+            "- If a category has no trustworthy line, omit it from log_patterns (leave it not configured).",
+            "",
+            "Categories the supervisor reads:",
+            "  ready             server finished starting. no capture groups",
+            "  game_version      named group version (human version like 1.3.1, not a Steam build id)",
+            "  player_join       named group player. optional steam_id",
+            "  player_leave      prefer steam_id when present, else player. identity should match join",
+            "  player_count      named group count (integer). only if the game logs a real headcount",
+            "  players_empty     nobody online. no capture groups",
+            "  version_mismatch  optional steam_id, client_version",
+            "",
+            f"Player tracking mode: {tracking_note}",
+            "",
+            "Expected YAML shape:",
+            "log_patterns:",
+            "  <category>:",
+            "    - '<python regex>'",
+            "",
+            "Needs work (stale or not configured):",
+            work_section,
+            "",
+            "Working configured patterns (style examples — keep unless stale):",
+            example_section,
+            "",
+        ]
+    )
 
 
 def _format_capture_options(captures: list[dict[str, Any]]) -> str:

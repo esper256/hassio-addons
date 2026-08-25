@@ -30,6 +30,8 @@ class PatternStat:
     pattern: str
     mode: str  # "active" | "dry_run"
     hits: int = 0
+    # Hits since the current game-server process started (reset_session).
+    session_hits: int = 0
     first_hit_at: float | None = None
     last_hit_at: float | None = None
     last_line: str | None = None
@@ -39,22 +41,35 @@ class PatternStat:
     def note(self, line: str) -> None:
         now = time.time()
         self.hits += 1
+        self.session_hits += 1
         if self.first_hit_at is None:
             self.first_hit_at = now
         self.last_hit_at = now
         self.last_line = line
         self.recent_lines.append(line)
 
+    def begin_process_session(self) -> None:
+        """New game binary: keep lifetime hits, restart the session counter."""
+
+        self.session_hits = 0
+
     def to_dict(self) -> dict[str, Any]:
-        stale = False
-        if self.hits > 0 and self.last_hit_at is not None:
-            # Previously useful pattern with no hits for 6h while server runs.
-            stale = (time.time() - self.last_hit_at) > 6 * 3600
+        prior_hits = max(0, int(self.hits) - int(self.session_hits))
+        # Stale = this configured regex used to match (a previous process),
+        # but has not matched since the current server binary started.
+        # Startup-only lines (game_version) stay healthy for the whole run
+        # after they hit once — age since last_hit_at does not matter.
+        stale = (
+            self.mode == "active"
+            and self.session_hits == 0
+            and prior_hits > 0
+        )
         return {
             "category": self.category,
             "pattern": self.pattern,
             "mode": self.mode,
             "hits": self.hits,
+            "session_hits": self.session_hits,
             "first_hit_at": self.first_hit_at,
             "last_hit_at": self.last_hit_at,
             "last_line": self.last_line,
@@ -225,6 +240,8 @@ class LogMonitor:
         # Keep a little continuity in the UI across restarts.
         self.state.highlighted_lines = highlighted
         self.state.recent_lines = recent
+        for stat in self._stats.values():
+            stat.begin_process_session()
 
     def pattern_report(self) -> dict[str, Any]:
         stats = [stat.to_dict() for stat in self._stats.values()]
