@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.49
+
+- Sync shared supervisor: JSON API log-pattern links rescan the on-disk log and return example lines for not-yet-configured categories (works without Debug mode)
+
 ## 2.1.48
 
 - Sync shared supervisor: backups named by world file; retention and pre-update keep-one grouped per world; restore of a different world's archive is refused until the active world matches

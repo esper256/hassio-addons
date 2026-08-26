@@ -616,8 +616,8 @@ HTML_PAGE = """<!DOCTYPE html>
           <li><a href="api/world/download">Download active world save</a></li>
           <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
           <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
-          <li><a href="api/logs/patterns">Pattern hit report</a></li>
-          <li><a href="api/logs/suggest">Suggest patterns from recent logs</a></li>
+          <li><a href="api/logs/suggest">Example log lines for not-yet-configured patterns</a> (rescans the log file, including lines before the live tailer started)</li>
+          <li><a href="api/logs/patterns">Live pattern hits plus log-file rescan</a> (same examples, plus hits seen since this process started following the log)</li>
           <li><a href="api/logs/captures">Captures list JSON</a></li>
           <li><a href="api/logs/raw?lines=400">Recent log tail JSON</a></li>
         </ul>
@@ -1279,7 +1279,23 @@ class StatusServer:
                     return
 
                 if path == "/api/logs/patterns":
-                    self._json(200, status.get("log_patterns") or {})
+                    from .log_tools import (
+                        LIVE_PATTERNS_HINT,
+                        format_tuning_report_from_pattern_report,
+                    )
+
+                    live = format_tuning_report_from_pattern_report(
+                        status.get("log_patterns") or {},
+                        source="live_monitor",
+                    )
+                    if toolbox is None:
+                        live["hint"] = LIVE_PATTERNS_HINT
+                        self._json(200, live)
+                        return
+                    payload = toolbox.suggest()
+                    payload["live_monitor"] = live
+                    payload["hint"] = LIVE_PATTERNS_HINT
+                    self._json(200, payload)
                     return
 
                 if path == "/api/logs/raw":

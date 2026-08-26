@@ -185,6 +185,7 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 - Generic + game candidates only **highlight** in Ingress Debug mode; they do **not** gate updates or player presence.
 - Prefer many broad, case-insensitive guesses (over-match) over one clever regex. The debug table shows **one row per category** (Mode / Hits / recent matches); regex text stays out of the UI.
 - Turn on **Debug mode**, start the server, watch which categories light up (green = active, orange = dry-run), then promote a precise regex into `log_patterns` for that category.
+- Without Debug mode, Ingress hides the HTML table. The JSON API still works: **Troubleshooting → Example log lines for not-yet-configured patterns** (`/api/logs/suggest`) rescans the on-disk log with the same matchers and returns example lines. The live tailer starts at EOF, so that rescan is how you recover startup/history.
 - Without active join/leave patterns, “update only when empty” cannot wait for players to leave.
 
 ---

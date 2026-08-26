@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Promote Unity NetCode `RpcSystem received bad protocol version` as the active version-mismatch pattern (from a real client-too-old session). Dump headers that repeat that phrase, and disconnect reasons like `App_Min`, are not mismatch signals
+- JSON API log-pattern links rescan the on-disk log with the same matchers as Ingress and return example lines for not-yet-configured categories (works without Debug mode)
+
 ## 1.0.0
 
 - First Core Keeper dedicated-server app on the shared supervisor

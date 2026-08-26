@@ -20,44 +20,32 @@ from .plugin import GamePlugin
 
 LOG = logging.getLogger("game_server.log_tools")
 
-KEYWORD_HINTS = {
-    "player_join": [
-        r"\bjoined\b",
-        r"\bconnected\b",
-        r"\bhas joined\b",
-        r"\blogin\b",
-    ],
-    "player_leave": [
-        r"\bdisconnected\b",
-        r"\bleft\b",
-        r"\bhas left\b",
-        r"\blogout\b",
-    ],
-    "player_count": [
-        r"\bplayers?\s+online\b",
-        r"\bonline\s+players?\b",
-        r"players?\s*[:=]\s*\d+",
-    ],
-    "version_mismatch": [
-        r"\bwrong version\b",
-        r"\bversion mismatch\b",
-        r"\bincompatible version\b",
-        r"\boutdated (client|server|version)\b",
-        r"\bclient version\b",
-    ],
-    "game_version": [
-        r"\bgame version\b",
-        r"\bserver version\b",
-        r"\bversion\s*[:=]\s*\d",
-    ],
-    "ready": [
-        r"\blistening\b",
-        r"\bserver started\b",
-        r"\bstarted server\b",
-        r"\bready\b",
-        r"\bworld loaded\b",
-    ],
-}
+_TUNING_EXAMPLE_LIMIT = 25
+_TUNING_GUESS_LIMIT = 12
+_TUNING_CATEGORY_ORDER = (
+    "ready",
+    "game_version",
+    "player_join",
+    "player_leave",
+    "player_count",
+    "players_empty",
+    "version_mismatch",
+)
+_TUNING_HOW_TO_READ = (
+    "configured: plugin log_patterns that can change supervisor state, with "
+    "matching log lines from this scan. not_configured: dry-run guesses that "
+    "matched — use the example lines to write a precise regex; do not copy "
+    "the guess patterns as-is. Zero-hit guesses are omitted. JSON works "
+    "without Debug mode (that only unhides the HTML table). "
+    "GET /api/logs/suggest rescans the on-disk log (including lines before "
+    "the live tailer started at EOF). GET /api/logs/patterns is the same "
+    "rescan plus live_monitor hits since this process started following."
+)
+LIVE_PATTERNS_HINT = (
+    "The live tailer opens existing logs at EOF, so startup and earlier "
+    "sessions are missing from live_monitor. Top-level configured / "
+    "not_configured (also GET /api/logs/suggest) rescans the on-disk file."
+)
 
 # Stable "current log" names first, then common dedicated-server fallbacks.
 PREFERRED_LOG_NAMES = (
@@ -66,6 +54,146 @@ PREFERRED_LOG_NAMES = (
     "server.log",
     "console.log",
 )
+
+
+def _tuning_category_sort_key(category: str) -> tuple[int, str]:
+    try:
+        return (_TUNING_CATEGORY_ORDER.index(category), category)
+    except ValueError:
+        return (len(_TUNING_CATEGORY_ORDER), category)
+
+
+def _unique_example_lines(
+    items: Iterable[dict[str, Any]],
+    *,
+    extra: Iterable[str] | None = None,
+    limit: int = _TUNING_EXAMPLE_LIMIT,
+) -> list[str]:
+    """Newest-first unique example lines from extra, then each pattern's recent_lines."""
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in list(extra or []):
+        text = str(line).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            return out
+    for item in items:
+        recent = item.get("recent_lines")
+        lines: list[str]
+        if isinstance(recent, list) and recent:
+            lines = [str(x) for x in recent if str(x).strip()]
+        elif item.get("last_line"):
+            lines = [str(item.get("last_line"))]
+        else:
+            lines = []
+        for line in reversed(lines):
+            text = str(line).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            out.append(text)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def format_tuning_report(
+    *,
+    patterns: Iterable[dict[str, Any]],
+    player_tracking_enabled: bool = False,
+    version_mismatch_enabled: bool = False,
+    source: str = "",
+    source_label: str | None = None,
+    line_count_analyzed: int | None = None,
+    examples: dict[tuple[str, str], list[str]] | None = None,
+    how_to_read: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Group a monitor pattern report into configured vs not_configured examples.
+
+    Zero-hit dry-run guesses are omitted so the JSON is a list of real log lines
+    rather than every generic regex. Configured categories are always listed so
+    operators can see which plugin patterns are wired, even when this scan missed
+    them (the live tailer starts at EOF).
+    """
+
+    by_category: dict[str, list[dict[str, Any]]] = {}
+    for item in patterns:
+        category = str(item.get("category") or "").strip()
+        if not category:
+            continue
+        by_category.setdefault(category, []).append(dict(item))
+
+    configured: dict[str, dict[str, Any]] = {}
+    not_configured: dict[str, dict[str, Any]] = {}
+    for category in sorted(by_category, key=_tuning_category_sort_key):
+        items = by_category[category]
+        active = [i for i in items if (i.get("mode") or "") == "active"]
+        dry = [i for i in items if (i.get("mode") or "") != "active"]
+        extra_examples = (examples or {}).get(("active", category), [])
+        if active:
+            configured[category] = {
+                "patterns": [str(i.get("pattern") or "") for i in active],
+                "hits": sum(int(i.get("hits") or 0) for i in active),
+                "examples": _unique_example_lines(
+                    active, extra=extra_examples
+                ),
+            }
+            continue
+        hitting = [i for i in dry if int(i.get("hits") or 0) > 0]
+        if not hitting:
+            continue
+        hitting.sort(key=lambda i: (-int(i.get("hits") or 0), str(i.get("pattern") or "")))
+        dry_examples = (examples or {}).get(("dry_run", category), [])
+        not_configured[category] = {
+            "guess_patterns": [
+                str(i.get("pattern") or "") for i in hitting[:_TUNING_GUESS_LIMIT]
+            ],
+            "hits": sum(int(i.get("hits") or 0) for i in hitting),
+            "examples": _unique_example_lines(hitting, extra=dry_examples),
+        }
+
+    report: dict[str, Any] = {
+        "how_to_read": how_to_read or _TUNING_HOW_TO_READ,
+        "source": source,
+        "configured": configured,
+        "not_configured": not_configured,
+        "player_tracking_enabled": bool(player_tracking_enabled),
+        "version_mismatch_enabled": bool(version_mismatch_enabled),
+    }
+    if source_label:
+        report["source_label"] = source_label
+    if line_count_analyzed is not None:
+        report["line_count_analyzed"] = int(line_count_analyzed)
+    if extra:
+        report.update(extra)
+    return report
+
+
+def format_tuning_report_from_pattern_report(
+    report: dict[str, Any] | None,
+    *,
+    source: str = "live_monitor",
+    source_label: str | None = None,
+    how_to_read: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Group supervisor status['log_patterns'] (live monitor) for the JSON API."""
+
+    data = report if isinstance(report, dict) else {}
+    return format_tuning_report(
+        patterns=list(data.get("patterns") or []),
+        player_tracking_enabled=bool(data.get("player_tracking_enabled")),
+        version_mismatch_enabled=bool(data.get("version_mismatch_enabled")),
+        source=source,
+        source_label=source_label or "Live pattern hits (since monitor started)",
+        how_to_read=how_to_read,
+        extra=extra,
+    )
 
 
 def log_search_dirs(
@@ -192,76 +320,69 @@ class LogToolbox:
         }
 
     def analyze_lines(self, lines: Iterable[str]) -> dict[str, Any]:
-        patterns = self.plugin.log_patterns
-        compiled = {
-            "player_join": patterns.compiled("player_join"),
-            "player_leave": patterns.compiled("player_leave"),
-            "version_mismatch": patterns.compiled("version_mismatch"),
-            "player_count": patterns.compiled("player_count"),
-            "game_version": patterns.compiled("game_version"),
-            "ready": patterns.compiled("ready"),
-        }
-        matches: dict[str, list[str]] = {k: [] for k in compiled}
-        unmatched_interesting: list[str] = []
-        suggestions: dict[str, list[dict[str, str]]] = {k: [] for k in KEYWORD_HINTS}
+        """Rescan lines with a throwaway LogMonitor (active + dry-run regexes)."""
 
-        for line in lines:
-            text = line.rstrip("\n")
+        from .monitor import LogMonitor
+
+        monitor = LogMonitor(self.plugin, self.logs_dir)
+        examples: dict[tuple[str, str], list[str]] = {}
+        seen: dict[tuple[str, str], set[str]] = {}
+        count = 0
+        for raw in lines:
+            text = strip_ansi(str(raw)).rstrip("\n")
             if not text.strip():
                 continue
-            hit = False
-            for key, regs in compiled.items():
-                for reg in regs:
-                    if reg.search(text):
-                        if len(matches[key]) < 50:
-                            matches[key].append(text)
-                        hit = True
-                        break
-            if hit:
+            count += 1
+            monitor.ingest_stdout_line(text)
+            highlighted = monitor.state.highlighted_lines
+            if not highlighted:
                 continue
-            for key, hints in KEYWORD_HINTS.items():
-                for hint in hints:
-                    if re.search(hint, text, re.I):
-                        if len(suggestions[key]) < 40:
-                            suggestions[key].append(
-                                {
-                                    "line": text,
-                                    "suggested_regex": _suggest_regex(text, key),
-                                    "hint": hint,
-                                }
-                            )
-                        if len(unmatched_interesting) < 100:
-                            unmatched_interesting.append(text)
-                        break
-
-        return {
-            "configured_patterns": {
-                "player_join": patterns.player_join,
-                "player_leave": patterns.player_leave,
-                "version_mismatch": patterns.version_mismatch,
-                "player_count": patterns.player_count,
-                "game_version": patterns.game_version,
-                "ready": patterns.ready,
-            },
-            "matches": matches,
-            "suggestions": suggestions,
-            "unmatched_interesting": unmatched_interesting,
-        }
-
-    def suggest(self, lines: int = 500) -> dict[str, Any]:
-        recent = list(self.recent_lines_provider())
-        file_lines = self.tail_file(lines=lines)
-        # Prefer union, file first then memory
-        merged: list[str] = []
-        seen = set()
-        for line in file_lines + recent:
-            if line in seen:
+            last = highlighted[-1]
+            if str(last.get("line") or "") != text:
                 continue
-            seen.add(line)
-            merged.append(line)
+            for match in last.get("matches") or []:
+                mode = str(match.get("mode") or "dry_run")
+                category = str(match.get("category") or "")
+                if not category:
+                    continue
+                key = (mode, category)
+                bucket = examples.setdefault(key, [])
+                already = seen.setdefault(key, set())
+                if text in already or len(bucket) >= _TUNING_EXAMPLE_LIMIT:
+                    continue
+                already.add(text)
+                bucket.append(text)
+        report = monitor.pattern_report()
+        return format_tuning_report(
+            patterns=report.get("patterns") or [],
+            player_tracking_enabled=bool(report.get("player_tracking_enabled")),
+            version_mismatch_enabled=bool(report.get("version_mismatch_enabled")),
+            source="line_scan",
+            line_count_analyzed=count,
+            examples=examples,
+        )
+
+    def suggest(self, lines: int = 2000) -> dict[str, Any]:
+        """Rescan the on-disk log (fallback: in-memory output) for pattern examples."""
+
+        tail = self.raw_tail(lines=lines)
+        file_lines = list(tail.get("lines") or [])
+        merged = list(file_lines)
+        if str(tail.get("source") or "") != "memory:recent_output":
+            seen = set(file_lines)
+            for line in self.recent_lines_provider():
+                text = strip_ansi(str(line))
+                if text in seen:
+                    continue
+                seen.add(text)
+                merged.append(text)
         report = self.analyze_lines(merged)
-        report["source_log"] = str(self.pick_log_file()) if self.pick_log_file() else None
-        report["line_count_analyzed"] = len(merged)
+        report["source"] = str(tail.get("source") or "unknown")
+        report["source_label"] = str(
+            tail.get("source_label") or "Game log file rescan"
+        )
+        if tail.get("empty_hint"):
+            report["empty_hint"] = tail["empty_hint"]
         return report
 
     def list_captures(self) -> list[dict[str, Any]]:
@@ -363,10 +484,14 @@ class LogToolbox:
             "path": str(dest),
             "download_path": f"api/logs/captures/{capture_id}/download",
             "analysis_summary": {
-                key: len(vals) for key, vals in analysis.get("matches", {}).items()
-            },
-            "suggestion_counts": {
-                key: len(vals) for key, vals in analysis.get("suggestions", {}).items()
+                "configured": {
+                    key: int(vals.get("hits") or 0)
+                    for key, vals in (analysis.get("configured") or {}).items()
+                },
+                "not_configured": {
+                    key: int(vals.get("hits") or 0)
+                    for key, vals in (analysis.get("not_configured") or {}).items()
+                },
             },
         }
 
@@ -383,25 +508,3 @@ class LogToolbox:
         except ValueError:
             return None
         return path if path.is_file() else None
-
-
-def _suggest_regex(line: str, category: str) -> str:
-    """Produce a conservative starter regex from a sample line."""
-
-    # Collapse obvious player-name-ish tokens between keywords.
-    text = re.escape(line)
-    text = text.replace(r"\ ", " ")
-    if category in {"player_join", "player_leave"}:
-        text = re.sub(
-            r"(connected|disconnected|joined|left|login|logout)",
-            r"(?P<player>[\\w .-]+) \1",
-            line,
-            count=1,
-            flags=re.I,
-        )
-        return text
-    # Fallback: case-insensitive substring of the original line trimmed
-    snippet = line.strip()
-    if len(snippet) > 120:
-        snippet = snippet[:120]
-    return re.escape(snippet)
