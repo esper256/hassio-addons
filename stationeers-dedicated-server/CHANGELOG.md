@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0
+
+- Version scheme: `{supervisor}.{minor}.{game patch}`. Shared supervisor is **3.0**; this app is **3.0.0**. Future supervisor features bump every game to `3.1.0`; a Stationeers-only fix is `3.0.1`
+- Ingress subtitle advertises supervisor **3.0** separately from the HA app version
+- Sync shared supervisor: promote prompt lists other interesting log lines on configured patterns; shared dry-run guess regexes refreshed
+
 ## 1.0.19
 
 - Sync shared supervisor: drop the JSON API expander; one **Log pattern prompt** (`/api/logs/prompt`) matching the debug textarea (file rescan included); tighter AI prompt for promoting regexes

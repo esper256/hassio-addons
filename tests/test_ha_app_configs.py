@@ -126,6 +126,34 @@ class HaAppConfigTests(unittest.TestCase):
             errors.extend(validate_config(path))
         self.assertEqual(errors, [], "\n".join(errors))
 
+    def test_addon_versions_follow_supervisor_major_minor(self) -> None:
+        """HA app version is supervisor major.minor plus a game-specific patch."""
+
+        import sys
+
+        sys.path.insert(0, str(ROOT / "game-server-base"))
+        from game_server.version import SUPERVISOR_VERSION  # noqa: E402
+
+        self.assertRegex(SUPERVISOR_VERSION, r"^\d+\.\d+$")
+        prefix = SUPERVISOR_VERSION + "."
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        errors: list[str] = []
+        for path in configs:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            version = str((data or {}).get("version") or "")
+            parts = version.split(".")
+            if not version.startswith(prefix) or len(parts) != 3:
+                errors.append(
+                    f"{path}: version {version!r} must be "
+                    f"{SUPERVISOR_VERSION}.<game_patch> "
+                    f"(e.g. {SUPERVISOR_VERSION}.0)"
+                )
+            elif not all(part.isdigit() for part in parts):
+                errors.append(f"{path}: version {version!r} must be numeric")
+        self.assertEqual(errors, [], "\n".join(errors))
+
     def test_installable_apps_have_store_images(self) -> None:
         configs = [
             p for p in discover_configs(ROOT) if "game-server-base" not in p.parts

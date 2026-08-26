@@ -33,7 +33,8 @@ _TUNING_CATEGORY_ORDER = (
 )
 _TUNING_HOW_TO_READ = (
     "configured: plugin log_patterns that can change supervisor state, with "
-    "matching log lines from this scan. not_configured: dry-run guesses that "
+    "matching log lines from this scan plus alternates (guess hits the "
+    "configured regex did not capture). not_configured: dry-run guesses that "
     "matched — use the example lines to write a precise regex; do not copy "
     "the guess patterns as-is. Zero-hit guesses are omitted."
 )
@@ -127,12 +128,24 @@ def format_tuning_report(
         dry = [i for i in items if (i.get("mode") or "") != "active"]
         extra_examples = (examples or {}).get(("active", category), [])
         if active:
+            active_examples = _unique_example_lines(
+                active, extra=extra_examples
+            )
+            hitting = [i for i in dry if int(i.get("hits") or 0) > 0]
+            hitting.sort(
+                key=lambda i: (-int(i.get("hits") or 0), str(i.get("pattern") or ""))
+            )
+            dry_examples = (examples or {}).get(("dry_run", category), [])
+            all_dry = _unique_example_lines(hitting, extra=dry_examples)
+            captured = {str(line).strip() for line in active_examples}
+            alternates = [
+                line for line in all_dry if str(line).strip() not in captured
+            ]
             configured[category] = {
                 "patterns": [str(i.get("pattern") or "") for i in active],
                 "hits": sum(int(i.get("hits") or 0) for i in active),
-                "examples": _unique_example_lines(
-                    active, extra=extra_examples
-                ),
+                "examples": active_examples,
+                "alternates": alternates[:_TUNING_EXAMPLE_LIMIT],
             }
             continue
         hitting = [i for i in dry if int(i.get("hits") or 0) > 0]
@@ -354,25 +367,61 @@ class LogToolbox:
             report["empty_hint"] = tail["empty_hint"]
         return report
 
-    def example_lines_by_category(self, lines: int = 2000) -> dict[str, list[str]]:
-        """Unique matching log lines per category from a file rescan."""
+    def example_groups_by_category(
+        self, lines: int = 2000
+    ) -> dict[str, dict[str, list[str]]]:
+        """File-rescan matches and alternate guess lines per category."""
 
         report = self.suggest(lines=lines)
-        out: dict[str, list[str]] = {}
-        for section in ("configured", "not_configured"):
-            bucket = report.get(section) or {}
-            if not isinstance(bucket, dict):
+        out: dict[str, dict[str, list[str]]] = {}
+        for category, data in (report.get("configured") or {}).items():
+            if not isinstance(data, dict):
                 continue
-            for category, data in bucket.items():
-                if not isinstance(data, dict):
-                    continue
-                examples = [
+            out[str(category)] = {
+                "matches": [
                     str(line).strip()
                     for line in list(data.get("examples") or [])
                     if str(line).strip()
-                ]
-                if examples:
-                    out[str(category)] = examples
+                ],
+                "alternates": [
+                    str(line).strip()
+                    for line in list(data.get("alternates") or [])
+                    if str(line).strip()
+                ],
+            }
+        for category, data in (report.get("not_configured") or {}).items():
+            if not isinstance(data, dict):
+                continue
+            examples = [
+                str(line).strip()
+                for line in list(data.get("examples") or [])
+                if str(line).strip()
+            ]
+            if not examples:
+                continue
+            bucket = out.setdefault(
+                str(category), {"matches": [], "alternates": []}
+            )
+            bucket["matches"] = examples
+        return out
+
+    def example_lines_by_category(self, lines: int = 2000) -> dict[str, list[str]]:
+        """Unique matching log lines per category from a file rescan."""
+
+        out: dict[str, list[str]] = {}
+        for category, data in self.example_groups_by_category(lines=lines).items():
+            combined: list[str] = []
+            seen: set[str] = set()
+            for line in list(data.get("matches") or []) + list(
+                data.get("alternates") or []
+            ):
+                text = str(line).strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                combined.append(text)
+            if combined:
+                out[str(category)] = combined
         return out
 
     def list_captures(self) -> list[dict[str, Any]]:
