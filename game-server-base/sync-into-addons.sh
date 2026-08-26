@@ -22,7 +22,11 @@ sync_into() {
   local dst_root="$1"
   local dst="$dst_root/game_server"
   rm -rf "$dst"
-  cp -a "$SRC" "$dst"
+  mkdir -p "$dst"
+  # Do not vendor bytecode; running unit tests would otherwise dirty the tree
+  # and make check-addon-sync.sh fail.
+  tar -C "$SRC" --exclude='__pycache__' --exclude='*.pyc' -cf - . \
+    | tar -C "$dst" -xf -
   echo "Synced game_server -> ${dst_root}/"
 }
 

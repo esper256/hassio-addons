@@ -11,6 +11,7 @@ A small ecosystem of **dedicated game server** apps for Home Assistant OS, built
 | **[Necesse](https://necessegame.com/)** | [necesse-dedicated-server/GUIDE.md](necesse-dedicated-server/GUIDE.md) |
 | **[Stationeers](https://store.steampowered.com/app/544550/Stationeers/)** | [stationeers-dedicated-server/GUIDE.md](stationeers-dedicated-server/GUIDE.md) |
 | **[Factorio](https://factorio.com/)** | [factorio-dedicated-server/GUIDE.md](factorio-dedicated-server/GUIDE.md) |
+| **[Core Keeper](https://store.steampowered.com/app/1621690/Core_Keeper/)** | [core-keeper-dedicated-server/GUIDE.md](core-keeper-dedicated-server/GUIDE.md) |
 
 Current titles are **amd64 only**.
 

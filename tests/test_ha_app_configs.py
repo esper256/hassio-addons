@@ -8,6 +8,7 @@ because config validation failed (for example timeout > 300).
 from __future__ import annotations
 
 import re
+import struct
 import unittest
 from pathlib import Path
 
@@ -94,6 +95,14 @@ def validate_config(path: Path) -> list[str]:
     return errors
 
 
+def _png_size(path: Path) -> tuple[int, int] | None:
+    data = path.read_bytes()
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return int(width), int(height)
+
+
 class HaAppConfigTests(unittest.TestCase):
     def test_game_server_base_is_not_an_ha_app(self) -> None:
         base_configs = [
@@ -114,6 +123,34 @@ class HaAppConfigTests(unittest.TestCase):
         errors: list[str] = []
         for path in configs:
             errors.extend(validate_config(path))
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_installable_apps_have_store_images(self) -> None:
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        errors: list[str] = []
+        for path in configs:
+            icon = path.parent / "icon.png"
+            logo = path.parent / "logo.png"
+            if not icon.is_file():
+                errors.append(f"{path.parent}: missing icon.png (HA store tile)")
+            else:
+                size = _png_size(icon)
+                if size is None:
+                    errors.append(f"{icon}: not a PNG")
+                elif size[0] != size[1]:
+                    errors.append(f"{icon}: must be square (got {size[0]}x{size[1]})")
+            if not logo.is_file():
+                errors.append(f"{path.parent}: missing logo.png (HA Info header)")
+            else:
+                size = _png_size(logo)
+                if size is None:
+                    errors.append(f"{logo}: not a PNG")
+                elif size[1] >= size[0]:
+                    errors.append(
+                        f"{logo}: should be a wide rectangle (got {size[0]}x{size[1]})"
+                    )
         self.assertEqual(errors, [], "\n".join(errors))
 
 

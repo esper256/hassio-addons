@@ -27,6 +27,7 @@ from game_server.disk import format_bytes  # noqa: E402
 from game_server.config import (  # noqa: E402
     SupervisorConfig,
     format_bool,
+    format_option_value,
     load_config,
     load_options_json,
 )
@@ -106,6 +107,7 @@ FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
 STATIONEERS_PLUGIN = ROOT.parent / "stationeers-dedicated-server" / "games" / "game.yaml"
 FACTORIO_PLUGIN = ROOT.parent / "factorio-dedicated-server" / "games" / "game.yaml"
+CORE_KEEPER_PLUGIN = ROOT.parent / "core-keeper-dedicated-server" / "games" / "game.yaml"
 
 
 class ConfigTests(unittest.TestCase):
@@ -147,6 +149,17 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg.backup_retention, "extended")
             self.assertEqual(cfg.retention().keep_monthly, 24)
             self.assertEqual(format_bool(True, "one_zero"), "1")
+
+    def test_format_option_value_keeps_digit_strings(self) -> None:
+        # Docker env is always str; world slot/mode 0 and 1 must stay digits.
+        self.assertEqual(format_option_value(0, "true_false"), "0")
+        self.assertEqual(format_option_value("0", "true_false"), "0")
+        self.assertEqual(format_option_value(1, "true_false"), "1")
+        self.assertEqual(format_option_value("1", "true_false"), "1")
+        self.assertEqual(format_option_value(True, "true_false"), "true")
+        self.assertEqual(format_option_value(False, "one_zero"), "0")
+        self.assertEqual(format_option_value("true", "one_zero"), "1")
+        self.assertEqual(format_option_value("yes", "true_false"), "true")
 
     def test_game_env_keys_not_accepted_without_plugin(self) -> None:
         os.environ["WORLD_TYPE"] = "Lunar"
@@ -190,6 +203,16 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("STEAM_BRANCH", factorio_keys)
         self.assertIn("SPACE_AGE", factorio_keys)
         self.assertNotIn("JAVA_OPTS", factorio_keys)
+
+        core_keeper = load_plugin(CORE_KEEPER_PLUGIN)
+        ck_keys = set(core_keeper.docker_env_keys())
+        self.assertEqual(core_keeper.steam_app_id, 1963720)
+        self.assertIn("WORLD_NAME", ck_keys)
+        self.assertIn("WORLD_INDEX", ck_keys)
+        self.assertIn("GAME_ID", ck_keys)
+        self.assertIn("SERVER_SLOTS", ck_keys)
+        self.assertNotIn("SERVER_PORT", ck_keys)
+        self.assertNotIn("JAVA_OPTS", ck_keys)
 
 
 class PluginTests(unittest.TestCase):

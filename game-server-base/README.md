@@ -49,22 +49,53 @@ A game add-on is a thin layer:
 
 ---
 
-## Fast path (copy Necesse)
+## Fast path (copy an existing game folder)
 
-1. Copy `necesse-dedicated-server/` → e.g. `mygame-dedicated-server/`.
-2. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
-3. Adjust the Dockerfile runtime for your binary.
-4. Update HA `config.yaml`: name, slug, ports, options/schema.
-5. Rewrite that add-on’s **short** `README.md` (HA Info), **spartan** `DOCS.md` (Documentation tab), and **`GUIDE.md`** (GitHub end-user guide with screenshot). Keep the repo root README as an ecosystem springboard, not a second copy of every game guide.
-6. After any supervisor change, from the repo root:
+Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flags, `stationeers-dedicated-server/` for Unity, `factorio-dedicated-server/` for a non-Steam HTTP package) → e.g. `mygame-dedicated-server/`. Then:
+
+1. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
+2. Adjust the Dockerfile runtime for your binary (Java, extra `.so`s, **Xvfb**, …). Game-only packages stay in that Dockerfile — not in `game-server-base`.
+3. Update HA `config.yaml`: name, slug, ports, options/schema. **Replace `icon.png` / `logo.png` immediately** (a folder copy keeps the previous game’s store art). See [App store images](#app-store-images).
+4. Rewrite that add-on’s **short** `README.md` (HA Info), **spartan** `DOCS.md` (Documentation tab), and **`GUIDE.md`** (GitHub end-user guide). Add a row to the repo root README games table.
+5. After any supervisor change, from the repo root:
 
    ```bash
    ./game-server-base/sync-into-addons.sh
    ```
 
-   Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/`. Never overwrites `games/*.yaml`. Not part of the Docker build. CI runs `./game-server-base/check-addon-sync.sh` so forgotten syncs fail the build.
+   Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/` (bytecode `__pycache__` is skipped). Never overwrites `games/*.yaml`. Not part of the Docker build. CI runs `./game-server-base/check-addon-sync.sh` so forgotten syncs fail the build. Running the unit tests does not dirty this check.
 
-7. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on Necesse’s.
+6. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on an existing game.
+
+**Do not copy `run.sh`’s `export SERVER_PORT=…` blindly.** That is required when HA publishes a container port the game must bind. It is wrong when the title joins through Steam relay / a Game ID and has no listen port (Core Keeper). Forcing `-port` there changes the dedicated server’s network mode.
+
+If the title needs something the supervisor does not have (virtual display, extra Steamworks redistributable, join codes, a second Steam app id), solve it in the **game layer** first (`Dockerfile`, `launch_wrapper.sh`, `haos_defaults.py`, docs). If you believe `game-server-base` itself must change, stop and confirm — this repo is deliberately small.
+
+---
+
+## App store images
+
+Home Assistant’s App store / Info UI uses two files in the **same folder as `config.yaml`** ([presentation docs](https://developers.home-assistant.io/docs/apps/presentation/)):
+
+| File | Where it shows | Rules |
+| --- | --- | --- |
+| `icon.png` | Store tile, app list, small chrome | PNG, **1×1 square**, 128×128 recommended |
+| `logo.png` | App Info header bar | PNG, ~**250×100** (wide rectangle). Other ratios work; this size matches the HA chrome. |
+
+Use the **game’s official store / Steam art**. Do not generate a new illustration.
+
+Steam (app id of the **client**, not the dedicated server) publishes the two shapes HA wants:
+
+| Steam asset | Typical URL | HA use |
+| --- | --- | --- |
+| Library capsule | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (600×900) | Square **icon**: crop a 1×1 from the **top** (title + key art stay in frame), scale to 128×128 PNG |
+| Store header | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/header_2x.jpg` (920×430) | Wide **logo**: scale-to-cover 250×100, crop from the **top** so the wordmark remains, PNG |
+
+Prefer the `_2x` objects when they exist. Convert JPEG → PNG; keep the original palette. Check the results at 128×128 / 250×100 — a center crop of a tall capsule often chops the title off; a top crop usually matches how the store presents the game.
+
+Non-Steam titles: the same idea from the developer’s store page (square box art / vertical capsule → icon; horizontal header / capsule → logo).
+
+`README.md` for HA Info must **not** embed these images (HA already shows `icon.png` / `logo.png` in the chrome). GitHub `GUIDE.md` may show an Ingress screenshot under `images/ingress-ui.png` once you have a real capture — do not leave a broken image link.
 
 ---
 
@@ -78,8 +109,8 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `steam_app_id` | SteamCMD app id (required unless `package_install` is set) |
 | `steam_branch` | Default SteamCMD branch (overridable by HA option `steam_branch`) |
 | `package_install` | Optional non-Steam HTTP archive install (`version_url`, `version_json_path`, `download_url`, `strip_components`). `version_json_path` may include `{release_channel}` (HA option `release_channel`, default `stable`) |
-| `executable` | argv to launch the server |
-| `install_marker` | File that means “install looks present” |
+| `executable` | argv to launch the server (may be a game-layer wrapper script) |
+| `install_marker` | File **or directory** under the install dir that means “install looks present” (`.exists()`, so a Unity `*_Data/` folder is fine when the binary name varies) |
 | `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
 | `argv_prefix` | Ordered tokens after the executable; `{option}` templates; empty → omitted |
 | `settings_flag` / `settings_map` / `fixed_settings` | Optional `-settings Key Value …` style block (Unity servers, etc.) |
@@ -122,9 +153,10 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
 ```bash
 PYTHONPATH=game-server-base python3 -m unittest discover -s game-server-base/tests -q
+python3 -m unittest discover -s tests -q
 ```
 
-After supervisor changes: sync → bump the game add-on version → rebuild/reinstall.
+CI runs both suites (plus `check-addon-sync.sh`). After supervisor changes: sync → bump **each** game add-on version → rebuild/reinstall.
 
 ---
 

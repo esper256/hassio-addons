@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.14
+
+- Sync shared supervisor: CLI option rendering keeps digit strings `0`/`1` (do not treat them as booleans)
+
 ## 1.0.13
 
 - Hero card messages match the server status: lowercase (“running”, “player last joined…”, “up to date”)

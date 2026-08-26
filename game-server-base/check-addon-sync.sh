@@ -21,9 +21,9 @@ for dest in "$ROOT"/*/; do
   fi
   if [[ -f "${dest}config.yaml" && -d "${dest}games" && -d "${dest}game_server" ]]; then
     found=$((found + 1))
-    if ! diff -qr "$SRC" "${dest}game_server" >/dev/null; then
+    if ! diff -qr -x '__pycache__' -x '*.pyc' "$SRC" "${dest}game_server" >/dev/null; then
       echo "OUT OF SYNC: ${dest}game_server" >&2
-      diff -qr "$SRC" "${dest}game_server" >&2 || true
+      diff -qr -x '__pycache__' -x '*.pyc' "$SRC" "${dest}game_server" >&2 || true
       echo "Run: ./game-server-base/sync-into-addons.sh" >&2
       fail=1
     else
