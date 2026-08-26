@@ -86,7 +86,7 @@ Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-for
 
 The dedicated server process is not a character. On a **new** world, the first player who joins becomes a full admin (privilege 2 in `Admins.json` under `-datapath` `/data/world`). From in-game, that person opens ESC → player list → star to grant others. Admins can kick/ban and reset the Game ID.
 
-That first-join race is easy to lose to a guest. **Admin Steam IDs** (comma-separated SteamID64, 17 digits starting with `7656119`) merges those accounts into `Admins.json` as privilege-2 admins **before** Unity starts, and does not wipe anyone starred in-game. Leave it blank to keep first-joiner behavior. Steam only — Epic / Xbox / GOG clients have no SteamID in this file.
+That first-join race is easy to lose to a guest. **Admin Steam IDs** (comma-separated SteamID64 — the 17-digit number in a Steam profile URL) merges those accounts into `Admins.json` as privilege-2 admins **before** Unity starts, and does not wipe anyone starred in-game. Leave it blank to keep first-joiner behavior. Steam only — Epic / Xbox / GOG clients have no SteamID in this file.
 
 Find a SteamID64 from the Steam profile URL or a lookup site; it is not the friend-code shown in Core Keeper.
 

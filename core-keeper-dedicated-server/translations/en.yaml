@@ -19,7 +19,7 @@ configuration:
     description: "Password for Direct Connect (Join Game Via IP) only. Game ID join does not use it. Leave blank for a stable per-install password. 1–28 characters."
   admin_steam_ids:
     name: Admin Steam IDs
-    description: "Optional comma-separated SteamID64 list (17 digits, starts with 7656119). Merged into Admins.json as full admins (privilege 2) so a guest cannot steal first-join admin. Blank = first player to join a new world becomes admin; in-game ESC star still works. Does not remove admins granted in-game. Steam only — Epic/Xbox/GOG have no SteamID here."
+    description: "Optional comma-separated SteamID64 list (the 17-digit number in a Steam profile URL). Merged into Admins.json as full admins (privilege 2) so a guest cannot steal first-join admin. Blank = first player to join a new world becomes admin; in-game ESC star still works. Does not remove admins granted in-game. Steam only — Epic/Xbox/GOG have no SteamID here."
   server_slots:
     name: Max players
     description: Maximum concurrent players (Core Keeper cooperative play is designed around a small group; default 8).
