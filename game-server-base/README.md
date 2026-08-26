@@ -67,7 +67,7 @@ Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flag
 
 6. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on an existing game.
 
-**Do not copy `run.sh`’s `export SERVER_PORT=…` blindly.** That is required when HA publishes a container port the game must bind. It is wrong when the title joins through Steam relay / a Game ID and has no listen port (Core Keeper). Forcing `-port` there changes the dedicated server’s network mode.
+**Copy `run.sh`’s `export SERVER_PORT=…` when HA publishes a container port the game must bind** (Necesse, Factorio, Stationeers, Core Keeper Direct Connect). The Network UI remaps the *host* port; the process still has to listen on the container port in `config.yaml`. Do **not** set `host_network: true`. Titles that join only through a relay with no listen port can omit it — Core Keeper is not that case: Direct Connect (`-port`) is the default, and Steam Game ID join still works alongside it.
 
 If the title needs something the supervisor does not have (virtual display, extra Steamworks redistributable, join codes, a second Steam app id), solve it in the **game layer** first (`Dockerfile`, `launch_wrapper.sh`, `haos_defaults.py`, docs). If you believe `game-server-base` itself must change, stop and confirm — this repo is deliberately small.
 
@@ -170,7 +170,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `env_options` | Extra UPPER_SNAKE Docker/compose env vars (optional). Keys from `arg_map` / `settings_map` / `{option}` templates are accepted automatically |
 | `data_dir` / `logs_dir` / `working_dir` | Usually under `/data/...` |
 | `stop_stdin_commands` | Optional graceful stop |
-| `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). |
+| `world_save` | Active world artifact: `strategy: named_path` + `paths` templates. Drives status UI, upload restore, and **by-kind backups** (file = copy as-is; folder = zip). Backup archives are named with that file/folder, retention is grouped per name, and restore refuses a snapshot from a different world until the active name/slot matches. |
 | `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
 | `log_patterns` | Active regexes (ready, players, version, `players_empty`, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
@@ -194,7 +194,7 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 - HA `/data/options.json` (+ env overrides)
 - SteamCMD install/update with a rate gate (serialize, spacing, backoff)
 - Process supervision, crash restarts, privilege drop to `gameserver`
-- By-kind world backups + retention profiles; Ingress restore / NEW WORLD / upload
+- By-kind world backups + retention profiles (per world name/slot); Ingress restore / NEW WORLD / upload
 - HA Core notifications + `/data/supervisor/status.json`
 - Ingress status HTTP and log capture toolkit
 - Mirrored streams on the HA Logs tab (`[game]`, `[game-log]`, `[steamcmd]`)

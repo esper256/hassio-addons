@@ -23,6 +23,10 @@ export INSTALL_DIR="${INSTALL_DIR:-/data/game}"
 export DATA_DIR="${DATA_DIR:-/data/world}"
 # HA Ingress default port; override for plain Docker if needed.
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
+# HA Network can remap the *host* port; the container side is fixed at 7778
+# in config.yaml. Passing -port enables Direct Connect (default). Steam Game
+# ID join still works. (We do not use host_network.)
+export SERVER_PORT="${SERVER_PORT:-7778}"
 
 mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game /data/steam-home
 # SteamCMD reads HOME for its log directory; keep it on the persistent volume.
@@ -35,12 +39,15 @@ else
   echo "No options.json at ${OPTIONS_FILE}; using environment defaults"
 fi
 
-# Blank HA game_id → stable per-install Game ID (Steam Datagram Relay join code).
-# Do not export SERVER_PORT: setting -port switches Core Keeper into Direct
-# Connect and requires forwarded UDP ports. Default is Game ID join.
-RESOLVED_GAME_ID="$(python3 /opt/haos_defaults.py)"
+# Blank HA game_id / server_password → stable per-install values (Game ID +
+# Direct Connect join password). Passing -port is required for Direct Connect.
+RESOLVED_GAME_ID="$(python3 /opt/haos_defaults.py game-id)"
+RESOLVED_SERVER_PASSWORD="$(python3 /opt/haos_defaults.py password)"
 export GAME_ID="${RESOLVED_GAME_ID}"
+export SERVER_PASSWORD="${RESOLVED_SERVER_PASSWORD}"
 echo "Game ID: ${GAME_ID}"
-echo "Players join in Core Keeper → Multiplayer → Join Game (not via IP:port)."
+echo "Direct Connect: UDP ${SERVER_PORT} (IP:port + join password; Steam Game ID still works)"
+echo "Join password: ${SERVER_PASSWORD}"
+echo "Players join in Core Keeper → Multiplayer → Join Game (Game ID) or Join Game Via IP."
 
 exec python3 -m game_server --plugin "${GAME_PLUGIN}"

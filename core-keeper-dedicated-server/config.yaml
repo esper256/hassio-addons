@@ -19,15 +19,22 @@ ingress_entry: /
 ingress_stream: true
 panel_icon: mdi:pickaxe
 panel_title: Core Keeper
-# Default networking is Steam Datagram Relay: clients join with the Game ID,
-# not an IP:port. No UDP game port is published (setting -port would switch
-# the dedicated server into Direct Connect).
+# HA format is "container-port/protocol: host-port". Container port is fixed
+# at 7778 (Pugstorm Direct Connect example). The Network UI only changes the
+# host port. Steam Game ID join still works alongside IP:port.
+ports:
+  7778/udp: 7778
+ports_description:
+  7778/udp: Game port for Direct Connect (UDP). Leave at 7778 unless that port is already taken. Steam players can still join with the Game ID.
+# Direct Connect is the default (IP:port + password). Game ID join remains.
+# There is no public server-browser listing.
 options:
   world_name: "FamilyCore"
   world_index: 0
   world_seed: ""
   world_mode: 0
   game_id: ""
+  server_password: ""
   server_slots: 8
   steam_branch: public
   update_on_start: true
@@ -49,6 +56,7 @@ schema:
   world_seed: str?
   world_mode: list(0|1|2|4)
   game_id: str?
+  server_password: password
   server_slots: int(1,100)
   steam_branch: list(public|beta)
   update_on_start: bool

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from .backup import EMPTY_WORLD
+from .backup import EMPTY_WORLD, backup_generation_key
 from .disk import format_bytes
 from .lifecycle import LIFECYCLE_HEALTHY
 from .log_bridge import strip_ansi
@@ -532,7 +532,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <h2>World backups</h2>
     <p class="sub">
-      Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
+      Restoring stops the server, makes a world backup, then restores onto the active world shown above. Anyone online is disconnected. Switch world slot/name before restoring a backup from another world.
     </p>
     <div class="restore-block">
       <div class="section-label">Restore from backup</div>
@@ -1593,7 +1593,10 @@ def _format_disk(status: dict[str, Any]) -> tuple[str, str, str]:
 def _format_backup_options(status: dict[str, Any]) -> str:
     info = status.get("backups") or {}
     archives = info.get("restorable") or []
-    options: list[str] = []
+    world_info = status.get("world_save") or {}
+    active_label = str(world_info.get("label") or "").strip()
+    grouped: dict[str, list[str]] = {}
+    group_order: list[str] = []
     if isinstance(archives, list):
         for item in archives:
             if not isinstance(item, dict):
@@ -1604,12 +1607,35 @@ def _format_backup_options(status: dict[str, Any]) -> str:
             kind = str(item.get("kind") or "backup")
             mtime = item.get("mtime")
             age = _fmt_ago(mtime) if mtime else "unknown age"
-            label = f"{name} ({kind}, {age})"
-            options.append(
-                f'<option value="{_html_escape(name)}">{_html_escape(label)}</option>'
+            generation = str(
+                item.get("generation") or backup_generation_key(name) or ""
+            ).strip()
+            option = (
+                f'<option value="{_html_escape(name)}">'
+                f"{_html_escape(f'{name} ({kind}, {age})')}</option>"
             )
-    if not options:
+            if generation not in grouped:
+                grouped[generation] = []
+                group_order.append(generation)
+            grouped[generation].append(option)
+    options: list[str] = []
+    if not grouped:
         options.append('<option value="">No backups yet</option>')
+    elif any(grouped):
+        if active_label and active_label in grouped:
+            group_order = [active_label] + [
+                key for key in group_order if key != active_label
+            ]
+        for generation in group_order:
+            heading = generation or "Other worlds"
+            if generation and generation == active_label:
+                heading = f"{generation} (active)"
+            options.append(f'<optgroup label="{_html_escape(heading)}">')
+            options.extend(grouped[generation])
+            options.append("</optgroup>")
+    else:
+        for generation in group_order:
+            options.extend(grouped[generation])
     options.append(
         f'<option value="{_html_escape(EMPTY_WORLD)}">NEW WORLD</option>'
     )

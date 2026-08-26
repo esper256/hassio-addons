@@ -45,7 +45,9 @@ class CoreKeeperPluginTests(unittest.TestCase):
             [r"Game version:\s+(?P<version>\S+)"],
         )
         self.assertIn("ready", plugin.log_pattern_candidates)
-        self.assertNotIn("server_port", plugin.arg_map)
+        self.assertIn("server_port", plugin.arg_map)
+        self.assertEqual(plugin.arg_map["server_port"], "-port")
+        self.assertEqual(plugin.arg_map["server_password"], "-password")
         self.assertIn("-datapath", plugin.argv_prefix)
         self.assertIn("{data_dir}", plugin.argv_prefix)
 
@@ -88,6 +90,8 @@ class CoreKeeperPluginTests(unittest.TestCase):
                 "world_mode": "0",
                 "world_seed": "",
                 "game_id": "abcdeFGHIJ12345KLMN",
+                "server_password": "JoinPass123",
+                "server_port": "7778",
                 "server_slots": "8",
                 "data_dir": "/data/world",
                 "logs_dir": "/data/logs",
@@ -99,16 +103,18 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-world") + 1], "0")
         self.assertEqual(cmd[cmd.index("-worldmode") + 1], "0")
         self.assertEqual(cmd[cmd.index("-gameid") + 1], "abcdeFGHIJ12345KLMN")
+        self.assertEqual(cmd[cmd.index("-password") + 1], "JoinPass123")
+        self.assertEqual(cmd[cmd.index("-port") + 1], "7778")
         self.assertEqual(cmd[cmd.index("-maxplayers") + 1], "8")
-        self.assertNotIn("-port", cmd)
 
-    def test_ha_config_does_not_publish_a_game_port(self) -> None:
+    def test_ha_config_publishes_direct_connect_port(self) -> None:
         import yaml
 
         data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-        self.assertNotIn("ports", data)
+        self.assertEqual(data["ports"], {"7778/udp": 7778})
         self.assertFalse(data.get("host_network"))
         self.assertEqual(data["schema"]["world_index"], "int(0,29)")
+        self.assertEqual(data["schema"]["server_password"], "password")
         self.assertEqual(data["slug"], "core_keeper_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
 
@@ -220,6 +226,52 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
                 environ={},
             )
             self.assertEqual(resolved, "FromConfigJoinCode1")
+
+    def test_default_password_stable_and_distinct_from_game_id(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            first = mod.default_server_password(state_dir=state)
+            second = mod.default_server_password(state_dir=state)
+            game_id = mod.default_game_id(state_dir=state)
+            self.assertEqual(first, second)
+            self.assertEqual(len(first), 16)
+            self.assertNotEqual(first, game_id)
+            self.assertTrue(mod.is_valid_server_password(first))
+            self.assertFalse(mod.is_valid_server_password(""))
+            self.assertFalse(mod.is_valid_server_password("x" * 29))
+
+    def test_resolve_password_prefers_options_then_env(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            options = root / "options.json"
+            options.write_text(
+                '{"server_password": "PinnedJoinPassword1"}', encoding="utf-8"
+            )
+            self.assertEqual(
+                mod.resolve_server_password(
+                    options_file=options,
+                    state_dir=root / "state",
+                    environ={},
+                ),
+                "PinnedJoinPassword1",
+            )
+            self.assertEqual(
+                mod.resolve_server_password(
+                    options_file=options,
+                    state_dir=root / "state",
+                    environ={"SERVER_PASSWORD": "FromEnvPassword12"},
+                ),
+                "FromEnvPassword12",
+            )
+            options.write_text('{"server_password": ""}', encoding="utf-8")
+            generated = mod.resolve_server_password(
+                options_file=options,
+                state_dir=root / "state",
+                environ={},
+            )
+            self.assertEqual(len(generated), 16)
 
 
 if __name__ == "__main__":

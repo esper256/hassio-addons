@@ -44,7 +44,7 @@ LOG = logging.getLogger("game_server.backup")
 
 # Three archive families under backup_dir — each pruned by its own rule:
 #   backup-*       scheduled/manual rolling history (generational retention profile)
-#   pre-update-*   single snapshot from the latest game-code update
+#   pre-update-*   newest snapshot per world label from a game-code update
 #   pre-restore-*  safety copies before restore/empty-world (age window)
 ROTATION_GLOB = "backup-*"
 PRE_UPDATE_GLOB = "pre-update-*"
@@ -53,6 +53,15 @@ PRE_RESTORE_GLOB = "pre-restore-*"
 # folder worlds. Legacy snapshots end in .tar.gz.
 _ARCHIVE_NAME_RE = re.compile(
     r"^(backup|pre-update|pre-restore)-[A-Za-z0-9._-]+$"
+)
+# backup-20260826T170225Z-<rest>
+_STAMPED_ARCHIVE_RE = re.compile(
+    r"^(?:backup|pre-update|pre-restore)-\d{8}T\d{6}Z-(.+)$"
+)
+# Legacy unlabeled names: reason + suffix only (schedule.tar.gz, schedule.zip).
+_UNLABELED_REASON_RE = re.compile(
+    r"^(schedule|scheduled|manual|safety|pre-update)(?:\.[A-Za-z0-9.]+)?$",
+    re.IGNORECASE,
 )
 # Legacy pre-update archives used the rotation prefix with a -pre-update reason.
 _LEGACY_PRE_UPDATE_RE = re.compile(r"^backup-.+-pre-update(\.tar\.gz)?$")
@@ -121,6 +130,34 @@ RETENTION_PROFILES: dict[str, RetentionPolicy] = {
         profile="extended",
     ),
 }
+
+
+def backup_generation_key(name: str) -> str:
+    """World identity used to group generational retention.
+
+    Labeled archives (``backup-…-0.world.gzip``) keep separate history so
+    switching world slots or names does not prune the other world's snapshots.
+    Unlabeled / legacy names share one pool.
+    """
+
+    match = _STAMPED_ARCHIVE_RE.match(name)
+    if not match:
+        return ""
+    rest = match.group(1)
+    if _UNLABELED_REASON_RE.match(rest):
+        return ""
+    if "-" not in rest:
+        return rest
+    head, tail = rest.split("-", 1)
+    if _UNLABELED_REASON_RE.fullmatch(head):
+        return tail
+    return rest
+
+
+def _safe_world_label(label: str | None) -> str:
+    text = str(label or "").strip()
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("._")
+    return safe
 
 
 def retention_from_profile(name: str | None) -> RetentionPolicy:
@@ -364,10 +401,19 @@ class BackupManager:
         reason: str,
         outside_rotation: bool,
         suffix: str,
+        world_label: str | None = None,
     ) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_reason = re.sub(r"[^A-Za-z0-9._-]+", "-", reason).strip("-") or "manual"
-        if outside_rotation:
+        safe_label = _safe_world_label(world_label)
+        if safe_label:
+            if outside_rotation:
+                name = f"pre-restore-{stamp}-{safe_reason}-{safe_label}"
+            elif reason == "pre-update":
+                name = f"pre-update-{stamp}-{safe_label}"
+            else:
+                name = f"backup-{stamp}-{safe_reason}-{safe_label}"
+        elif outside_rotation:
             name = f"pre-restore-{stamp}-{safe_reason}{suffix}"
         elif reason == "pre-update":
             name = f"pre-update-{stamp}{suffix}"
@@ -388,8 +434,8 @@ class BackupManager:
         ``outside_rotation=True`` writes a ``pre-restore-*`` safety copy
         (age-pruned via the retention profile's ``pre_restore_keep_days``).
 
-        ``reason="pre-update"`` writes ``pre-update-*`` (only the newest of that
-        family is kept).
+        ``reason="pre-update"`` writes ``pre-update-*`` (newest per world label
+        is kept).
 
         ``allow_tiny=True`` skips ``min_source_bytes`` (required for pre-wipe
         safety copies — a small world is still worth keeping).
@@ -434,8 +480,16 @@ class BackupManager:
 
         if subject.kind in {KIND_FILE, KIND_DIRECTORY} and subject.path is not None:
             suffix = backup_name_suffix(subject.path, subject.kind)
+            world_label = None
+            if subject.active is not None and subject.active.label:
+                world_label = str(subject.active.label)
+            elif subject.named:
+                world_label = subject.path.name
             archive = self._archive_dest(
-                reason=reason, outside_rotation=outside_rotation, suffix=suffix
+                reason=reason,
+                outside_rotation=outside_rotation,
+                suffix=suffix,
+                world_label=world_label,
             )
             LOG.info(
                 "Creating by-kind backup %s from %s (kind=%s)",
@@ -537,16 +591,25 @@ class BackupManager:
         )
         # Legacy pre-update files are managed by the pre-update keeper, not here.
         archives = [p for p in archives if not _LEGACY_PRE_UPDATE_RE.match(p.name)]
-        keep = select_generational_keepers(archives, self.retention)
+        groups: dict[str, list[Path]] = {}
+        for archive in archives:
+            groups.setdefault(backup_generation_key(archive.name), []).append(archive)
+        keep: set[Path] = set()
+        for group in groups.values():
+            keep |= select_generational_keepers(group, self.retention)
         self._unlink_except(archives, keep, label="scheduled retention")
 
     def _prune_pre_update_keep_newest(self) -> None:
         archives = self.list_pre_update_archives()
         if len(archives) <= 1:
             return
-        # Newest last from list_*; keep only the last one.
-        newest = archives[-1]
-        self._unlink_except(archives, {newest}, label="pre-update keep-one")
+        # Newest last from list_*; keep one newest per world label so switching
+        # slots does not discard the other world's pre-update snapshot.
+        groups: dict[str, list[Path]] = {}
+        for archive in archives:
+            groups.setdefault(backup_generation_key(archive.name), []).append(archive)
+        keep = {group[-1] for group in groups.values()}
+        self._unlink_except(archives, keep, label="pre-update keep-one")
 
     def _prune_pre_restore_by_age(self) -> None:
         archives = self.list_pre_restore_archives()
@@ -618,6 +681,7 @@ class BackupManager:
                         "kind": kind,
                         "bytes": st.st_size,
                         "mtime": st.st_mtime,
+                        "generation": backup_generation_key(path.name),
                     }
                 )
         items.sort(key=lambda item: float(item["mtime"]), reverse=True)
@@ -797,6 +861,13 @@ class BackupManager:
             and active.path
             and active.scope in _NAMED_SCOPES
         ):
+            backup_label = backup_generation_key(path.name)
+            current_label = _safe_world_label(active.label)
+            if backup_label and current_label and backup_label != current_label:
+                raise RuntimeError(
+                    f"backup {path.name} is for {backup_label}; the active world "
+                    f"is {current_label}. Switch World slot/name to match before restoring."
+                )
             LOG.info(
                 "Restoring by-kind backup %s onto %s (kind=%s)",
                 path.name,

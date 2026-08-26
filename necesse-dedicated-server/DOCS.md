@@ -34,7 +34,7 @@ The Info **Ingress** chip that only explains ingress is not the UI.
 
 ## Backups and restore
 
-Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
+Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. Switch world name before restoring a backup from another world.
 
 ## Logs
 

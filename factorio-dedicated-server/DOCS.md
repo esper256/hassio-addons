@@ -55,7 +55,7 @@ To appear in Factorio’s public browser: turn **Public server listing** on, the
 
 ## Backups and restore
 
-Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected. After **NEW WORLD**, the next start creates a fresh map.
+Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. After **NEW WORLD**, the next start creates a fresh map.
 
 ## Logs
 

@@ -36,8 +36,9 @@ env:
   LD_LIBRARY_PATH: "/opt/steamcmd/linux64:/data/game/linux64:/data/game"
 bool_style: true_false
 ready_timeout_seconds: 300
-# -port is intentionally omitted. Setting it switches Core Keeper from Steam
-# Datagram Relay (Game ID join, no forwarded ports) into Direct Connect.
+# Direct Connect is the default (lower lag than Steam Datagram Relay alone).
+# run.sh sets SERVER_PORT=7778 so -port matches the HA container port. Steam
+# Game ID join still works alongside IP:port.
 argv_prefix:
   - -batchmode
   - -logfile
@@ -51,6 +52,8 @@ arg_map:
   world_mode: -worldmode
   game_id: -gameid
   server_slots: -maxplayers
+  server_port: -port
+  server_password: -password
 # Cavern teal / lantern amber Ingress theme (from official store art).
 ui_theme:
   bg: "#0c1618"

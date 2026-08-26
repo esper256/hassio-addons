@@ -50,7 +50,7 @@ Ingress status page (no extra host port to publish):
 - World save download, backups, restore, and upload
 - Collapsed **Troubleshooting** (log captures and JSON API)
 
-Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected. After **NEW WORLD**, the next start creates a fresh map.
+Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. After **NEW WORLD**, the next start creates a fresh map.
 
 ---
 

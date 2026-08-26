@@ -42,7 +42,7 @@ Common **world / map** values for new saves: `Mars2` (default), `Lunar`, `Europa
 
 ## Backups and restore
 
-Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
+Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NEW WORLD**, or upload a save. Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected.
 
 ## Logs
 

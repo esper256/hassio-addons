@@ -3,11 +3,12 @@
 Kept outside the shared ``game_server`` package so title-specific naming
 never leaks into ``game-server-base``.
 
-Core Keeper clients join with a **Game ID** (Steam Datagram Relay), not an
-IP:port. An empty or invalid ``-gameid`` makes the dedicated server mint a
-new ID on start, which would change the join code and strand players. This
-helper pins a stable per-install ID (or an explicit HA option) so friends
-can keep using the same code.
+Core Keeper clients join with a **Game ID** (Steam Datagram Relay) and,
+when Direct Connect is on (this app's default), also by IP:port + password.
+An empty or invalid ``-gameid`` makes the dedicated server mint a new ID on
+start, which would change the join code and strand players. An omitted
+``-password`` under Direct Connect would mint a new IP-join password. This
+helper pins stable per-install values so friends can keep using the same codes.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ _GAME_ID_ALPHABET = "abcdefghijkmnpqrstuvwzABCDEFGHJKLMNPQRSTUVWXZ123456789"
 _GAME_ID_LENGTH = 20
 _GAME_ID_MIN = 15
 _GAME_ID_MAX = 28
+_PASSWORD_LENGTH = 16
+_PASSWORD_MAX = 28
 
 
 def is_valid_game_id(value: object) -> bool:
@@ -183,8 +186,84 @@ def resolve_game_id(
     return default_game_id(state_dir=state_dir)
 
 
-def main() -> int:
-    print(resolve_game_id())
+def is_valid_server_password(value: object) -> bool:
+    """True when Direct Connect ``-password`` is within Pugstorm's 1–28 limit."""
+
+    text = str(value or "").strip()
+    return 1 <= len(text) <= _PASSWORD_MAX
+
+
+def default_server_password(
+    *,
+    state_dir: str | Path | None = None,
+) -> str:
+    """Stable per-install Direct Connect password from the same install salt."""
+
+    root = Path(state_dir or os.environ.get("STATE_DIR") or "/data/supervisor")
+    salt = ensure_instance_salt(root / INSTANCE_SALT_NAME)
+    digest = hashlib.sha256(f"core-keeper-password|{salt}".encode("utf-8")).digest()
+    alphabet = _GAME_ID_ALPHABET
+    chars: list[str] = []
+    material = digest
+    n = 0
+    while len(chars) < _PASSWORD_LENGTH:
+        if n >= len(material):
+            material += hashlib.sha256(digest + n.to_bytes(4, "big")).digest()
+        chars.append(alphabet[material[n] % len(alphabet)])
+        n += 1
+    return "".join(chars)
+
+
+def resolve_server_password(
+    *,
+    options_file: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """Prefer an explicit Direct Connect password; otherwise generate a stable one."""
+
+    env = environ if environ is not None else os.environ
+    from_env = str(env.get("SERVER_PASSWORD") or "").strip()
+    if from_env:
+        if is_valid_server_password(from_env):
+            return from_env
+        _warn(
+            "Ignoring invalid Core Keeper join password from SERVER_PASSWORD "
+            f"({len(from_env)} chars; max {_PASSWORD_MAX})."
+        )
+
+    path = Path(
+        options_file
+        or env.get("OPTIONS_FILE")
+        or env.get("HASSIO_OPTIONS_FILE")
+        or "/data/options.json"
+    )
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            from_options = str(data.get("server_password") or "").strip()
+            if from_options:
+                if is_valid_server_password(from_options):
+                    return from_options
+                _warn(
+                    "Ignoring invalid Core Keeper join password from "
+                    f"options.server_password ({len(from_options)} chars; "
+                    f"max {_PASSWORD_MAX})."
+                )
+
+    return default_server_password(state_dir=state_dir)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    what = (args[0] if args else "game-id").strip().lower().replace("_", "-")
+    if what in {"password", "server-password"}:
+        print(resolve_server_password())
+    else:
+        print(resolve_game_id())
     return 0
 
 

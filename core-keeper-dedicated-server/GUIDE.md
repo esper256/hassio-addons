@@ -12,9 +12,9 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
 ## What you get
 
 - SteamCMD install and updates (`public` or `beta` branch)
-- **Private by default:** Game ID join via Steam Datagram Relay. There is no public server browser listing and no published UDP game port. Anyone who should play needs the Game ID (treat it like a password)
+- **Direct Connect by default** (UDP **7778**): friends join by IP:port + password (lower lag than Steam Datagram Relay alone). Steam **Game ID** join still works. There is no public server-browser listing
 - Player-aware update restarts (join/leave detection once patterns are promoted)
-- Several world **slots** on one install (`0.world.gzip` …); Open Web UI backs up the active slot
+- Several world **slots** on one install (`0.world.gzip` …); Open Web UI follows the active slot; backups keep a separate history per slot
 - Generational world backups, plus pre-update and pre-restore safety copies
 - **Open Web UI**: status, players, game version / updates, world download, restore, upload, troubleshooting
 - HA notifications for crash / update failure / version mismatch
@@ -33,11 +33,12 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
    ```
 
 2. Install **Core Keeper Dedicated Server**.
-3. Open the app → **Documentation** tab for configuration, Game ID join, and Open Web UI notes.
-4. Set at least **World name**. Leave **Game ID** blank. Leave the default **World slot** `0` unless you already keep several caverns. The server stays **private** (invite-only Game ID) — there is nothing to turn off for listing.
+3. Open the app → **Documentation** tab for configuration, ports, and Open Web UI notes.
+4. Set at least **World name**. Leave **Game ID** and **Join password** blank unless you already have values to pin. Leave the default **World slot** `0` unless you already keep several caverns. Nothing is listed on a public browser.
 5. **Start**. First Steam download is ~650 MB.
-6. Copy the **Game ID** from **Logs** (`Game ID: …`). Do not post it in a public Discord/forum if you want the cavern private.
-7. In Core Keeper → **Multiplayer** → **Join Game**, paste that Game ID.
+6. Forward **UDP 7778** on your router to the Home Assistant host (change the Network port in HA only if 7778 is already taken).
+7. Copy the **Game ID** and **Join password** from **Logs**. Do not post them in a public Discord/forum if you want the cavern private.
+8. In Core Keeper → **Multiplayer** → **Join Game Via IP** (host IP and port **7778**, plus the join password), or **Join Game** with the Game ID.
 
 With the app started, use **Open Web UI** on the Info tab (optional: **Show in sidebar**).
 
@@ -48,32 +49,42 @@ With the app started, use **Open Web UI** on the Info tab (optional: **Show in s
 Ingress status page (no extra host port to publish):
 
 - Server / players / game version / update
-- World save download, backups, restore, and upload
+- World save download, backups, restore, and upload (the **active** slot)
 - Collapsed **Troubleshooting** (log captures and JSON API)
 
-Restoring stops the server, makes a world backup, then restores the selected backup. Anyone online is disconnected.
+Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. Switch **World slot** before restoring a backup from another slot.
 
 ---
 
-## Joining (Game ID, not IP)
+## Joining (Direct Connect + Game ID)
 
-Core Keeper’s dedicated server, with **no `-port`**, uses **Steam Datagram Relay**. Players paste a Game ID in-game. That is the default this app ships: **invite-only**, not listed on a public browser, no game UDP port on the router.
+Direct Connect is the default: the dedicated server listens on **UDP 7778** (`-port`) with a join **password**. That is the lower-lag path (no Valve relay). Steam users can still paste the **Game ID** (Steam Datagram Relay). Cross-play IP join uses the password; the Game ID remains the secret for relay join.
 
-The Game ID is stable for this install when **Game ID** is left blank (generated once from a salt on `/data/supervisor`, reused on restart, recovered from `GameID.txt` / `ServerConfig.json` if that salt is missing). Pin one only if you already have a code you want to keep. An invalid pin is ignored rather than passed through (Pugstorm would otherwise mint a **new random** ID and friends would bounce).
+The server is still **invite-only** in the same sense as the other games here: password-protected Direct Connect, Game ID for relay, **no public server-browser listing**. Direct Connect does share the host IP with players you give the address to.
 
-Wiping the whole add-on data disk is a new install and gets a new Game ID. Restoring a Home Assistant backup of this app restores the salt (and the world), so the join code stays put.
+Leave **Game ID** and **Join password** blank for stable per-install values (generated once from a salt on `/data/supervisor`, reused on restart). Game ID is also recovered from `GameID.txt` / `ServerConfig.json` if that salt is missing. Pin values only if you already have codes you want to keep. An invalid pin is ignored rather than passed through (Pugstorm would otherwise mint a **new random** ID or password and friends would bounce).
 
-### Lag and Direct Connect
+Wiping the whole add-on data disk is a new install and gets a new Game ID and join password. Restoring a Home Assistant backup of this app restores the salt (and the world), so the codes stay put.
 
-Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-forwarding and keeps the host IP off the wire, and it can add latency — the same thing people notice on some Steam-hosted sessions.
-
-Pugstorm’s other mode is **Direct Connect**: pass `-port`, forward that UDP port, and players can join by IP (cross-play) while Steam users can still use the Game ID. IPs are then shared with players; a `-password` applies only to IP join (the Game ID remains the secret for relay join). This app **does not** turn that on. There is no SDR quality slider in the dedicated server. Direct Connect is the official way to cut relay lag, and it is a different network/privacy model (published UDP port, HA `ports:`, IP sharing). Default stays private Game ID join.
+Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-forwarding and keeps the host IP off the wire, and it can add latency. There is no SDR quality slider on the dedicated server. To use relay-only (no published game port), you would have to drop `-port` — this app does not do that.
 
 ---
 
 ## World slots
 
-The dedicated server keeps many caverns in one datapath: `worlds/0.world.gzip`, `worlds/1.world.gzip`, … (official index **0–29**). **World slot** (`-world`) selects which file this process hosts. Open Web UI backups/download/upload follow the **active** slot. Switching slot does not delete the previous file; it just hosts a different one. Seed and world mode apply only when that slot’s file does not exist yet.
+The dedicated server keeps many caverns in one datapath: `worlds/0.world.gzip`, `worlds/1.world.gzip`, … (official index **0–29**). **World slot** (`-world`) selects which file this process hosts. Switching slot does **not** delete the previous file; it just hosts a different one. Seed and world mode apply only when that slot’s file does not exist yet.
+
+Open Web UI follows the **active** slot:
+
+| Action | What happens when you bounce slots |
+| --- | --- |
+| World card / download / upload | Only the active file (`0.world.gzip`, …). Other slots stay on disk under `/data/world/worlds/` |
+| **NEW WORLD** | Clears the **active** slot only |
+| Scheduled / manual backups | Named with that file (`…-0.world.gzip`). Retention (daily → weekly → monthly) is **per slot**, so slot 3’s history is not thinned when you are hosting slot 0 |
+| Pre-update snapshot | Newest **per slot** is kept |
+| Restore dropdown | Lists every archive, grouped by world file; the active slot is first. Restoring a backup from another slot is **refused** until you switch **World slot** to match |
+
+Bouncing back and forth is safe: each slot is a separate file, and backup retention no longer shares one global pool that could prune the cavern you are not hosting.
 
 ---
 
@@ -83,7 +94,7 @@ The dedicated server keeps many caverns in one datapath: `worlds/0.world.gzip`, 
 docker compose -f core-keeper-dedicated-server/docker-compose.yml up -d --build
 ```
 
-Set `WORLD_NAME` in the compose environment. Leave `GAME_ID` unset for a stable generated join code. Status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`. No UDP game port is mapped.
+Set `WORLD_NAME` in the compose environment. Leave `GAME_ID` / `SERVER_PASSWORD` unset for stable generated values. UDP **7778** for Direct Connect; status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
 
 First SteamCMD download is ~650 MB. If Logs show `Connecting anonymously to Steam Public... Retrying... FAILED (No Connection)` while HTTPS to Steam’s CDN works, the Docker **bridge** cannot reach Steam connection managers. That is an environment NAT issue, not this app. See [Local Compose](../game-server-base/README.md#local-compose). Do **not** turn on HA `host_network`.
 
@@ -95,7 +106,7 @@ First SteamCMD download is ~650 MB. If Logs show `Connecting anonymously to St
 /data/game/          # Steam install (CoreKeeperServer, GameInfo.txt, GameID.txt)
 /data/world/         # -datapath (ServerConfig.json, worlds/<n>.world.gzip)
 /data/logs/          # Unity -logfile (server.log)
-/data/backups/       # world backups
+/data/backups/       # world backups (names include the slot file)
 /data/supervisor/    # status.json, steam gate, log captures, instance salt
 ```
 

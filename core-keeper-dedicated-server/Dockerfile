@@ -83,6 +83,6 @@ LABEL \
   org.opencontainers.image.source="https://github.com/esper256/hassio-addons"
 
 # 8099 = HA Ingress convention (not published on the host by default).
-# Game traffic uses Steam Datagram Relay (Game ID join) — no UDP game port.
-EXPOSE 8099
+# 7778/udp = Direct Connect game port (container side; HA Network remaps host).
+EXPOSE 8099 7778/udp
 ENTRYPOINT ["/run.sh"]

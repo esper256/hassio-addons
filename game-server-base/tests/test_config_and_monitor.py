@@ -20,6 +20,7 @@ from game_server.backup import (  # noqa: E402
     EMPTY_WORLD,
     BackupManager,
     RetentionPolicy,
+    backup_generation_key,
     retention_from_profile,
     select_generational_keepers,
 )
@@ -211,7 +212,8 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("WORLD_INDEX", ck_keys)
         self.assertIn("GAME_ID", ck_keys)
         self.assertIn("SERVER_SLOTS", ck_keys)
-        self.assertNotIn("SERVER_PORT", ck_keys)
+        self.assertIn("SERVER_PORT", ck_keys)
+        self.assertIn("SERVER_PASSWORD", ck_keys)
         self.assertNotIn("JAVA_OPTS", ck_keys)
 
 
@@ -1080,6 +1082,35 @@ class BackupRetentionTests(unittest.TestCase):
             self.assertIn("NEW WORLD", options)
             self.assertIn(pre_update.name, options)
             self.assertIn(pre_restore.name, options)
+            self.assertNotIn("<optgroup", options)
+            labeled = _format_backup_options(
+                {
+                    "world_save": {"label": "0.world.gzip"},
+                    "backups": {
+                        "restorable": [
+                            {
+                                "name": "backup-20260826T170225Z-schedule-0.world.gzip",
+                                "kind": "backup",
+                                "mtime": 1_700_100_000,
+                                "generation": "0.world.gzip",
+                            },
+                            {
+                                "name": "backup-20260826T180225Z-schedule-3.world.gzip",
+                                "kind": "backup",
+                                "mtime": 1_700_200_000,
+                                "generation": "3.world.gzip",
+                            },
+                        ]
+                    },
+                }
+            )
+            self.assertIn('<optgroup label="0.world.gzip (active)">', labeled)
+            self.assertIn('<optgroup label="3.world.gzip">', labeled)
+            self.assertIn("0.world.gzip (active)", labeled)
+            self.assertLess(
+                labeled.index("0.world.gzip (active)"),
+                labeled.index('optgroup label="3.world.gzip"'),
+            )
 
     def test_pre_restore_safety_copy_outside_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1317,6 +1348,164 @@ class BackupRetentionTests(unittest.TestCase):
             mgr.clear_world_sources(prior_safety_backup=safety2)
             self.assertFalse(world_zip.exists())
             self.assertTrue(other.is_file())
+
+    def test_backup_generation_key_reads_world_label(self) -> None:
+        self.assertEqual(
+            backup_generation_key("backup-20260826T170225Z-schedule-0.world.gzip"),
+            "0.world.gzip",
+        )
+        self.assertEqual(
+            backup_generation_key("backup-20260826T170225Z-schedule-3.world.gzip"),
+            "3.world.gzip",
+        )
+        self.assertEqual(
+            backup_generation_key("backup-20260826T170225Z-schedule-MyWorld"),
+            "MyWorld",
+        )
+        self.assertEqual(
+            backup_generation_key("pre-update-20260826T170225Z-0.world.gzip"),
+            "0.world.gzip",
+        )
+        self.assertEqual(
+            backup_generation_key("backup-20260826T170225Z-schedule.zip"),
+            "",
+        )
+        self.assertEqual(
+            backup_generation_key("backup-20260826T170225Z-schedule.tar.gz"),
+            "",
+        )
+        self.assertEqual(
+            backup_generation_key("pre-update-20260803T180000Z.tar.gz"),
+            "",
+        )
+
+    def test_retention_and_restore_are_per_world_label(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "world"
+            worlds = data / "saves" / "worlds"
+            worlds.mkdir(parents=True)
+            slot0 = worlds / "FamilyWorld.zip"
+            slot0.write_bytes(b"SLOT0-WORLD-BYTES" * 32)
+            backup_dir = root / "backups"
+
+            def locate_family() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "FamilyWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            mgr = BackupManager(
+                backup_dir,
+                [data],
+                world_locator=locate_family,
+                data_dir=data,
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+                retention=RetentionPolicy(
+                    keep_recent=0,
+                    keep_daily=1,
+                    keep_weekly=0,
+                    keep_monthly=0,
+                    keep_yearly=0,
+                    pre_restore_keep_days=7,
+                    profile="minimal",
+                ),
+            )
+            first = mgr.create_backup(reason="schedule")
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertIn("FamilyWorld.zip", first.name)
+
+            other = worlds / "OtherWorld.zip"
+            other.write_bytes(b"OTHER-WORLD-BYTES" * 32)
+
+            def locate_other() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "OtherWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            mgr._world_locator = locate_other
+            second = mgr.create_backup(reason="schedule")
+            self.assertIsNotNone(second)
+            assert second is not None
+            self.assertIn("OtherWorld.zip", second.name)
+            mgr.apply_retention()
+            self.assertTrue(first.is_file())
+            self.assertTrue(second.is_file())
+
+            with self.assertRaises(RuntimeError) as ctx:
+                mgr.restore_archive(first.name, prior_safety_backup=second)
+            self.assertIn("FamilyWorld.zip", str(ctx.exception))
+            self.assertIn("OtherWorld.zip", str(ctx.exception))
+            self.assertEqual(other.read_bytes(), b"OTHER-WORLD-BYTES" * 32)
+
+            mgr._world_locator = locate_family
+            safety = mgr.create_safety_backup(reason="safety")
+            assert safety is not None
+            slot0.write_bytes(b"CHANGED")
+            mgr.restore_archive(first.name, prior_safety_backup=safety)
+            self.assertEqual(slot0.read_bytes(), b"SLOT0-WORLD-BYTES" * 32)
+
+    def test_pre_update_keeps_newest_per_world_label(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "world"
+            worlds = data / "saves" / "worlds"
+            worlds.mkdir(parents=True)
+            family = worlds / "FamilyWorld.zip"
+            family.write_bytes(b"FAMILY-WORLD-BYTES" * 32)
+            other = worlds / "OtherWorld.zip"
+            other.write_bytes(b"OTHER-WORLD-BYTES" * 32)
+            backup_dir = root / "backups"
+
+            def locate_family() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "FamilyWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            def locate_other() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "OtherWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            mgr = BackupManager(
+                backup_dir,
+                [data],
+                world_locator=locate_family,
+                data_dir=data,
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            first_family = mgr.create_backup(reason="pre-update")
+            self.assertIsNotNone(first_family)
+            assert first_family is not None
+            aged = backup_dir / "pre-update-20200101T000000Z-FamilyWorld.zip"
+            first_family.rename(aged)
+            os.utime(aged, (1_600_000_000, 1_600_000_000))
+            first_family = aged
+            second_family = mgr.create_backup(reason="pre-update")
+            mgr._world_locator = locate_other
+            other_update = mgr.create_backup(reason="pre-update")
+            self.assertIsNotNone(second_family)
+            self.assertIsNotNone(other_update)
+            assert second_family is not None
+            assert other_update is not None
+            names = {p.name for p in mgr.list_pre_update_archives()}
+            self.assertNotIn(first_family.name, names)
+            self.assertIn(second_family.name, names)
+            self.assertIn(other_update.name, names)
 
     def test_legacy_tar_gz_restore_still_works(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1602,7 +1791,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("grid-primary", html)
         self.assertIn("grid-secondary", html)
         self.assertIn(
-            "Restoring stops the server, makes a world backup, then restores the selected backup.",
+            "Restoring stops the server, makes a world backup, then restores onto the active world shown above.",
             html,
         )
         self.assertNotIn("Prefer these over the JSON API", html)
