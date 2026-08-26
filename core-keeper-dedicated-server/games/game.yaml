@@ -67,14 +67,20 @@ ui_theme:
   wash: "#081012"
   depth: "#1a140c"
 # Idle vs occupied — join/leave lines are identity-bearing but unproven here.
+# steam id on auth vs internal userid on connect/disconnect do not match yet.
 player_tracking_mode: presence
-# ready + game_version promoted from a live boot (server.log). Join/leave stay
-# dry-run until a player session proves them.
+# ready + game_version promoted from a live boot (server.log). version_mismatch
+# promoted from a real client-too-old session (Unity NetCode protocol dump).
+# The active regex is RpcSystem-specific so dump headers that also mention
+# "bad protocol version" do not re-fire. App_Min/App_Max are disconnect
+# reasons after that dump, not mismatch signals.
 log_patterns:
   ready:
     - 'Started session with info:'
   game_version:
     - 'Game version:\s+(?P<version>\S+)'
+  version_mismatch:
+    - 'RpcSystem received bad protocol version'
 log_pattern_candidates:
   ready:
     - 'Started session with info:'
@@ -83,17 +89,15 @@ log_pattern_candidates:
     - '----- GameInfo.txt -----'
     - '\bStarted session\b'
   player_join:
-    - '\[userid:(?P<player>\d+)\] player .+ connected'
-    - '\[userid:'
-    - 'player .+ connected'
+    - 'Successful authentication from userid:\s*(?P<player>\d+)'
+    - 'Accepted connection from (?P<player>\d+)'
+    - 'Connected to userid:(?P<player>\d+)'
   player_leave:
-    - 'Disconnected from userid:\s*(?P<player>\S+)'
-    - 'Disconnected from userid:'
+    - 'Disconnected from userid:(?P<player>\S+)'
   game_version:
     - 'Game version:\s+(?P<version>\S+)'
     - '\bCore Keeper\s+(?P<version>\d+\.\d+\.\d+)'
     - '\bversion\s+(?P<version>\d+\.\d+\.\d+(?:\.\d+)?)'
   version_mismatch:
-    - '\bwrong version\b'
-    - '\bversion mismatch\b'
-    - '\bincompatible version\b'
+    - 'RpcSystem received bad protocol version'
+    - '\bbad protocol version\b'

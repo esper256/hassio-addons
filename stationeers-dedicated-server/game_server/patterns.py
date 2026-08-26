@@ -97,5 +97,6 @@ DEFAULT_CANDIDATE_PATTERNS: dict[str, list[str]] = {
         r"\bmod mismatch\b",
         r"\bmap version\b",
         r"\bdesync\b",
+        r"\bbad protocol version\b",
     ],
 }

@@ -1836,6 +1836,10 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn("Troubleshooting logs", html)
         self.assertIn("Game server log watching pattern hits", html)
         self.assertIn("JSON API (automation / pattern tuning)", html)
+        self.assertIn("Example log lines for not-yet-configured patterns", html)
+        self.assertIn("Live pattern hits plus log-file rescan", html)
+        self.assertNotIn("Suggest patterns from recent logs", html)
+        self.assertNotIn("Pattern hit report", html)
         self.assertIn('id="troubleshooting"', html)
         self.assertIn("up to date", html)
         self.assertNotIn("Up to date", html)
@@ -3497,14 +3501,41 @@ class LogToolsTests(unittest.TestCase):
             recent = ["extra line with outdated client"]
             box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: recent)
             report = box.suggest(lines=50)
+            self.assertNotIn("suggestions", report)
+            self.assertNotIn("matches", report)
+            mismatch = (report.get("not_configured") or {}).get("version_mismatch")
+            self.assertTrue(mismatch)
+            examples = "\n".join(mismatch.get("examples") or [])
+            self.assertIn("wrong version", examples)
+            self.assertIn("outdated client", examples)
+            join = (report.get("not_configured") or {}).get("player_join")
+            self.assertTrue(join)
             self.assertTrue(
-                report["matches"]["version_mismatch"]
-                or report["suggestions"]["version_mismatch"]
+                any("connected" in line.lower() for line in join.get("examples") or [])
             )
             capture = box.capture(reason="test", status={"ok": True})
-            self.assertTrue(
-                (state / "captures" / capture["id"] / "capture.tar.gz").is_file()
+            dest = state / "captures" / capture["id"]
+            self.assertTrue((dest / "capture.tar.gz").is_file())
+            analysis = json.loads((dest / "analysis.json").read_text(encoding="utf-8"))
+            self.assertIn("not_configured", analysis)
+            self.assertIn("configured", analysis)
+            self.assertIn(
+                "version_mismatch", capture["analysis_summary"]["not_configured"]
             )
+
+
+    def test_suggest_omits_zero_hit_guesses(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text("unrelated noise\n", encoding="utf-8")
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            report = box.suggest(lines=50)
+            self.assertEqual(report["not_configured"], {})
+            self.assertEqual(report["configured"], {})
 
 
 class PackageInstallTests(unittest.TestCase):

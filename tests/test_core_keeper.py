@@ -21,6 +21,8 @@ from game_server.plugin import load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.config import SupervisorConfig  # noqa: E402
 from game_server.world_save import locate_active_world  # noqa: E402
+from game_server.log_tools import LogToolbox  # noqa: E402
+from game_server.monitor import LogMonitor  # noqa: E402
 
 
 def _load_defaults():
@@ -40,6 +42,11 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(plugin.executable, ["/opt/launch_wrapper.sh"])
         self.assertEqual(plugin.log_patterns.ready, ["Started session with info:"])
         self.assertEqual(plugin.log_patterns.player_join, [])
+        self.assertEqual(plugin.log_patterns.player_leave, [])
+        self.assertEqual(
+            plugin.log_patterns.version_mismatch,
+            ["RpcSystem received bad protocol version"],
+        )
         self.assertEqual(
             plugin.log_patterns.game_version,
             [r"Game version:\s+(?P<version>\S+)"],
@@ -272,6 +279,77 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
                 environ={},
             )
             self.assertEqual(len(generated), 16)
+
+
+# Live client-too-old session captured from HA Logs (prefix stripped).
+# Unity then dumps RPC/component hashes; those headers also mention
+# "bad protocol version" but must not re-fire the active mismatch pattern.
+_CK_PROTOCOL_MISMATCH_LOG = """\
+Accepted connection from 76561197968471340 with result OK awaiting authentication
+Connected to userid:3784111641
+Authentication message was wrong length: 23
+Successful authentication from userid: 76561197968471340
+timescale = 1
+[ServerWorld] RpcSystem received bad protocol version from NetworkConnection[id0,v2]
+Local protocol: NetCode=1 Game=8 RpcCollection=1468618670998561951 ComponentCollection=0
+Remote protocol: NetCode=1 Game=6 RpcCollection=14788448070397539380 ComponentCollection=0
+RPC List (for above 'bad protocol version' error): 37
+RpcHash[0] = null
+Component serializer data (for above 'bad protocol version' error): 257
+ComponentHash[0] = Type: null GhostFieldHash: 0 SnapshotSize: 0 ChangeMaskBits: 0 SendToOwner: 3
+Disconnected from userid:3784111641 with reason App_Min
+"""
+
+
+class CoreKeeperLogPatternTests(unittest.TestCase):
+    def test_protocol_mismatch_fires_once_dump_headers_do_not(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        triggered: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            for line in _CK_PROTOCOL_MISMATCH_LOG.splitlines():
+                mon.ingest_stdout_line(line)
+            self.assertEqual(mon.state.version_mismatch_count, 1)
+            self.assertEqual(len(triggered), 1)
+            self.assertIn("RpcSystem received bad protocol version", triggered[0])
+            self.assertNotIn("App_Min", triggered[0])
+            self.assertIsNone(mon.state.game_version)
+            self.assertEqual(mon.state.players, set())
+            self.assertFalse(mon.state.players_known)
+
+    def test_suggest_returns_join_leave_examples_not_app_min_as_mismatch(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text(
+                _CK_PROTOCOL_MISMATCH_LOG, encoding="utf-8"
+            )
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            report = box.suggest(lines=200)
+            mismatch = (report.get("configured") or {}).get("version_mismatch")
+            self.assertTrue(mismatch)
+            self.assertEqual(
+                mismatch["patterns"],
+                ["RpcSystem received bad protocol version"],
+            )
+            mismatch_text = "\n".join(mismatch.get("examples") or [])
+            self.assertIn("RpcSystem received bad protocol version", mismatch_text)
+            self.assertNotIn("App_Min", mismatch_text)
+            self.assertNotIn("RPC List", mismatch_text)
+            join = (report.get("not_configured") or {}).get("player_join")
+            self.assertTrue(join)
+            join_text = "\n".join(join.get("examples") or [])
+            self.assertIn("Successful authentication from userid:", join_text)
+            self.assertIn("Accepted connection from", join_text)
+            self.assertIn("Connected to userid:", join_text)
+            leave = (report.get("not_configured") or {}).get("player_leave")
+            self.assertTrue(leave)
+            leave_text = "\n".join(leave.get("examples") or [])
+            self.assertIn("Disconnected from userid:", leave_text)
+            self.assertIn("App_Min", leave_text)
 
 
 if __name__ == "__main__":
