@@ -55,7 +55,7 @@ Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flag
 
 1. Edit `games/game.yaml` for your dedicated server (app id, executable, args, data/log dirs, `world_save`).
 2. Adjust the Dockerfile runtime for your binary (Java, extra `.so`s, **Xvfb**, …). Game-only packages stay in that Dockerfile — not in `game-server-base`.
-3. Update HA `config.yaml`: name, slug, ports, options/schema. **Replace `icon.png` / `logo.png` immediately** (a folder copy keeps the previous game’s store art). See [App store images](#app-store-images).
+3. Update HA `config.yaml`: name, slug, ports, options/schema. **Replace `icon.png` / `logo.png` immediately** (a folder copy keeps the previous game’s store art). See [App store images](#app-store-images). Add a `.dockerignore` that excludes `data/` before the first `docker compose build` (see [Local Compose](#local-compose)).
 4. Rewrite that add-on’s **short** `README.md` (HA Info), **spartan** `DOCS.md` (Documentation tab), and **`GUIDE.md`** (GitHub end-user guide). Add a row to the repo root README games table.
 5. After any supervisor change, from the repo root:
 
@@ -79,23 +79,56 @@ Home Assistant’s App store / Info UI uses two files in the **same folder as `c
 
 | File | Where it shows | Rules |
 | --- | --- | --- |
-| `icon.png` | Store tile, app list, small chrome | PNG, **1×1 square**, 128×128 recommended |
-| `logo.png` | App Info header bar | PNG, ~**250×100** (wide rectangle). Other ratios work; this size matches the HA chrome. |
+| `icon.png` | Store tile, app list, small chrome | PNG, **128×128** square (HA recommends 1×1; this repo CI-enforces 128×128) |
+| `logo.png` | App Info header bar | PNG, **250×100** wide rectangle (HA’s usual Info chrome size) |
 
-Use the **game’s official store / Steam art**. Do not generate a new illustration.
+Use the **game’s official store / Steam art**. Do not generate a new illustration, and do not leave the previous game’s PNGs in place after a folder copy — CI fails if two apps share the same `icon.png` bytes.
 
-Steam (app id of the **client**, not the dedicated server) publishes the two shapes HA wants:
+Steam (app id of the **client**, not the dedicated server) publishes the two shapes HA wants. Example: Core Keeper’s store page is app **1621690**; the dedicated server is **1963720**. Fetch art with **1621690**.
 
 | Steam asset | Typical URL | HA use |
 | --- | --- | --- |
-| Library capsule | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (600×900) | Square **icon**: crop a 1×1 from the **top** (title + key art stay in frame), scale to 128×128 PNG |
-| Store header | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/header_2x.jpg` (920×430) | Wide **logo**: scale-to-cover 250×100, crop from the **top** so the wordmark remains, PNG |
+| Library capsule | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (600×900) | Square **icon**: crop a 1×1 from the **top** (title + key art stay in frame), scale to **128×128** PNG |
+| Store header | `https://cdn.cloudflare.steamstatic.com/steam/apps/<id>/header_2x.jpg` (920×430) | Wide **logo**: scale-to-cover **250×100**, crop from the **top** so the wordmark remains, PNG |
 
-Prefer the `_2x` objects when they exist. Convert JPEG → PNG; keep the original palette. Check the results at 128×128 / 250×100 — a center crop of a tall capsule often chops the title off; a top crop usually matches how the store presents the game.
+Prefer the `_2x` objects when they exist. Convert JPEG → PNG; keep the original palette. A center crop of a tall capsule often chops the title off; a top crop usually matches how the store presents the game.
+
+```bash
+# icon.png — top-square of the library capsule
+curl -fsSL -o /tmp/capsule.jpg \
+  "https://cdn.cloudflare.steamstatic.com/steam/apps/<CLIENT_APPID>/library_600x900_2x.jpg"
+magick /tmp/capsule.jpg -gravity North -crop 600x600+0+0 +repage -resize 128x128 icon.png
+
+# logo.png — cover-fit the store header into the HA Info bar
+curl -fsSL -o /tmp/header.jpg \
+  "https://cdn.cloudflare.steamstatic.com/steam/apps/<CLIENT_APPID>/header_2x.jpg"
+magick /tmp/header.jpg -resize 250x100^ -gravity North -extent 250x100 logo.png
+```
+
+(`convert` works in place of `magick` on older ImageMagick.) This repo’s CI requires those exact pixel sizes so the App store tile and Info header match the other games.
 
 Non-Steam titles: the same idea from the developer’s store page (square box art / vertical capsule → icon; horizontal header / capsule → logo).
 
 `README.md` for HA Info must **not** embed these images (HA already shows `icon.png` / `logo.png` in the chrome). GitHub `GUIDE.md` may show an Ingress screenshot under `images/ingress-ui.png` once you have a real capture — do not leave a broken image link.
+
+---
+
+## Local Compose
+
+Plain Docker / Portainer uses each game folder’s `docker-compose.yml` (`build.context: .`, volume `./data:/data`).
+
+**`.dockerignore` must list `data/`.** Without it, `docker compose build` sends the Steam/game install as build context (Core Keeper’s dedicated server is ~650 MB). That is slow and a footgun if a `COPY` is ever too broad. Sibling add-ons ship this file; CI checks that it exists and excludes `data/`.
+
+**SteamCMD `FAILED (No Connection)` on the default bridge** while `curl https://steamcdn-a.akamaihd.net` works is almost always Steam **connection managers** (not the CDN) failing through nested Docker NAT. It is not an add-on bug and it is **not** a reason to set `host_network: true` in `config.yaml` (that drops the Home Assistant security rating). HAOS has its own network stack; real installs typically reach Steam CMs on the default bridge.
+
+Diagnostic only:
+
+```bash
+docker run --rm --network host --entrypoint /opt/steamcmd/steamcmd.sh IMAGE \
+  +login anonymous +quit
+```
+
+`Connecting anonymously to Steam Public...OK` here, and retries / `FAILED (No Connection)` in compose, means this environment’s Docker NAT is the problem. For a one-off local boot you may run that same image with `--network host` (and no `ports:` mapping). Do not ship `host_network: true`. Do not add UDP game ports to “make Steam work.”
 
 ---
 

@@ -1,0 +1,8 @@
+# Compose build.context is this folder. Keep the persistent volume out of
+# the daemon context (HTTP package installs live on ./data).
+data/
+__pycache__/
+*.py[cod]
+.git
+*.md
+images/

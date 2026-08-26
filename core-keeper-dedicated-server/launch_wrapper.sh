@@ -38,9 +38,12 @@ fi
 
 bin=""
 for candidate in ./CoreKeeperServer ./CoreKeeperServer.x86_64; do
-  if [[ -x "${candidate}" ]]; then
-    bin="${candidate}"
-    break
+  if [[ -f "${candidate}" ]]; then
+    chmod +x "${candidate}" 2>/dev/null || true
+    if [[ -x "${candidate}" ]]; then
+      bin="${candidate}"
+      break
+    fi
   fi
 done
 if [[ -z "${bin}" ]]; then
@@ -48,6 +51,8 @@ if [[ -z "${bin}" ]]; then
   echo "Looked for ./CoreKeeperServer and ./CoreKeeperServer.x86_64" >&2
   exit 1
 fi
+installdir="$(pwd)"
+export LD_LIBRARY_PATH="${steamcmd_linux64}:${installdir}/linux64:${installdir}:${LD_LIBRARY_PATH:-}"
 
 mkdir -p /tmp/.X11-unix
 display_num=""
@@ -78,10 +83,24 @@ for _ in $(seq 1 20); do
   sleep 0.1
 done
 
-# Print Game ID to stdout (HA Logs) once the server writes it. Do not delete
-# GameID.txt — wiping it can mint a new join code on the next boot.
+# Official README: GameInfo.txt is written next to the binary and holds the
+# Game ID plus argument-validation notes. Older community images also wrote
+# GameID.txt. Do not delete GameID.txt — wiping a persisted ID file can mint
+# a new join code. GameInfo.txt is informational; drop a stale copy so we
+# print this boot's file.
+rm -f GameInfo.txt
 (
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 180); do
+    if [[ -s GameInfo.txt ]]; then
+      echo "----- GameInfo.txt -----"
+      # Official file often has no trailing newline; force one so the banner
+      # does not glue onto the Game ID.
+      cat GameInfo.txt
+      echo
+      echo "------------------------"
+      echo "Players join in Core Keeper → Multiplayer → Join Game with this Game ID (Steam Datagram Relay; no IP:port)."
+      exit 0
+    fi
     if [[ -s GameID.txt ]]; then
       gid="$(tr -d '[:space:]' < GameID.txt || true)"
       if [[ -n "${gid}" ]]; then

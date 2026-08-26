@@ -7,6 +7,7 @@ because config validation failed (for example timeout > 300).
 
 from __future__ import annotations
 
+import hashlib
 import re
 import struct
 import unittest
@@ -139,18 +140,63 @@ class HaAppConfigTests(unittest.TestCase):
                 size = _png_size(icon)
                 if size is None:
                     errors.append(f"{icon}: not a PNG")
-                elif size[0] != size[1]:
-                    errors.append(f"{icon}: must be square (got {size[0]}x{size[1]})")
+                elif size != (128, 128):
+                    errors.append(
+                        f"{icon}: expected 128x128 HA store tile (got {size[0]}x{size[1]})"
+                    )
             if not logo.is_file():
                 errors.append(f"{path.parent}: missing logo.png (HA Info header)")
             else:
                 size = _png_size(logo)
                 if size is None:
                     errors.append(f"{logo}: not a PNG")
-                elif size[1] >= size[0]:
+                elif size != (250, 100):
                     errors.append(
-                        f"{logo}: should be a wide rectangle (got {size[0]}x{size[1]})"
+                        f"{logo}: expected 250x100 HA Info header (got {size[0]}x{size[1]})"
                     )
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_store_icons_are_unique_per_game(self) -> None:
+        """Copying another game folder leaves its icon.png behind; hashes must differ."""
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        hashes: dict[bytes, str] = {}
+        errors: list[str] = []
+        for path in configs:
+            icon = path.parent / "icon.png"
+            if not icon.is_file():
+                continue
+            digest = hashlib.sha256(icon.read_bytes()).digest()
+            other = hashes.get(digest)
+            if other:
+                errors.append(
+                    f"{path.parent.name} icon.png is identical to {other} "
+                    "(replace leftover art from the folder you copied)"
+                )
+            else:
+                hashes[digest] = path.parent.name
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_compose_addons_dockerignore_excludes_data(self) -> None:
+        dockerfiles = sorted(ROOT.glob("*-dedicated-server/Dockerfile"))
+        self.assertTrue(dockerfiles, "expected game add-on Dockerfiles")
+        errors: list[str] = []
+        for dockerfile in dockerfiles:
+            ignore = dockerfile.parent / ".dockerignore"
+            if not ignore.is_file():
+                errors.append(f"{dockerfile.parent.name}: missing .dockerignore")
+                continue
+            lines = {
+                line.strip()
+                for line in ignore.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            }
+            if "data/" not in lines and "data" not in lines:
+                errors.append(
+                    f"{ignore}: must exclude data/ so compose build context "
+                    "does not upload the Steam/game install"
+                )
         self.assertEqual(errors, [], "\n".join(errors))
 
 

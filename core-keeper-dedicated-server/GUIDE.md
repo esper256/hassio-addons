@@ -3,6 +3,8 @@
 Run a **[Core Keeper](https://store.steampowered.com/app/1621690/Core_Keeper/)** dedicated multiplayer server on Home Assistant OS (or Docker).  
 SteamCMD keeps the build current, the world is backed up automatically, and **Open Web UI** (Ingress) is the day-to-day control surface.
 
+![Core Keeper Open Web UI](images/ingress-ui.png)
+
 > Looking at this from inside Home Assistant? Use the app’s **Documentation** tab (`DOCS.md`) for configure/start. This page is the GitHub guide.
 
 ---
@@ -67,19 +69,21 @@ docker compose -f core-keeper-dedicated-server/docker-compose.yml up -d --build
 
 Set `WORLD_NAME` in the compose environment. Leave `GAME_ID` unset for a stable generated join code. Status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`. No UDP game port is mapped.
 
+First SteamCMD download is ~650 MB. If Logs show `Connecting anonymously to Steam Public... Retrying... FAILED (No Connection)` while HTTPS to Steam’s CDN works, the Docker **bridge** cannot reach Steam connection managers. That is an environment NAT issue, not this app. See [Local Compose](../game-server-base/README.md#local-compose). Do **not** turn on HA `host_network`.
+
 ---
 
 ## Data layout
 
 ```text
-/data/game/          # Steam install (CoreKeeperServer)
+/data/game/          # Steam install (CoreKeeperServer, GameInfo.txt, GameID.txt)
 /data/world/         # -datapath (ServerConfig.json, worlds/<n>.world.gzip)
 /data/logs/          # Unity -logfile (server.log)
 /data/backups/       # world backups
 /data/supervisor/    # status.json, steam gate, log captures, instance salt
 ```
 
-The `.world.gzip` for slot 0 often appears only after the first player is in the cavern for a short time.
+The `.world.gzip` for slot 0 is often missing until Unity has created the cavern — that can be the first player join, or a graceful stop after the server has started a new world.
 
 ---
 

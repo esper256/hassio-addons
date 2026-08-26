@@ -55,7 +55,7 @@ configuration:
     description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
   backup_enabled:
     name: Enable backups
-    description: Daily backup of the active world save (.world.gzip copied as-is) into /data/backups. History is thinned by the retention profile below. The world file often appears only after the first player joins.
+    description: Daily backup of the active world save (.world.gzip copied as-is) into /data/backups. History is thinned by the retention profile below. The world file is often missing until a player joins or the server stops gracefully after creating a new world.
   backup_on_update:
     name: Backup before update
     description: Back up the world save immediately before a Steam update. Only the newest pre-update backup is kept.

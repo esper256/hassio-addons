@@ -19,10 +19,9 @@ import secrets
 from pathlib import Path
 
 INSTANCE_SALT_NAME = "instance_salt"
-# Official dedicated-server README: 15–28 alphanumeric characters. Older notes
-# also excluded lookalikes (0/O/o/I/l) and x/y; stay inside that alphabet so
-# both current and older builds accept the ID.
-_GAME_ID_ALPHABET = "abcdefghijkmnpqrstuvwzABCDEFGHJKLMNPQRSTUVWXYZ123456789"
+# Official ARGUMENTS.txt: 15–28 alphanumeric characters; may not include
+# Y, y, x, 0, or O. Also skip lookalikes I/l/o so the ID stays readable.
+_GAME_ID_ALPHABET = "abcdefghijkmnpqrstuvwzABCDEFGHJKLMNPQRSTUVWXZ123456789"
 _GAME_ID_LENGTH = 20
 
 

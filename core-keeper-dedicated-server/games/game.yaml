@@ -65,13 +65,19 @@ ui_theme:
   depth: "#1a140c"
 # Idle vs occupied — join/leave lines are identity-bearing but unproven here.
 player_tracking_mode: presence
-# New games ship empty active patterns. Promote from Ingress Debug dry-run.
-log_patterns: {}
+# ready + game_version promoted from a live boot (server.log). Join/leave stay
+# dry-run until a player session proves them.
+log_patterns:
+  ready:
+    - 'Started session with info:'
+  game_version:
+    - 'Game version:\s+(?P<version>\S+)'
 log_pattern_candidates:
   ready:
     - 'Started session with info:'
     - '\bGame ID:'
     - '\bGameID:'
+    - '----- GameInfo.txt -----'
     - '\bStarted session\b'
   player_join:
     - '\[userid:(?P<player>\d+)\] player .+ connected'
@@ -81,6 +87,7 @@ log_pattern_candidates:
     - 'Disconnected from userid:\s*(?P<player>\S+)'
     - 'Disconnected from userid:'
   game_version:
+    - 'Game version:\s+(?P<version>\S+)'
     - '\bCore Keeper\s+(?P<version>\d+\.\d+\.\d+)'
     - '\bversion\s+(?P<version>\d+\.\d+\.\d+(?:\.\d+)?)'
   version_mismatch:

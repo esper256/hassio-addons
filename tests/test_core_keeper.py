@@ -38,8 +38,12 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(plugin.steam_app_id, 1963720)
         self.assertEqual(plugin.install_marker, "CoreKeeperServer_Data")
         self.assertEqual(plugin.executable, ["/opt/launch_wrapper.sh"])
-        self.assertEqual(plugin.log_patterns.ready, [])
+        self.assertEqual(plugin.log_patterns.ready, ["Started session with info:"])
         self.assertEqual(plugin.log_patterns.player_join, [])
+        self.assertEqual(
+            plugin.log_patterns.game_version,
+            [r"Game version:\s+(?P<version>\S+)"],
+        )
         self.assertIn("ready", plugin.log_pattern_candidates)
         self.assertNotIn("server_port", plugin.arg_map)
         self.assertIn("-datapath", plugin.argv_prefix)
@@ -94,12 +98,17 @@ class CoreKeeperPluginTests(unittest.TestCase):
 
         data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
         self.assertNotIn("ports", data)
+        self.assertFalse(data.get("host_network"))
         self.assertEqual(data["slug"], "core_keeper_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
 
     def test_launch_wrapper_is_executable(self) -> None:
         self.assertTrue(WRAPPER.is_file())
         self.assertTrue(os.access(WRAPPER, os.X_OK), f"{WRAPPER} must be chmod +x")
+        text = WRAPPER.read_text(encoding="utf-8")
+        self.assertIn("GameInfo.txt", text)
+        self.assertIn("Xvfb", text)
+        self.assertIn("steamclient.so", text)
 
 
 class CoreKeeperHaosDefaultsTests(unittest.TestCase):
@@ -112,6 +121,8 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(first), 20)
             self.assertTrue(set(first) <= set(mod._GAME_ID_ALPHABET))
+            # Official ARGUMENTS.txt: Game ID may not include Y, y, x, 0, or O.
+            self.assertTrue(set(mod._GAME_ID_ALPHABET).isdisjoint(set("Yyx0O")))
             self.assertTrue((state / "instance_salt").is_file())
 
     def test_different_installs_get_different_ids(self) -> None:

@@ -1,0 +1,8 @@
+# Compose build.context is this folder. Keep the persistent volume out of
+# the daemon context (Steam installs are hundreds of MB and a COPY footgun).
+data/
+__pycache__/
+*.py[cod]
+.git
+*.md
+images/

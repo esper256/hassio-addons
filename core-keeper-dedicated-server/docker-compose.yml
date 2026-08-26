@@ -46,6 +46,9 @@ services:
       - ./data:/data
     # Match HA add-on timeout (300s): give Unity save-on-SIGTERM room before SIGKILL.
     stop_grace_period: 300s
+    # Do not set network_mode: host here or host_network in config.yaml.
+    # SteamCMD "FAILED (No Connection)" on this bridge is Docker NAT to Steam
+    # CMs — see game-server-base/README.md "Local Compose".
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/healthz"]
       interval: 30s

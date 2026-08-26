@@ -5,8 +5,8 @@
 1. On **Configuration**, set at least:
    - **World name** (default `FamilyCore`)
    - Leave **Game ID** blank unless you want to pin a specific join code
-2. **Start** the app. First Steam download can take several minutes — watch **Logs**.
-3. Copy the **Game ID** from **Logs** (line `Game ID: …`) or **OPEN WEB UI** once the server is up.
+2. **Start** the app. First Steam download can take several minutes (~650 MB) — watch **Logs**.
+3. Copy the **Game ID** from **Logs** (line `Game ID: …`, or the `----- GameInfo.txt -----` block after Unity boots) or **OPEN WEB UI** once the server is up.
 4. In Core Keeper → **Multiplayer** → **Join Game**, paste that Game ID.
 
 This server uses Steam Datagram Relay. Friends do **not** connect by IP:port, and you do **not** need to forward a game UDP port on your router.
@@ -34,7 +34,7 @@ The Info **Ingress** chip that only explains ingress is not the UI.
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update failure / version mismatch |
 
-The world file is often created only after the first player joins (~30s). Backups skip an empty slot until then.
+The world file is often missing until Unity creates the cavern (first player join, or a graceful stop after a new world has started). Backups skip an empty slot until then.
 
 ## Backups and restore
 
