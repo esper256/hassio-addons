@@ -379,26 +379,22 @@ HTML_PAGE = """<!DOCTYPE html>
     }}
     /* Nested expanders share equal weight inside Troubleshooting. */
     details.trouble details.log-watch,
-    details.trouble details.unused-patterns,
-    details.trouble details.api {{
+    details.trouble details.unused-patterns {{
       margin-top: 1rem;
       color: var(--muted);
       font-size: 0.9rem;
     }}
     details.trouble details.log-watch > summary,
-    details.trouble details.unused-patterns > summary,
-    details.trouble details.api > summary {{
+    details.trouble details.unused-patterns > summary {{
       cursor: pointer;
       color: var(--accent);
       font-size: inherit;
       font-weight: inherit;
     }}
     details.trouble details.log-watch[open] > summary,
-    details.trouble details.unused-patterns[open] > summary,
-    details.trouble details.api[open] > summary {{
+    details.trouble details.unused-patterns[open] > summary {{
       margin-bottom: 0.45rem;
     }}
-    details.api ul {{ padding-left: 1.1rem; }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -606,22 +602,12 @@ HTML_PAGE = """<!DOCTYPE html>
         <select id="capture-select">{capture_options}</select>
         <a class="btn" id="capture-download" href="#" onclick="return downloadCapture(event)">Download</a>
       </div>
-      <details class="api">
-        <summary>JSON API (automation / pattern tuning)</summary>
-        <ul>
-          <li><a href="api/status">Status JSON</a></li>
-          <li><a href="api/ui">Formatted UI JSON (soft refresh)</a></li>
-          <li>POST <code>api/update</code> — schedule update now (disconnects players)</li>
-          <li><a href="api/backups">Backups list JSON</a></li>
-          <li><a href="api/world/download">Download active world save</a></li>
-          <li>POST <code>api/world/upload?confirm=1</code> — raw world file body (mode from active world kind)</li>
-          <li>POST <code>api/backups/restore</code> — <code>{{"archive":"…","confirm":true}}</code> or <code>{{"empty":true,"confirm":true}}</code></li>
-          <li><a href="api/logs/suggest">Example log lines for not-yet-configured patterns</a> (rescans the log file, including lines before the live tailer started)</li>
-          <li><a href="api/logs/patterns">Live pattern hits plus log-file rescan</a> (same examples, plus hits seen since this process started following the log)</li>
-          <li><a href="api/logs/captures">Captures list JSON</a></li>
-          <li><a href="api/logs/raw?lines=400">Recent log tail JSON</a></li>
-        </ul>
-      </details>
+      <p class="sub">
+        <a href="api/logs/prompt">Log pattern prompt</a>
+        — plain text for an AI to update <code>games/game.yaml</code>.
+        Rescans the on-disk log (includes lines before the live tailer started).
+        Debug mode only unhides the pattern table above.
+      </p>
     </details>
   </main>
   <script>
@@ -916,7 +902,6 @@ class StatusServer:
         restore_callback: Callable[[str], dict[str, Any]] | None = None,
         upload_callback: Callable[[Path], dict[str, Any]] | None = None,
         upload_staging_dir: str | Path | None = None,
-        backups_provider: Callable[[], list[dict[str, Any]]] | None = None,
         world_download_callback: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self.host = host
@@ -931,7 +916,6 @@ class StatusServer:
         self.restore_callback = restore_callback
         self.upload_callback = upload_callback
         self.upload_staging_dir = Path(upload_staging_dir) if upload_staging_dir else None
-        self.backups_provider = backups_provider
         self.world_download_callback = world_download_callback
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -947,7 +931,6 @@ class StatusServer:
         restore_cb = self.restore_callback
         upload_cb = self.upload_callback
         upload_dir = self.upload_staging_dir
-        backups_cb = self.backups_provider
         world_dl_cb = self.world_download_callback
 
         class Handler(BaseHTTPRequestHandler):
@@ -1210,7 +1193,6 @@ class StatusServer:
                     return
                 parsed = urlparse(self.path)
                 path = parsed.path
-                query = parse_qs(parsed.query)
 
                 if path in ("/healthz", "/health"):
                     # Cheap path: avoid full status() disk/manifest scans.
@@ -1228,14 +1210,6 @@ class StatusServer:
 
                 if path == "/api/ui":
                     self._json(200, _ui_view(status, game_name, ui_theme=ui_theme))
-                    return
-
-                if path == "/api/backups":
-                    if backups_cb is not None:
-                        archives = backups_cb()
-                    else:
-                        archives = (status.get("backups") or {}).get("restorable") or []
-                    self._json(200, {"archives": archives})
                     return
 
                 if path == "/api/world/download":
@@ -1265,80 +1239,13 @@ class StatusServer:
                             Path(str(cleanup)).unlink(missing_ok=True)
                     return
 
-                if path == "/api/logs":
-                    monitor = status.get("monitor") or {}
-                    self._json(
+                if path == "/api/logs/prompt":
+                    text = _log_pattern_prompt(status, toolbox, game_name)
+                    self._send(
                         200,
-                        {
-                            "recent_lines": monitor.get("recent_lines") or [],
-                            "highlighted_lines": monitor.get("highlighted_lines") or [],
-                            "captures": status.get("log_captures") or [],
-                            "log_patterns": status.get("log_patterns") or {},
-                        },
+                        text.encode("utf-8"),
+                        "text/plain; charset=utf-8",
                     )
-                    return
-
-                if path == "/api/logs/patterns":
-                    from .log_tools import (
-                        LIVE_PATTERNS_HINT,
-                        format_tuning_report_from_pattern_report,
-                    )
-
-                    live = format_tuning_report_from_pattern_report(
-                        status.get("log_patterns") or {},
-                        source="live_monitor",
-                    )
-                    if toolbox is None:
-                        live["hint"] = LIVE_PATTERNS_HINT
-                        self._json(200, live)
-                        return
-                    payload = toolbox.suggest()
-                    payload["live_monitor"] = live
-                    payload["hint"] = LIVE_PATTERNS_HINT
-                    self._json(200, payload)
-                    return
-
-                if path == "/api/logs/raw":
-                    lines = int((query.get("lines") or ["400"])[0])
-                    as_text = (query.get("format") or ["json"])[0].lower() == "text"
-                    if toolbox is None:
-                        if as_text:
-                            self._send(
-                                501,
-                                b"log toolbox unavailable\n",
-                                "text/plain; charset=utf-8",
-                            )
-                        else:
-                            self._json(501, {"error": "log toolbox unavailable"})
-                        return
-                    payload = toolbox.raw_tail(lines=lines)
-                    if as_text:
-                        lines_out = list(payload.get("lines") or [])
-                        label = (
-                            payload.get("source_label")
-                            or payload.get("source")
-                            or "unknown"
-                        )
-                        header = f"# {label}\n"
-                        if not lines_out and payload.get("empty_hint"):
-                            body = header + "\n" + str(payload["empty_hint"]) + "\n"
-                        else:
-                            text = "\n".join(lines_out)
-                            body = header + "\n" + text + ("\n" if text else "")
-                        self._send(
-                            200,
-                            body.encode("utf-8"),
-                            "text/plain; charset=utf-8",
-                        )
-                    else:
-                        self._json(200, payload)
-                    return
-
-                if path == "/api/logs/suggest":
-                    if toolbox is None:
-                        self._json(501, {"error": "log toolbox unavailable"})
-                        return
-                    self._json(200, toolbox.suggest())
                     return
 
                 if path == "/api/logs/capture":
@@ -1349,13 +1256,6 @@ class StatusServer:
                             "error": "Use POST /api/logs/capture to create a capture",
                         },
                     )
-                    return
-
-                if path == "/api/logs/captures":
-                    if toolbox is None:
-                        self._json(501, {"error": "log toolbox unavailable"})
-                        return
-                    self._json(200, {"captures": toolbox.list_captures()})
                     return
 
                 if path.startswith("/api/logs/captures/") and path.endswith("/download"):
@@ -2259,11 +2159,33 @@ _PROMOTE_CATEGORY_HELP = {
 }
 
 
+def _log_pattern_prompt(
+    status: dict[str, Any],
+    toolbox: Any,
+    game_name: str,
+) -> str:
+    """Same text as the debug textarea, with log-file rescan examples when possible."""
+
+    log_patterns = status.get("log_patterns") or {}
+    patterns = list(log_patterns.get("patterns") or [])
+    tracking = str(status.get("player_tracking_mode") or "count")
+    extra: dict[str, list[str]] = {}
+    if toolbox is not None:
+        extra = toolbox.example_lines_by_category()
+    return _format_promote_prompt(
+        game_name,
+        patterns,
+        player_tracking_mode=tracking,
+        extra_examples=extra,
+    )
+
+
 def _format_promote_prompt(
     game_name: str,
     patterns: list[dict[str, Any]],
     *,
     player_tracking_mode: str = "count",
+    extra_examples: dict[str, list[str]] | None = None,
 ) -> str:
     """Preamble + live regexes and sample lines so an AI can wire game.yaml."""
 
@@ -2282,6 +2204,10 @@ def _format_promote_prompt(
     by_category: dict[str, list[dict[str, Any]]] = {}
     for item in patterns:
         by_category.setdefault(str(item.get("category") or ""), []).append(item)
+    extra = extra_examples or {}
+    for category, lines in extra.items():
+        if category and lines and category not in by_category:
+            by_category[category] = []
     categories = [name for name in _PROMOTE_CATEGORY_ORDER if name in by_category]
     categories.extend(sorted(name for name in by_category if name not in set(categories)))
 
@@ -2298,6 +2224,11 @@ def _format_promote_prompt(
             item
             for item in items
             if (item.get("mode") or "") != "active" and int(item.get("hits") or 0) > 0
+        ]
+        scan_lines = [
+            str(line).strip()
+            for line in list(extra.get(category) or [])
+            if str(line).strip()
         ]
         lines_out: list[str] = [f"### {category}  [{display}]"]
         if help_text:
@@ -2332,6 +2263,10 @@ def _format_promote_prompt(
                 )
                 if sample:
                     lines_out.append(f"    sample: {sample}")
+        if scan_lines:
+            lines_out.append("Example log lines (file rescan):")
+            for line in scan_lines[:25]:
+                lines_out.append(f"  {line}")
         elif display == _NOT_CONFIGURED and not guess_hits:
             lines_out.append("No sample log lines yet for this category.")
         block = "\n".join(lines_out)

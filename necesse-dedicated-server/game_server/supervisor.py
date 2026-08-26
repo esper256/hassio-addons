@@ -1224,7 +1224,6 @@ class GameServerSupervisor:
                 restore_callback=self.request_restore,
                 upload_callback=self.request_world_upload,
                 upload_staging_dir=self.config.backup_dir,
-                backups_provider=lambda: self.backups.list_restorable_archives(),
                 world_download_callback=self.world_save_download,
             )
             self.status_server.start()
