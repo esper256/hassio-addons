@@ -587,6 +587,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <h2>Promote patterns with AI</h2>
         <p class="sub">
           Copy this into an AI chat to propose <code>games/game.yaml</code> regexes and open a GitHub pull request.
+          Same text as the Troubleshooting link: live hits plus a log-file rescan (startup lines the live tailer missed).
         </p>
         <textarea id="promote-prompt" class="promote-prompt" readonly rows="18">{promote_prompt}</textarea>
         <div class="actions">
@@ -1209,7 +1210,15 @@ class StatusServer:
                     return
 
                 if path == "/api/ui":
-                    self._json(200, _ui_view(status, game_name, ui_theme=ui_theme))
+                    self._json(
+                        200,
+                        _ui_view(
+                            status,
+                            game_name,
+                            ui_theme=ui_theme,
+                            toolbox=toolbox,
+                        ),
+                    )
                     return
 
                 if path == "/api/world/download":
@@ -1282,7 +1291,12 @@ class StatusServer:
                     return
 
                 if path in ("/", "/index.html", "/ingress"):
-                    view = _ui_view(status, game_name, ui_theme=ui_theme)
+                    view = _ui_view(
+                        status,
+                        game_name,
+                        ui_theme=ui_theme,
+                        toolbox=toolbox,
+                    )
                     html = render_status_html(
                         view, base_href=self._ingress_base()
                     ).encode("utf-8")
@@ -1641,6 +1655,8 @@ def _ui_view(
     game_name: str,
     *,
     ui_theme: dict[str, str] | None = None,
+    toolbox: Any = None,
+    extra_examples: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Formatted strings for the status page and soft-refresh JSON."""
 
@@ -1653,10 +1669,11 @@ def _ui_view(
         patterns
     )
     tracking_mode = str(status.get("player_tracking_mode") or "count").strip().lower()
-    promote_prompt = _format_promote_prompt(
+    promote_prompt = _log_pattern_prompt(
+        status,
+        toolbox,
         game_name,
-        patterns,
-        player_tracking_mode=tracking_mode,
+        extra_examples=extra_examples,
     )
     players_known = bool(monitor.get("players_known"))
     presence_mode = tracking_mode == "presence"
@@ -2137,15 +2154,22 @@ _PROMOTE_CATEGORY_ORDER = (
     "version_mismatch",
 )
 _PROMOTE_CATEGORY_HELP = {
-    "ready": "Server finished starting. No capture groups required.",
+    "ready": (
+        "Port bound / accepting connections, not a later GameInfo or public-IP line. "
+        "No capture groups required."
+    ),
     "game_version": (
         "Human game version like 1.3.1, not a Steam build id. "
         "Named group: version"
     ),
-    "player_join": "Someone joined. Named group: player. Optional: steam_id",
+    "player_join": (
+        "In-world join (not handshake or character-select). "
+        "Named group: player. Optional: steam_id. "
+        "The captured identity must also appear on leave."
+    ),
     "player_leave": (
-        "Someone left. Prefer steam_id when the line has one, else player. "
-        "Identity should match join."
+        "Someone left. Capture the same identity token as join "
+        "(Steam id, internal userid, and display name are different namespaces)."
     ),
     "player_count": (
         "Exact headcount. Named group: count (integer). "
@@ -2153,8 +2177,9 @@ _PROMOTE_CATEGORY_HELP = {
     ),
     "players_empty": "Nobody is online. No capture groups required.",
     "version_mismatch": (
-        "A client was rejected for version. Optional named groups: "
-        "steam_id, client_version"
+        "A client was rejected for protocol/version — not a normal disconnect "
+        "reason and not a crash dump that repeats the phrase. "
+        "Optional named groups: steam_id, client_version"
     ),
 }
 
@@ -2163,15 +2188,21 @@ def _log_pattern_prompt(
     status: dict[str, Any],
     toolbox: Any,
     game_name: str,
+    *,
+    extra_examples: dict[str, list[str]] | None = None,
 ) -> str:
     """Same text as the debug textarea, with log-file rescan examples when possible."""
 
     log_patterns = status.get("log_patterns") or {}
     patterns = list(log_patterns.get("patterns") or [])
     tracking = str(status.get("player_tracking_mode") or "count")
-    extra: dict[str, list[str]] = {}
-    if toolbox is not None:
-        extra = toolbox.example_lines_by_category()
+    extra = extra_examples
+    if extra is None and toolbox is not None:
+        try:
+            extra = toolbox.example_lines_by_category()
+        except Exception:
+            LOG.exception("log-file rescan for pattern prompt failed")
+            extra = {}
     return _format_promote_prompt(
         game_name,
         patterns,
@@ -2290,24 +2321,35 @@ def _format_promote_prompt(
             "",
             "Repo: https://github.com/esper256/hassio-addons",
             f"Edit: {yaml_path}  (log_patterns section)",
-            "Open a pull request against that repo with only this game.yaml change.",
+            "Open a pull request against that repo.",
+            "Edit log_patterns in that game.yaml (candidates optional).",
+            "Update tests if the add-on already has pattern tests.",
+            "Do not change other games or the shared supervisor unless this prompt text is wrong.",
             "",
             "How matching works:",
             "- Each log_patterns regex is compiled with re.IGNORECASE and used as re.search on every log line (ANSI already stripped).",
             "- Only log_patterns change supervisor state. log_pattern_candidates and generic guesses never trigger actions.",
             "- Quote YAML strings with single quotes so backslashes survive.",
-            "- One precise pattern per log shape. Do not promote the broad guess regexes below.",
-            "- Prefer the named groups listed per category. Do not match on timestamps alone.",
-            "- If a category has no trustworthy line, omit it from log_patterns (leave it not configured).",
+            "- Write a new precise regex from the sample log lines. Do not copy guess regexes — a guess can hit the right line with the wrong pattern.",
+            "- The sample next to a guess is more useful than the guess regex itself.",
+            "- One precise pattern per log shape. Prefer the named groups listed per category. Do not match on timestamps alone.",
+            "- Join and leave must capture the same identity token. Steam ids, internal userids, and display names are different namespaces; pick the identifier that appears on both the in-world join line and the leave line.",
+            "- Network connect, character select, and in-world spawn are different events. Promote the in-world line (or the pair that matches leave), not the handshake.",
+            "- ready means the process is accepting connections (port bind / listening). Do not use a later GameInfo / public-IP / started-session line that can fire after a client already connected.",
+            "- Hits do not prove a configured pattern is the right event. Keep it only if it still matches the category meaning.",
+            "- version_mismatch is a client rejected for protocol/version. Disconnect reasons (App_Min, AppException_Max, Misc_Timeout, and similar) and crash-dump headers that repeat a version phrase are not mismatch.",
+            "- Zero session hits on version_mismatch usually means it did not happen this boot, not that the regex is wrong.",
+            "- Omit player_count unless the game logs an integer headcount. Omit any category with no trustworthy line.",
+            "- Example log lines (file rescan) include startup history the live tailer missed (the tailer starts at EOF). Prefer those samples over last-match from this process alone.",
             "",
             "Categories the supervisor reads:",
-            "  ready             server finished starting. no capture groups",
+            "  ready             port bound / accepting connections. not a later GameInfo or public-IP line. no capture groups",
             "  game_version      named group version (human version like 1.3.1, not a Steam build id)",
-            "  player_join       named group player. optional steam_id",
-            "  player_leave      prefer steam_id when present, else player. identity should match join",
+            "  player_join       in-world join (not handshake / character-select). named group player. optional steam_id",
+            "  player_leave      same identity token as join (Steam id, userid, and name are different namespaces)",
             "  player_count      named group count (integer). only if the game logs a real headcount",
             "  players_empty     nobody online. no capture groups",
-            "  version_mismatch  optional steam_id, client_version",
+            "  version_mismatch  client rejected for protocol/version. not a disconnect reason or crash dump. optional steam_id, client_version",
             "",
             f"Player tracking mode: {tracking_note}",
             "",
@@ -2319,7 +2361,7 @@ def _format_promote_prompt(
             "Needs work (stale or not configured):",
             work_section,
             "",
-            "Working configured patterns (style examples — keep unless stale):",
+            "Working configured patterns (style examples — keep only if they still match the category meaning; hits are not proof):",
             example_section,
             "",
         ]

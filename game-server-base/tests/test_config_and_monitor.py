@@ -72,6 +72,7 @@ from game_server.status_http import (  # noqa: E402
     _format_uptime,
     _format_world_save,
     _format_promote_prompt,
+    _log_pattern_prompt,
     _ui_view,
     healthz_ok,
     render_status_html,
@@ -1838,6 +1839,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("Game server log watching pattern hits", html)
         self.assertIn("Log pattern prompt", html)
         self.assertIn('href="api/logs/prompt"', html)
+        self.assertIn("log-file rescan", html)
         self.assertNotIn("JSON API (automation / pattern tuning)", html)
         self.assertNotIn("Example log lines for not-yet-configured patterns", html)
         self.assertNotIn("Live pattern hits plus log-file rescan", html)
@@ -1944,6 +1946,83 @@ class StatusFormatTests(unittest.TestCase):
                     self.fail(f"{gone} should be gone")
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
+        finally:
+            server.stop()
+            if old is not None:
+                os.environ["SUPERVISOR_TOKEN"] = old
+
+    def test_status_http_prompt_matches_textarea_with_file_rescan(self) -> None:
+        """GET /, /api/ui, and /api/logs/prompt share the file-rescan prompt."""
+
+        import urllib.request
+
+        from game_server.status_http import StatusServer
+
+        class FakeToolbox:
+            def example_lines_by_category(self, lines: int = 2000):
+                return {"player_join": ["[userid:9] player Test connected"]}
+
+        status = {
+            "running": True,
+            "lifecycle": "running",
+            "game_uptime_seconds": 10,
+            "supervisor_uptime_seconds": 10,
+            "crash_count": 0,
+            "backups": {"archive_count": 0, "restorable": []},
+            "disk": {"ok": True, "free_mb": 1024, "min_free_disk_mb": 512},
+            "monitor": {"players_known": False},
+            "debug_mode": True,
+            "player_tracking_mode": "presence",
+            "log_patterns": {
+                "patterns": [
+                    {
+                        "mode": "dry_run",
+                        "category": "player_join",
+                        "pattern": r"\bconnected\b",
+                        "hits": 1,
+                        "recent_lines": ["[userid:9] player Test connected"],
+                    }
+                ]
+            },
+            "log_captures": [],
+            "waits_for_empty_server": "no_player_tracking",
+        }
+        old = os.environ.pop("SUPERVISOR_TOKEN", None)
+        server = StatusServer(
+            "127.0.0.1",
+            0,
+            lambda: status,
+            game_name="Core Keeper",
+            log_toolbox=FakeToolbox(),
+        )
+        try:
+            server.start()
+            assert server._httpd is not None
+            port = server._httpd.server_address[1]
+            base = f"http://127.0.0.1:{port}"
+            with urllib.request.urlopen(  # noqa: S310 - local test server
+                f"{base}/", timeout=5
+            ) as resp:
+                html = resp.read().decode("utf-8")
+            with urllib.request.urlopen(  # noqa: S310 - local test server
+                f"{base}/api/logs/prompt", timeout=5
+            ) as resp:
+                prompt = resp.read().decode("utf-8")
+            with urllib.request.urlopen(  # noqa: S310 - local test server
+                f"{base}/api/ui", timeout=5
+            ) as resp:
+                ui = json.loads(resp.read().decode("utf-8"))
+            marker = "[userid:9] player Test connected"
+            self.assertIn(marker, html)
+            self.assertIn(marker, prompt)
+            self.assertIn(marker, ui["promote_prompt"])
+            self.assertIn("Example log lines (file rescan):", prompt)
+            self.assertEqual(prompt, ui["promote_prompt"])
+            self.assertIn("same identity token", prompt)
+            self.assertIn(
+                "Write a new precise regex from the sample log lines", prompt
+            )
+            self.assertNotIn("only this game.yaml change", prompt)
         finally:
             server.stop()
             if old is not None:
@@ -2829,6 +2908,14 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("maybe new", prompt)
         self.assertIn("wrong version", prompt)
         self.assertNotIn("Unused (no plugin regex", prompt)
+        self.assertNotIn("only this game.yaml change", prompt)
+        self.assertIn("Update tests if the add-on already has pattern tests", prompt)
+        self.assertIn("same identity token", prompt)
+        self.assertIn(
+            "Write a new precise regex from the sample log lines", prompt
+        )
+        self.assertIn("port bound / accepting connections", prompt)
+        self.assertIn("hits are not proof", prompt)
         with_scan = _format_promote_prompt(
             "Necesse",
             patterns,
@@ -2836,6 +2923,31 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("Example log lines (file rescan):", with_scan)
         self.assertIn("Alice joined the cavern", with_scan)
+        view_scan = _ui_view(
+            {
+                "running": True,
+                "lifecycle": "running",
+                "debug_mode": True,
+                "log_patterns": {"patterns": patterns},
+                "monitor": {"players_known": False},
+            },
+            "Necesse",
+            extra_examples={"player_join": ["Alice joined the cavern"]},
+        )["promote_prompt"]
+        self.assertIn("Example log lines (file rescan):", view_scan)
+        self.assertIn("Alice joined the cavern", view_scan)
+        self.assertEqual(
+            view_scan,
+            _log_pattern_prompt(
+                {
+                    "log_patterns": {"patterns": patterns},
+                    "player_tracking_mode": "count",
+                },
+                None,
+                "Necesse",
+                extra_examples={"player_join": ["Alice joined the cavern"]},
+            ),
+        )
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(
