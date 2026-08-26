@@ -43,8 +43,14 @@ _PASSWORD_LENGTH = 16
 _PASSWORD_MAX = 28
 _ADMINS_FILENAME = "Admins.json"
 _PRIVILEGE_FULL_ADMIN = 2
-# SteamID64 for individual accounts: 7656119xxxxxxxxxx (17 digits).
-_STEAM64_RE = re.compile(r"^7656119\d{10}$")
+# Public-universe individual SteamID64 (what Core Keeper Admins.json stores):
+# universe=1, type=Individual, instance=1. SteamID64 = base + 32-bit account id.
+# Every value in this range is 17 decimal digits. They happen to start with
+# 7656119 until account id exceeds ~2.04e9; after that they run 7656120… up
+# to 7656120…. The "starts with 7656119" check is a current-era heuristic,
+# not the format — we validate the range instead.
+_STEAM64_INDIVIDUAL_BASE = 76561197960265728
+_STEAM64_INDIVIDUAL_MAX = _STEAM64_INDIVIDUAL_BASE + 0xFFFFFFFF
 _STEAM_ID_SPLIT = re.compile(r"[\s,;]+")
 
 
@@ -273,10 +279,13 @@ def resolve_server_password(
 
 
 def is_valid_steam64(value: object) -> bool:
-    """True when ``value`` looks like a SteamID64 (17 digits, 7656119…)."""
+    """True when ``value`` is a public individual SteamID64."""
 
     text = str(value or "").strip()
-    return bool(_STEAM64_RE.fullmatch(text))
+    if not text.isdigit() or text.startswith("0"):
+        return False
+    steam_id = int(text)
+    return _STEAM64_INDIVIDUAL_BASE <= steam_id <= _STEAM64_INDIVIDUAL_MAX
 
 
 def parse_admin_steam_ids(value: object) -> list[int]:
@@ -294,8 +303,8 @@ def parse_admin_steam_ids(value: object) -> list[int]:
         if not is_valid_steam64(token):
             _warn(
                 "Ignoring invalid Core Keeper admin Steam ID "
-                f"({token!r}); expected a 17-digit SteamID64 starting "
-                "with 7656119."
+                f"({token!r}); expected a public individual SteamID64 "
+                "(17-digit number from a Steam profile URL)."
             )
             continue
         steam_id = int(token)
