@@ -1379,6 +1379,69 @@ class BackupRetentionTests(unittest.TestCase):
             "",
         )
 
+    def test_pre_upgrade_unlabeled_zip_still_restores_to_same_path(self) -> None:
+        """Existing Necesse/Factorio archives (no world label) keep working.
+
+        Live save path is unchanged. Old ``backup-…-schedule.zip`` files stay
+        listed, survive the first labeled backup's retention pass, and restore
+        onto the current named world (mismatch gate only applies when the
+        archive name carries a world label).
+        """
+
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "world"
+            worlds = data / "saves" / "worlds"
+            worlds.mkdir(parents=True)
+            world_zip = worlds / "FamilyWorld.zip"
+            payload = b"EXISTING-INSTALL-WORLD" * 32
+            world_zip.write_bytes(payload)
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            old = backup_dir / "backup-20260804T010000Z-schedule.zip"
+            old.write_bytes(payload)
+            os.utime(old, (1_700_000_000, 1_700_000_000))
+
+            def locate() -> ActiveWorld:
+                return locate_active_world(
+                    plugin,
+                    {"world_name": "FamilyWorld", "data_dir": str(data)},
+                    data_dir=str(data),
+                )
+
+            active = locate()
+            self.assertEqual(active.path, str(world_zip))
+            self.assertEqual(active.label, "FamilyWorld.zip")
+
+            mgr = BackupManager(
+                backup_dir,
+                [data],
+                world_locator=locate,
+                data_dir=data,
+                interval_minutes=0,
+                enabled=True,
+                min_source_bytes=1,
+            )
+            mgr.apply_retention()
+            self.assertTrue(old.is_file())
+
+            labeled = mgr.create_backup(reason="schedule")
+            self.assertIsNotNone(labeled)
+            assert labeled is not None
+            self.assertIn("FamilyWorld.zip", labeled.name)
+            self.assertTrue(old.is_file())
+            self.assertTrue(world_zip.is_file())
+            self.assertEqual(world_zip.read_bytes(), payload)
+
+            world_zip.write_bytes(b"CHANGED-AFTER-UPGRADE" * 32)
+            safety = mgr.create_safety_backup(reason="safety")
+            self.assertIsNotNone(safety)
+            assert safety is not None
+            mgr.restore_archive(old.name, prior_safety_backup=safety)
+            self.assertEqual(world_zip.read_bytes(), payload)
+            self.assertEqual(Path(locate().path or "").name, "FamilyWorld.zip")
+
     def test_retention_and_restore_are_per_world_label(self) -> None:
         plugin = load_plugin(FIXTURE)
         with tempfile.TemporaryDirectory() as tmp:
