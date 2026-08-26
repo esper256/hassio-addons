@@ -218,6 +218,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("SERVER_SLOTS", ck_keys)
         self.assertIn("SERVER_PORT", ck_keys)
         self.assertIn("SERVER_PASSWORD", ck_keys)
+        self.assertIn("ADMIN_STEAM_IDS", ck_keys)
         self.assertNotIn("JAVA_OPTS", ck_keys)
 
 

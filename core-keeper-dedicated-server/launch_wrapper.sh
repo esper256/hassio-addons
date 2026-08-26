@@ -101,14 +101,14 @@ rm -f GameInfo.txt
       cat GameInfo.txt
       echo
       echo "------------------------"
-      echo "Players join in Core Keeper → Multiplayer → Join Game with this Game ID (Steam Datagram Relay; no IP:port)."
+      echo "Players join in Core Keeper → Multiplayer → Join Game with this Game ID (Steam Datagram Relay). Direct Connect (Join Game Via IP) is also on — both work at once."
       exit 0
     fi
     if [[ -s GameID.txt ]]; then
       gid="$(tr -d '[:space:]' < GameID.txt || true)"
       if [[ -n "${gid}" ]]; then
         echo "Game ID: ${gid}"
-        echo "Players join in Core Keeper → Multiplayer → Join Game with this Game ID (Steam Datagram Relay; no IP:port)."
+        echo "Players join in Core Keeper → Multiplayer → Join Game with this Game ID (Steam Datagram Relay). Direct Connect (Join Game Via IP) is also on — both work at once."
         exit 0
       fi
     fi

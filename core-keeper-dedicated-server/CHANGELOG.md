@@ -6,6 +6,8 @@
 - Ingress subtitle advertises supervisor **3.0** separately from the HA app version
 - Promote prompt lists other interesting log lines on configured patterns (guess hits the current regex did not capture)
 - Shared dry-run guess regexes refreshed from the four live dedicated servers
+- Join is **both** Direct Connect (`-port`) and Game ID (Steam Datagram Relay), not XOR. Mixed LAN IP + remote Game ID is the default; port-forward UDP 7778 only for remote IP join; password is IP-only
+- Optional **Admin Steam IDs** merges SteamID64 values into `Admins.json` as privilege-2 admins. Blank keeps first-joiner admin (the dedicated server is not a player)
 
 ## 1.0.2
 

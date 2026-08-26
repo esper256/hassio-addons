@@ -36,9 +36,16 @@ env:
   LD_LIBRARY_PATH: "/opt/steamcmd/linux64:/data/game/linux64:/data/game"
 bool_style: true_false
 ready_timeout_seconds: 300
-# Direct Connect is the default (lower lag than Steam Datagram Relay alone).
-# run.sh sets SERVER_PORT=7778 so -port matches the HA container port. Steam
-# Game ID join still works alongside IP:port.
+# Official ARGUMENTS.txt: -port *adds* Direct Connect (IP join / cross-play).
+# If omitted the server is Steam Datagram Relay only and will not accept IP.
+# -gameid is independent. This app always passes -port so LAN IP, forwarded
+# WAN IP, and Game ID work together (mixed household-on-LAN + remote Steam
+# on Game ID). run.sh sets SERVER_PORT=7778 to match the HA container port.
+# Password is IP-only; Game ID join does not use it.
+# Admin is not a CLI flag: haos_defaults merges admin_steam_ids into
+# Admins.json under -datapath (env ADMIN_STEAM_IDS).
+env_options:
+  - ADMIN_STEAM_IDS
 argv_prefix:
   - -batchmode
   - -logfile

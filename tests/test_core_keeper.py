@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -15,6 +16,7 @@ PLUGIN = ROOT / "core-keeper-dedicated-server" / "games" / "game.yaml"
 DEFAULTS = ROOT / "core-keeper-dedicated-server" / "haos_defaults.py"
 CONFIG = ROOT / "core-keeper-dedicated-server" / "config.yaml"
 WRAPPER = ROOT / "core-keeper-dedicated-server" / "launch_wrapper.sh"
+RUNSH = ROOT / "core-keeper-dedicated-server" / "run.sh"
 
 sys.path.insert(0, str(ROOT / "game-server-base"))
 from game_server.plugin import load_plugin  # noqa: E402
@@ -65,6 +67,7 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(plugin.arg_map["server_password"], "-password")
         self.assertIn("-datapath", plugin.argv_prefix)
         self.assertIn("{data_dir}", plugin.argv_prefix)
+        self.assertEqual(plugin.env_options, ["ADMIN_STEAM_IDS"])
 
     def test_world_save_slot_zero(self) -> None:
         plugin = load_plugin(PLUGIN)
@@ -108,6 +111,7 @@ class CoreKeeperPluginTests(unittest.TestCase):
                 "server_password": "JoinPass123",
                 "server_port": "7778",
                 "server_slots": "8",
+                "admin_steam_ids": "76561198012345678",
                 "data_dir": "/data/world",
                 "logs_dir": "/data/logs",
             },
@@ -121,6 +125,8 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-password") + 1], "JoinPass123")
         self.assertEqual(cmd[cmd.index("-port") + 1], "7778")
         self.assertEqual(cmd[cmd.index("-maxplayers") + 1], "8")
+        self.assertNotIn("76561198012345678", cmd)
+        self.assertNotIn("-admin", cmd)
 
     def test_ha_config_publishes_direct_connect_port(self) -> None:
         import yaml
@@ -130,6 +136,8 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertFalse(data.get("host_network"))
         self.assertEqual(data["schema"]["world_index"], "int(0,29)")
         self.assertEqual(data["schema"]["server_password"], "password")
+        self.assertEqual(data["schema"]["admin_steam_ids"], "str?")
+        self.assertEqual(data["options"]["admin_steam_ids"], "")
         self.assertEqual(data["slug"], "core_keeper_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
 
@@ -140,6 +148,14 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertIn("GameInfo.txt", text)
         self.assertIn("Xvfb", text)
         self.assertIn("steamclient.so", text)
+        self.assertNotIn("no IP:port", text)
+        self.assertIn("both work at once", text)
+
+    def test_run_sh_merges_admins_and_describes_mixed_join(self) -> None:
+        text = RUNSH.read_text(encoding="utf-8")
+        self.assertIn("haos_defaults.py ensure-admins", text)
+        self.assertIn("Both are on", text)
+        self.assertIn("Game ID joiners need no forward", text)
 
 
 class CoreKeeperHaosDefaultsTests(unittest.TestCase):
@@ -287,6 +303,159 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
                 environ={},
             )
             self.assertEqual(len(generated), 16)
+
+
+class CoreKeeperAdminTests(unittest.TestCase):
+    def test_parse_steam_ids_skips_invalid(self) -> None:
+        mod = _load_defaults()
+        self.assertTrue(mod.is_valid_steam64("76561197968471340"))
+        self.assertFalse(mod.is_valid_steam64("7656119"))
+        self.assertFalse(mod.is_valid_steam64("steam:123"))
+        self.assertEqual(
+            mod.parse_admin_steam_ids(
+                "76561198012345678, 76561198087654321;76561198012345678"
+            ),
+            [76561198012345678, 76561198087654321],
+        )
+        self.assertEqual(mod.parse_admin_steam_ids("not-a-steam-id, 123"), [])
+        self.assertEqual(mod.parse_admin_steam_ids(""), [])
+
+    def test_blank_option_does_not_write_admins_file(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            world.mkdir()
+            options = root / "options.json"
+            options.write_text('{"admin_steam_ids": ""}', encoding="utf-8")
+            written = mod.ensure_admins(
+                options_file=options,
+                data_dir=world,
+                environ={},
+            )
+            self.assertIsNone(written)
+            self.assertFalse((world / "Admins.json").exists())
+
+    def test_blank_option_does_not_wipe_existing_admins(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            world.mkdir()
+            existing = {
+                "adminList": [
+                    {
+                        "index": 1,
+                        "privileges": 2,
+                        "name": "FirstJoiner",
+                        "steamId": 76561198011111111,
+                    }
+                ]
+            }
+            admins = world / "Admins.json"
+            admins.write_text(json.dumps(existing), encoding="utf-8")
+            mod.ensure_admins(
+                options_file=root / "missing.json",
+                data_dir=world,
+                environ={},
+            )
+            data = json.loads(admins.read_text(encoding="utf-8"))
+            self.assertEqual(data["adminList"][0]["steamId"], 76561198011111111)
+            self.assertEqual(len(data["adminList"]), 1)
+
+    def test_merge_adds_without_deleting_in_game_admin(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            world.mkdir()
+            admins = world / "Admins.json"
+            admins.write_text(
+                json.dumps(
+                    {
+                        "adminList": [
+                            {
+                                "index": 1,
+                                "privileges": 1,
+                                "name": "GuestStar",
+                                "steamId": 76561198011111111,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            options = root / "options.json"
+            options.write_text(
+                '{"admin_steam_ids": "76561198022222222"}', encoding="utf-8"
+            )
+            written = mod.ensure_admins(
+                options_file=options,
+                data_dir=world,
+                environ={},
+            )
+            self.assertEqual(written, admins)
+            data = json.loads(admins.read_text(encoding="utf-8"))
+            by_id = {int(e["steamId"]): e for e in data["adminList"]}
+            self.assertEqual(set(by_id), {76561198011111111, 76561198022222222})
+            self.assertEqual(by_id[76561198011111111]["name"], "GuestStar")
+            self.assertEqual(by_id[76561198011111111]["privileges"], 1)
+            self.assertEqual(by_id[76561198022222222]["privileges"], 2)
+            self.assertEqual(by_id[76561198022222222]["index"], 2)
+
+    def test_existing_pinned_id_is_promoted_to_full_admin(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            world.mkdir()
+            admins = world / "Admins.json"
+            admins.write_text(
+                json.dumps(
+                    {
+                        "adminList": [
+                            {
+                                "index": 3,
+                                "privileges": 1,
+                                "name": "Household",
+                                "steamId": "76561198033333333",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            written = mod.ensure_admins(
+                options_file=root / "missing.json",
+                data_dir=world,
+                environ={"ADMIN_STEAM_IDS": "76561198033333333"},
+            )
+            self.assertEqual(written, admins)
+            data = json.loads(admins.read_text(encoding="utf-8"))
+            self.assertEqual(len(data["adminList"]), 1)
+            self.assertEqual(data["adminList"][0]["privileges"], 2)
+            self.assertEqual(data["adminList"][0]["steamId"], 76561198033333333)
+            self.assertEqual(data["adminList"][0]["name"], "Household")
+
+    def test_resolve_admins_prefers_env_over_options(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            options = root / "options.json"
+            options.write_text(
+                '{"admin_steam_ids": "76561198044444444"}', encoding="utf-8"
+            )
+            self.assertEqual(
+                mod.resolve_admin_steam_ids(options_file=options, environ={}),
+                [76561198044444444],
+            )
+            self.assertEqual(
+                mod.resolve_admin_steam_ids(
+                    options_file=options,
+                    environ={"ADMIN_STEAM_IDS": "76561198055555555"},
+                ),
+                [76561198055555555],
+            )
 
 
 # Live client-too-old session captured from HA Logs (prefix stripped).
