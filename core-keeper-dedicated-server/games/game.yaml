@@ -66,9 +66,10 @@ ui_theme:
   glow: "#1a3338"
   wash: "#081012"
   depth: "#1a140c"
-# Idle vs occupied. Join/leave stay dry-run: network connect, character select,
-# and in-world spawn are distinct; steam id vs per-connection userid vs name
-# do not share one identity; leftover SteamNet disconnects also emit leave lines.
+# Presence: idle vs occupied. Join is in-world spawn (userid), not Steam-id
+# auth or character-select connect. Leave uses that same userid. Steam id on
+# Accepted connection / Successful authentication does not appear on leave.
+# player_count / players_empty have no trustworthy lines.
 player_tracking_mode: presence
 # ready is the UDP bind (when Direct Connect can succeed). Started session is
 # GameInfo / public-IP print and can fire after a client already connected.
@@ -83,6 +84,10 @@ log_patterns:
     - 'Game version:\s+(?P<version>\S+)'
   version_mismatch:
     - 'RpcSystem received bad protocol version'
+  player_join:
+    - '\[userid:(?P<player>\d+)\] player \S+ connected'
+  player_leave:
+    - 'Disconnected from userid:(?P<player>\d+)'
 log_pattern_candidates:
   ready:
     - 'Listening on ip:'
