@@ -46,4 +46,4 @@ Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NE
 ## Logs
 
 - App **Logs** — supervisor, SteamCMD, and game output (includes **Game ID:** and **Join password:**)
-- **OPEN WEB UI** → **Troubleshooting** — captures, JSON pattern examples (`/api/logs/suggest` works without Debug mode), and status tools
+- **OPEN WEB UI** → **Troubleshooting** — captures and **Log pattern prompt** (`/api/logs/prompt`, works without Debug mode)

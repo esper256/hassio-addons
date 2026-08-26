@@ -2,7 +2,7 @@
 
 ## 1.0.16
 
-- Sync shared supervisor: JSON API log-pattern links rescan the on-disk log and return example lines for not-yet-configured categories (works without Debug mode)
+- Sync shared supervisor: drop the JSON API expander; one **Log pattern prompt** (`/api/logs/prompt`) for AI pattern tuning; delete unused list/tail/suggest/patterns JSON endpoints
 
 ## 1.0.15
 

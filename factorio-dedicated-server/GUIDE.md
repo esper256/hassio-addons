@@ -48,7 +48,7 @@ Ingress status page (no extra host port to publish):
 
 - Server / players / game version / update
 - World save download, backups, restore, and upload
-- Collapsed **Troubleshooting** (log captures and JSON API)
+- Collapsed **Troubleshooting** (log captures and log pattern prompt)
 
 Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. After **NEW WORLD**, the next start creates a fresh map.
 

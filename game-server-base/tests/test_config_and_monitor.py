@@ -71,6 +71,7 @@ from game_server.status_http import (  # noqa: E402
     _format_update_check_hint,
     _format_uptime,
     _format_world_save,
+    _format_promote_prompt,
     _ui_view,
     healthz_ok,
     render_status_html,
@@ -1835,12 +1836,15 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn(">Troubleshooting<", html)
         self.assertNotIn("Troubleshooting logs", html)
         self.assertIn("Game server log watching pattern hits", html)
-        self.assertIn("JSON API (automation / pattern tuning)", html)
-        self.assertIn("Example log lines for not-yet-configured patterns", html)
-        self.assertIn("Live pattern hits plus log-file rescan", html)
+        self.assertIn("Log pattern prompt", html)
+        self.assertIn('href="api/logs/prompt"', html)
+        self.assertNotIn("JSON API (automation / pattern tuning)", html)
+        self.assertNotIn("Example log lines for not-yet-configured patterns", html)
+        self.assertNotIn("Live pattern hits plus log-file rescan", html)
+        self.assertNotIn("Captures list JSON", html)
         self.assertNotIn("Suggest patterns from recent logs", html)
         self.assertNotIn("Pattern hit report", html)
-        self.assertIn('id="troubleshooting"', html)
+        self.assertNotIn("Prefer these over the JSON API", html)
         self.assertIn("up to date", html)
         self.assertNotIn("Up to date", html)
         self.assertIn("Update now", html)
@@ -1865,9 +1869,8 @@ class StatusFormatTests(unittest.TestCase):
         self.assertNotIn("Update game server…", html)
         self.assertNotIn("Update game server now", html)
         self.assertNotIn('id="update-banner"', html)
-        # Docs examples must survive format() as literal JSON text.
-        self.assertIn('{"archive":"…","confirm":true}', html)
-        self.assertIn('{"empty":true,"confirm":true}', html)
+        self.assertNotIn('{"archive":"…","confirm":true}', html)
+        self.assertNotIn('{"empty":true,"confirm":true}', html)
         self.assertIn("backup-20260804T010000Z-schedule.tar.gz", html)
         self.assertIn('href="/api/hassio_ingress/token/"', html)
         self.assertIn('href="api/world/download"', html)
@@ -1912,6 +1915,33 @@ class StatusFormatTests(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
             self.assertIn("Necesse", body)
             self.assertIn("NEW WORLD", body)
+            self.assertIn("Log pattern prompt", body)
+            self.assertNotIn("JSON API (automation / pattern tuning)", body)
+            with urllib.request.urlopen(  # noqa: S310 - local test server
+                f"http://127.0.0.1:{port}/api/logs/prompt", timeout=5
+            ) as prompt_resp:
+                self.assertEqual(prompt_resp.status, 200)
+                self.assertIn(
+                    "text/plain",
+                    prompt_resp.headers.get("Content-Type", ""),
+                )
+                prompt = prompt_resp.read().decode("utf-8")
+            self.assertIn("necesse-dedicated-server/games/game.yaml", prompt)
+            for gone in (
+                "/api/logs/suggest",
+                "/api/logs/patterns",
+                "/api/logs/captures",
+                "/api/backups",
+                "/api/logs/raw",
+            ):
+                try:
+                    urllib.request.urlopen(  # noqa: S310
+                        f"http://127.0.0.1:{port}{gone}", timeout=5
+                    )
+                except urllib.error.HTTPError as exc:
+                    self.assertEqual(exc.code, 404, gone)
+                else:
+                    self.fail(f"{gone} should be gone")
         except urllib.error.HTTPError as exc:
             self.fail(f"GET / failed with HTTP {exc.code}: {exc.read()!r}")
         finally:
@@ -2799,6 +2829,13 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("maybe new", prompt)
         self.assertIn("wrong version", prompt)
         self.assertNotIn("Unused (no plugin regex", prompt)
+        with_scan = _format_promote_prompt(
+            "Necesse",
+            patterns,
+            extra_examples={"player_join": ["Alice joined the cavern"]},
+        )
+        self.assertIn("Example log lines (file rescan):", with_scan)
+        self.assertIn("Alice joined the cavern", with_scan)
 
     def test_debug_mode_controls_log_watch_and_players_card(self) -> None:
         hidden = _ui_view(

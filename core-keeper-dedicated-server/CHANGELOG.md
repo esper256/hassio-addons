@@ -5,7 +5,7 @@
 - Ready pattern is `Listening on ip:` (UDP port bound). `Started session with info:` is GameInfo / public-IP print and can happen after a client already connected
 - Promote Unity NetCode `RpcSystem received bad protocol version` as the active version-mismatch pattern (from a real client-too-old session). Dump headers that repeat that phrase, and disconnect reasons like `App_Min` / `AppException_Max` / `Misc_Timeout`, are not mismatch signals — `App_Min` also appears on a normal leave
 - Join/leave stay dry-run: network connect, character select, and `player Name connected` are distinct phases; leftover SteamNet sockets emit extra disconnects
-- JSON API log-pattern links rescan the on-disk log with the same matchers as Ingress and return example lines for not-yet-configured categories (works without Debug mode)
+- JSON API expander removed. Troubleshooting has one **Log pattern prompt** link (`/api/logs/prompt`) — the same plain-text block as the debug textarea, from a log-file rescan. Unused list/tail/suggest/patterns JSON endpoints deleted.
 
 ## 1.0.0
 
