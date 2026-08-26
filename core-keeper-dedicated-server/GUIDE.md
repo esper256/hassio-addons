@@ -50,7 +50,7 @@ Ingress status page (no extra host port to publish):
 
 - Server / players / game version / update
 - World save download, backups, restore, and upload (the **active** slot)
-- Collapsed **Troubleshooting** (log captures and JSON API)
+- Collapsed **Troubleshooting** (log captures and log pattern prompt)
 
 Restoring stops the server, makes a world backup, then restores onto the active world. Anyone online is disconnected. Switch **World slot** before restoring a backup from another slot.
 
@@ -59,6 +59,8 @@ Restoring stops the server, makes a world backup, then restores onto the active 
 ## Joining (Direct Connect + Game ID)
 
 Direct Connect is the default: the dedicated server listens on **UDP 7778** (`-port`) with a join **password**. That is the lower-lag path (no Valve relay). Steam users can still paste the **Game ID** (Steam Datagram Relay). Cross-play IP join uses the password; the Game ID remains the secret for relay join.
+
+Unity’s `GameInfo.txt` / `Started session with info:` line often shows the router WAN address after `failed get internal IP`. That is Steam discovering a public IP, not the address LAN clients should type. On the LAN, **Join Game Via IP** still uses the Home Assistant host’s LAN IP and port **7778**. Ingress **Server: running** means the Unity process is up; the game port is not open until Logs show `Listening on ip:`. A first Direct Connect attempt during ECS conversion can be connection refused; a retry after that line works. Stale SteamNet sockets from a previous process can log `InvalidState` / `Misc_Timeout` / `SteamNet Bug` on the next boot — that is leftover UDP cleanup, not a bind failure.
 
 The server is still **invite-only** in the same sense as the other games here: password-protected Direct Connect, Game ID for relay, **no public server-browser listing**. Direct Connect does share the host IP with players you give the address to.
 

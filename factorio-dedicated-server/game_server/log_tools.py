@@ -35,16 +35,7 @@ _TUNING_HOW_TO_READ = (
     "configured: plugin log_patterns that can change supervisor state, with "
     "matching log lines from this scan. not_configured: dry-run guesses that "
     "matched — use the example lines to write a precise regex; do not copy "
-    "the guess patterns as-is. Zero-hit guesses are omitted. JSON works "
-    "without Debug mode (that only unhides the HTML table). "
-    "GET /api/logs/suggest rescans the on-disk log (including lines before "
-    "the live tailer started at EOF). GET /api/logs/patterns is the same "
-    "rescan plus live_monitor hits since this process started following."
-)
-LIVE_PATTERNS_HINT = (
-    "The live tailer opens existing logs at EOF, so startup and earlier "
-    "sessions are missing from live_monitor. Top-level configured / "
-    "not_configured (also GET /api/logs/suggest) rescans the on-disk file."
+    "the guess patterns as-is. Zero-hit guesses are omitted."
 )
 
 # Stable "current log" names first, then common dedicated-server fallbacks.
@@ -172,28 +163,6 @@ def format_tuning_report(
     if extra:
         report.update(extra)
     return report
-
-
-def format_tuning_report_from_pattern_report(
-    report: dict[str, Any] | None,
-    *,
-    source: str = "live_monitor",
-    source_label: str | None = None,
-    how_to_read: str | None = None,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Group supervisor status['log_patterns'] (live monitor) for the JSON API."""
-
-    data = report if isinstance(report, dict) else {}
-    return format_tuning_report(
-        patterns=list(data.get("patterns") or []),
-        player_tracking_enabled=bool(data.get("player_tracking_enabled")),
-        version_mismatch_enabled=bool(data.get("version_mismatch_enabled")),
-        source=source,
-        source_label=source_label or "Live pattern hits (since monitor started)",
-        how_to_read=how_to_read,
-        extra=extra,
-    )
 
 
 def log_search_dirs(
@@ -384,6 +353,27 @@ class LogToolbox:
         if tail.get("empty_hint"):
             report["empty_hint"] = tail["empty_hint"]
         return report
+
+    def example_lines_by_category(self, lines: int = 2000) -> dict[str, list[str]]:
+        """Unique matching log lines per category from a file rescan."""
+
+        report = self.suggest(lines=lines)
+        out: dict[str, list[str]] = {}
+        for section in ("configured", "not_configured"):
+            bucket = report.get(section) or {}
+            if not isinstance(bucket, dict):
+                continue
+            for category, data in bucket.items():
+                if not isinstance(data, dict):
+                    continue
+                examples = [
+                    str(line).strip()
+                    for line in list(data.get("examples") or [])
+                    if str(line).strip()
+                ]
+                if examples:
+                    out[str(category)] = examples
+        return out
 
     def list_captures(self) -> list[dict[str, Any]]:
         items = []

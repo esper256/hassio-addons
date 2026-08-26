@@ -66,34 +66,47 @@ ui_theme:
   glow: "#1a3338"
   wash: "#081012"
   depth: "#1a140c"
-# Idle vs occupied — join/leave lines are identity-bearing but unproven here.
-# steam id on auth vs internal userid on connect/disconnect do not match yet.
+# Presence: idle vs occupied. Join is in-world spawn (userid), not Steam-id
+# auth or character-select connect. Leave uses that same userid. Steam id on
+# Accepted connection / Successful authentication does not appear on leave.
+# player_count / players_empty have no trustworthy lines.
 player_tracking_mode: presence
-# ready + game_version promoted from a live boot (server.log). version_mismatch
-# promoted from a real client-too-old session (Unity NetCode protocol dump).
-# The active regex is RpcSystem-specific so dump headers that also mention
-# "bad protocol version" do not re-fire. App_Min/App_Max are disconnect
-# reasons after that dump, not mismatch signals.
+# ready is the UDP bind (when Direct Connect can succeed). Started session is
+# GameInfo / public-IP print and can fire after a client already connected.
+# game_version from a live boot. version_mismatch from a client-too-old session
+# (RpcSystem-specific so dump headers that repeat "bad protocol version" do
+# not re-fire). App_Min / AppException_Max / Misc_Timeout are disconnect
+# reasons, including normal leave — not mismatch signals.
 log_patterns:
   ready:
-    - 'Started session with info:'
+    - 'Listening on ip:'
   game_version:
     - 'Game version:\s+(?P<version>\S+)'
   version_mismatch:
     - 'RpcSystem received bad protocol version'
+  player_join:
+    - '\[userid:(?P<player>\d+)\] player \S+ connected'
+  player_leave:
+    - 'Disconnected from userid:(?P<player>\d+)'
 log_pattern_candidates:
   ready:
+    - 'Listening on ip:'
+    - 'successfully loaded world file'
     - 'Started session with info:'
     - '\bGame ID:'
     - '\bGameID:'
     - '----- GameInfo.txt -----'
     - '\bStarted session\b'
   player_join:
-    - 'Successful authentication from userid:\s*(?P<player>\d+)'
-    - 'Accepted connection from (?P<player>\d+)'
+    - '\[userid:(?P<player>\d+)\] player \S+ connected'
     - 'Connected to userid:(?P<player>\d+)'
+    - 'Successful authentication from userid:\s*(?P<player>\d+)'
+    - 'Accepted connection from (?P<player>\d+) with result OK'
+    - 'Accepted connect RPC'
+    - 'Started game for new connection'
   player_leave:
     - 'Disconnected from userid:(?P<player>\S+)'
+    - '\bplayer disconnect\b'
   game_version:
     - 'Game version:\s+(?P<version>\S+)'
     - '\bCore Keeper\s+(?P<version>\d+\.\d+\.\d+)'

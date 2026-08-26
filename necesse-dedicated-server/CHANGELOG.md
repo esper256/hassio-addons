@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.50
+
+- Sync shared supervisor: drop the JSON API expander; one **Log pattern prompt** (`/api/logs/prompt`) matching the debug textarea (file rescan included); tighter AI prompt for promoting regexes
+
 ## 2.1.49
 
 - Sync shared supervisor: JSON API log-pattern links rescan the on-disk log and return example lines for not-yet-configured categories (works without Debug mode)

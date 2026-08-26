@@ -40,9 +40,17 @@ class CoreKeeperPluginTests(unittest.TestCase):
         self.assertEqual(plugin.steam_app_id, 1963720)
         self.assertEqual(plugin.install_marker, "CoreKeeperServer_Data")
         self.assertEqual(plugin.executable, ["/opt/launch_wrapper.sh"])
-        self.assertEqual(plugin.log_patterns.ready, ["Started session with info:"])
-        self.assertEqual(plugin.log_patterns.player_join, [])
-        self.assertEqual(plugin.log_patterns.player_leave, [])
+        self.assertEqual(plugin.log_patterns.ready, ["Listening on ip:"])
+        self.assertEqual(
+            plugin.log_patterns.player_join,
+            [r"\[userid:(?P<player>\d+)\] player \S+ connected"],
+        )
+        self.assertEqual(
+            plugin.log_patterns.player_leave,
+            [r"Disconnected from userid:(?P<player>\d+)"],
+        )
+        self.assertEqual(plugin.log_patterns.player_count, [])
+        self.assertEqual(plugin.log_patterns.players_empty, [])
         self.assertEqual(
             plugin.log_patterns.version_mismatch,
             ["RpcSystem received bad protocol version"],
@@ -315,7 +323,9 @@ class CoreKeeperLogPatternTests(unittest.TestCase):
             self.assertNotIn("App_Min", triggered[0])
             self.assertIsNone(mon.state.game_version)
             self.assertEqual(mon.state.players, set())
-            self.assertFalse(mon.state.players_known)
+            # Leave without a matching in-world join is an unknown identity;
+            # presence mode records that a leave was seen.
+            self.assertTrue(mon.state.players_known)
 
     def test_suggest_returns_join_leave_examples_not_app_min_as_mismatch(self) -> None:
         plugin = load_plugin(PLUGIN)
@@ -339,17 +349,133 @@ class CoreKeeperLogPatternTests(unittest.TestCase):
             self.assertIn("RpcSystem received bad protocol version", mismatch_text)
             self.assertNotIn("App_Min", mismatch_text)
             self.assertNotIn("RPC List", mismatch_text)
-            join = (report.get("not_configured") or {}).get("player_join")
+            join = (report.get("configured") or {}).get("player_join")
             self.assertTrue(join)
-            join_text = "\n".join(join.get("examples") or [])
-            self.assertIn("Successful authentication from userid:", join_text)
-            self.assertIn("Accepted connection from", join_text)
-            self.assertIn("Connected to userid:", join_text)
-            leave = (report.get("not_configured") or {}).get("player_leave")
+            self.assertEqual(join["hits"], 0)
+            leave = (report.get("configured") or {}).get("player_leave")
             self.assertTrue(leave)
             leave_text = "\n".join(leave.get("examples") or [])
             self.assertIn("Disconnected from userid:", leave_text)
             self.assertIn("App_Min", leave_text)
+
+
+# Live debug-mode boot + join (HA Logs prefix stripped; GameInfo secrets redacted).
+# Listening is when the UDP port is bound. Started session is later public-IP
+# print. App_Min here is a normal leave, not a version mismatch.
+_CK_BOOT_AND_JOIN_LOG = """\
+Listening on ip:0.0.0.0:7778
+ConvertAuthoringDataRoutine complete. Process was successful.
+Decompressed brotli compressed world file: 406599 bytes -> 5907452 bytes
+Deserialize world finishied
+successfully loaded world file into SerializeWorld
+found 250 chunks in serialized world
+SteamNet Bug: [#1 UDP steamid:76561197968471340@192.168.1.10:39261] We are in state 4 and have been waiting 20.0s to be cleaned up.  Did you forget to call CloseConnection()?
+Accepted connection from 76561197968471340 with result InvalidState awaiting authentication
+Disconnected from userid:1707773013 with reason Misc_Timeout
+Accepted connection from 76561197968471340 with result OK awaiting authentication
+Connected to userid:373251987
+failed get internal IP
+Started session with info: 203.0.113.1;7778;REDACTED;REDACTED
+Accepted connection from 76561197968471340 with result OK awaiting authentication
+Connected to userid:2158889800
+Authentication message was wrong length: 23
+Successful authentication from userid: 76561197968471340
+timescale = 1
+Accepted connect RPC
+spawning player with character data size 20842
+Enabling player entity
+[userid:2158889800] player Frizz connected islocalplayer=False
+[userid:2158889800] is using new name Frizz
+Started game for new connection
+Disconnected from userid:2158889800 with reason App_Min
+Removed endpoint.
+player disconnect
+timescale = 0
+Disconnected from userid:373251987 with reason AppException_Max
+Waiting for reconnection.
+"""
+
+
+class CoreKeeperBootJoinPatternTests(unittest.TestCase):
+    def test_ready_is_listening_not_late_session_line(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line("ECSManager: converting authoring data.")
+            self.assertFalse(mon.state.ready)
+            mon.ingest_stdout_line("Listening on ip:0.0.0.0:7778")
+            self.assertTrue(mon.state.ready)
+            mon.ingest_stdout_line(
+                "Started session with info: 203.0.113.1;7778;REDACTED;REDACTED"
+            )
+            self.assertTrue(mon.state.ready)
+
+    def test_normal_leave_app_min_is_not_version_mismatch(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        triggered: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp, on_version_mismatch=triggered.append)
+            for line in _CK_BOOT_AND_JOIN_LOG.splitlines():
+                mon.ingest_stdout_line(line)
+            self.assertTrue(mon.state.ready)
+            self.assertEqual(mon.state.version_mismatch_count, 0)
+            self.assertEqual(triggered, [])
+            self.assertEqual(mon.state.players, set())
+            self.assertTrue(mon.state.players_known)
+
+    def test_in_world_join_and_leave_share_userid(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "Accepted connection from 76561197968471340 with result OK "
+                "awaiting authentication"
+            )
+            mon.ingest_stdout_line("Connected to userid:641048955")
+            mon.ingest_stdout_line(
+                "Successful authentication from userid: 76561197968471340"
+            )
+            self.assertEqual(mon.state.players, set())
+            mon.ingest_stdout_line(
+                "[userid:641048955] player Frizz connected islocalplayer=False"
+            )
+            self.assertEqual(mon.state.players, {"641048955"})
+            mon.ingest_stdout_line(
+                "Disconnected from userid:641048955 with reason App_Min"
+            )
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
+    def test_suggest_boot_join_examples_are_configured(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text(_CK_BOOT_AND_JOIN_LOG, encoding="utf-8")
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            report = box.suggest(lines=200)
+            ready = (report.get("configured") or {}).get("ready")
+            self.assertTrue(ready)
+            self.assertEqual(ready["patterns"], ["Listening on ip:"])
+            self.assertTrue(
+                any("Listening on ip:" in line for line in ready.get("examples") or [])
+            )
+            join = (report.get("configured") or {}).get("player_join")
+            self.assertTrue(join)
+            join_text = "\n".join(join.get("examples") or [])
+            self.assertIn("player Frizz connected", join_text)
+            self.assertNotIn("InvalidState", join_text)
+            leave = (report.get("configured") or {}).get("player_leave")
+            self.assertTrue(leave)
+            leave_text = "\n".join(leave.get("examples") or [])
+            self.assertIn("App_Min", leave_text)
+            self.assertIn("AppException_Max", leave_text)
+            mismatch = (report.get("configured") or {}).get("version_mismatch")
+            self.assertTrue(mismatch)
+            self.assertEqual(mismatch["hits"], 0)
+            self.assertEqual(mismatch["examples"], [])
 
 
 if __name__ == "__main__":

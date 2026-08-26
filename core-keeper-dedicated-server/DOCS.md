@@ -10,7 +10,7 @@
 3. **Start** the app. First Steam download can take several minutes (~650 MB) — watch **Logs**.
 4. Forward **UDP 7778** on your router to this Home Assistant host (change the Network port in HA only if 7778 is already taken).
 5. Copy the **Game ID** and **Join password** from **Logs** (lines `Game ID: …` and `Join password: …`, or the `----- GameInfo.txt -----` block after Unity boots). Treat them like passwords.
-6. In Core Keeper → **Multiplayer** → **Join Game Via IP** (HA host IP, port **7778**, join password), or **Join Game** with the Game ID.
+6. In Core Keeper → **Multiplayer** → **Join Game Via IP** (HA host IP, port **7778**, join password), or **Join Game** with the Game ID. First join can fail with connection refused until Logs show `Listening on ip:` (Unity is still converting ECS). GameInfo may print your WAN address (`failed get internal IP`); LAN Direct Connect still uses the Home Assistant host’s LAN IP, not that WAN line.
 
 ## OPEN WEB UI
 
@@ -46,4 +46,4 @@ Use **OPEN WEB UI** → **World backups** to restore a listed backup, start **NE
 ## Logs
 
 - App **Logs** — supervisor, SteamCMD, and game output (includes **Game ID:** and **Join password:**)
-- **OPEN WEB UI** → **Troubleshooting** — captures, JSON pattern examples (`/api/logs/suggest` works without Debug mode), and status tools
+- **OPEN WEB UI** → **Troubleshooting** — captures and **Log pattern prompt** (`/api/logs/prompt`, works without Debug mode)
