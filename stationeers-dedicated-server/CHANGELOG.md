@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.17
+
+- Sync shared supervisor: backups named by world file; retention and pre-update keep-one grouped per world; restore of a different world's archive is refused until the active world matches
+
+## 1.0.16
+
+- Sync shared supervisor: CLI option rendering keeps digit strings `0`/`1` (do not treat them as booleans)
+
 ## 1.0.15
 
 - Hero card messages match the server status: lowercase (“running”, “player last joined…”, “up to date”)

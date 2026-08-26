@@ -1,0 +1,71 @@
+configuration:
+  world_name:
+    name: World name
+    description: Name shown for this cavern (Core Keeper -worldname). Does not change the Game ID friends use to join.
+  world_index:
+    name: World slot
+    description: Save-slot index for the active world file (0.world.gzip, 1.world.gzip, …). Official range is 0–29; default 0. Open Web UI follows this slot; other slots stay on disk with their own backup history.
+  world_seed:
+  world_seed:
+    name: World seed (new worlds)
+    description: Optional seed for a brand-new slot. Leave empty for a random cavern. Ignored once that slot already has a world file.
+  world_mode:
+    name: World mode (new worlds)
+    description: "Difficulty for a new world only. 0=Normal (default), 1=Hard, 2=Creative, 4=Casual. Changing this later does not convert an existing save."
+  game_id:
+    name: Game ID
+    description: "Steam Join Game code (Datagram Relay). Leave blank for a stable per-install code (reused on restart). Treat it like a password — this server is not listed on a public browser. 15–28 letters/digits; do not use Y, y, x, 0, or O."
+  server_password:
+    name: Join password
+    description: "Password for Direct Connect (Join Game Via IP). Leave blank for a stable per-install password. Steam Game ID join does not use this. 1–28 characters."
+  server_slots:
+    name: Max players
+    description: Maximum concurrent players (Core Keeper cooperative play is designed around a small group; default 8).
+  steam_branch:
+    name: Steam branch
+    description: "SteamCMD branch to install. Public is the normal release; Beta is Core Keeper’s Steam beta branch when available. Clients must match. Changing branch redownloads on the next update."
+  update_on_start:
+    name: Update on start
+    description: Run SteamCMD before launching the server.
+  auto_update_interval_minutes:
+    name: Auto-update interval (minutes)
+    description: Used only when “Daily Steam check hour” is empty. How often to ask Steam whether a newer dedicated-server build exists. 0 turns periodic Steam checks off. Values below 15 are raised to 15.
+  auto_update_check_hour:
+    name: Daily Steam check hour
+    description: Local hour (0–23) to ask Steam once per day for a newer dedicated-server build. Default is 5 (5:00am). Leave empty to use the interval setting instead.
+  update_when_empty_only:
+    name: Update only when empty
+    description: When a newer build is ready, wait until nobody is online before restarting so players are not interrupted. Requires working player join/leave detection (configured log patterns) — without that, emptiness cannot be determined and updates will not proceed while this is on.
+  update_on_version_mismatch:
+    name: Update on version mismatch
+    description: If clients are rejected for a wrong/outdated version, check Steam for a newer build and only then restart to update.
+  debug_mode:
+    name: Debug mode
+    description: Show Ingress log-watch pattern tooling (dry-run regex hits) and keep the Number of players card visible even when player-count patterns are still dry-run. Leave off for normal operation.
+  update_window_start_hour:
+    name: Update window start hour
+    description: Optional local hour (0-23) when routine Steam updates may begin. Leave empty for any time.
+  update_window_end_hour:
+    name: Update window end hour
+    description: Optional local hour (0-23) when routine Steam updates must stop. Leave empty for any time.
+  restart_on_crash:
+    name: Restart on crash
+    description: Automatically relaunch the server process after an unexpected exit.
+  status_http_enabled:
+    name: Status page
+    description: Serve the supervisor status/log HTTP UI used by Home Assistant OPEN WEB UI (Ingress on port 8099).
+  ha_notifications:
+    name: Home Assistant notifications
+    description: Create persistent notifications on crash, update failure, and version mismatch (uses HA Core API, not MQTT).
+  backup_enabled:
+    name: Enable backups
+    description: Daily backup of the active world save (.world.gzip copied as-is) into /data/backups. History is thinned by the retention profile below. The world file is often missing until a player joins or the server stops gracefully after creating a new world.
+  backup_on_update:
+    name: Backup before update
+    description: Back up the world save immediately before a Steam update. The newest pre-update backup is kept per world slot.
+  backup_retention:
+    name: Backup retention
+    description: "Scheduled history uses daily→weekly→monthly thinning per world slot; pre-restore safety copies use the same profile (minimal=1 day, standard=7 days, extended=30 days). Newest pre-update backup is kept per slot."
+  min_free_disk_mb:
+    name: Minimum free disk (MiB)
+    description: Skip backups/updates when free space under /data falls below this threshold.

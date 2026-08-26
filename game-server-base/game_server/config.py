@@ -328,11 +328,17 @@ def format_bool(value: Any, style: str) -> str:
 
 
 def format_option_value(value: object, bool_style: str) -> str:
-    """Render an option for CLI/templates; coerce common bool spellings."""
+    """Render an option for CLI/templates; coerce common bool spellings.
+
+    Digit strings ``0`` / ``1`` are **not** treated as booleans. Docker/compose
+    env values are always strings, and games use those digits as world slots,
+    modes, and counts. Actual ``bool`` values and ``true``/``false``/``yes``/
+    ``no`` still follow ``bool_style``.
+    """
 
     if isinstance(value, bool) or (
         isinstance(value, str)
-        and value.lower() in {"true", "false", "1", "0", "yes", "no"}
+        and value.lower() in {"true", "false", "yes", "no"}
     ):
         return format_bool(value, bool_style)
     return str(value)

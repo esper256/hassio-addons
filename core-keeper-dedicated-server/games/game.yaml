@@ -1,0 +1,99 @@
+name: Core Keeper
+steam_app_id: 1963720
+steam_login: anonymous
+steam_branch: public
+# Pin SteamCMD to Linux depots (this add-on is amd64 Linux / HAOS only).
+steam_platform: linux
+validate_on_update: true
+working_dir: /data/game
+data_dir: /data/world
+logs_dir: /data/logs
+# Unity data folder is present whether the binary is CoreKeeperServer or
+# CoreKeeperServer.x86_64 (launch_wrapper.sh accepts either).
+install_marker: CoreKeeperServer_Data
+min_backup_bytes: 1024
+# Unity save-on-SIGTERM; wrapper forwards the signal to the game process.
+stop_timeout_seconds: 90
+stop_stdin_commands: []
+# Fallback roots when the named .world.gzip does not exist yet (first boot
+# often waits until a player joins before writing worlds/). Also used to
+# restore legacy *.tar.gz snapshots.
+backup_paths:
+  - /data/world
+# Active world is a single gzip file under datapath/worlds/<index>.world.gzip
+world_save:
+  strategy: named_path
+  world_name_option: world_index
+  paths:
+    - "{data_dir}/worlds/{world_index}.world.gzip"
+# Wrapper sets up Xvfb, steamclient.so, and prints Game ID. Game argv follows.
+executable:
+  - /opt/launch_wrapper.sh
+# Steamworks client app id (game), not the dedicated-server app id.
+env:
+  SteamAppId: "1621690"
+  SteamGameId: "1621690"
+  LD_LIBRARY_PATH: "/opt/steamcmd/linux64:/data/game/linux64:/data/game"
+bool_style: true_false
+ready_timeout_seconds: 300
+# Direct Connect is the default (lower lag than Steam Datagram Relay alone).
+# run.sh sets SERVER_PORT=7778 so -port matches the HA container port. Steam
+# Game ID join still works alongside IP:port.
+argv_prefix:
+  - -batchmode
+  - -logfile
+  - "{logs_dir}/server.log"
+  - -datapath
+  - "{data_dir}"
+arg_map:
+  world_index: -world
+  world_name: -worldname
+  world_seed: -worldseed
+  world_mode: -worldmode
+  game_id: -gameid
+  server_slots: -maxplayers
+  server_port: -port
+  server_password: -password
+# Cavern teal / lantern amber Ingress theme (from official store art).
+ui_theme:
+  bg: "#0c1618"
+  panel: "#152428"
+  ink: "#e7f4f2"
+  muted: "#7fa8a0"
+  accent: "#3ec8e0"
+  good: "#6fbf8a"
+  bad: "#e07a6a"
+  glow: "#1a3338"
+  wash: "#081012"
+  depth: "#1a140c"
+# Idle vs occupied — join/leave lines are identity-bearing but unproven here.
+player_tracking_mode: presence
+# ready + game_version promoted from a live boot (server.log). Join/leave stay
+# dry-run until a player session proves them.
+log_patterns:
+  ready:
+    - 'Started session with info:'
+  game_version:
+    - 'Game version:\s+(?P<version>\S+)'
+log_pattern_candidates:
+  ready:
+    - 'Started session with info:'
+    - '\bGame ID:'
+    - '\bGameID:'
+    - '----- GameInfo.txt -----'
+    - '\bStarted session\b'
+  player_join:
+    - '\[userid:(?P<player>\d+)\] player .+ connected'
+    - '\[userid:'
+    - 'player .+ connected'
+  player_leave:
+    - 'Disconnected from userid:\s*(?P<player>\S+)'
+    - 'Disconnected from userid:'
+  game_version:
+    - 'Game version:\s+(?P<version>\S+)'
+    - '\bCore Keeper\s+(?P<version>\d+\.\d+\.\d+)'
+    - '\bversion\s+(?P<version>\d+\.\d+\.\d+(?:\.\d+)?)'
+  version_mismatch:
+    - '\bwrong version\b'
+    - '\bversion mismatch\b'
+    - '\bincompatible version\b'

@@ -7,7 +7,9 @@ because config validation failed (for example timeout > 300).
 
 from __future__ import annotations
 
+import hashlib
 import re
+import struct
 import unittest
 from pathlib import Path
 
@@ -94,6 +96,14 @@ def validate_config(path: Path) -> list[str]:
     return errors
 
 
+def _png_size(path: Path) -> tuple[int, int] | None:
+    data = path.read_bytes()
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return int(width), int(height)
+
+
 class HaAppConfigTests(unittest.TestCase):
     def test_game_server_base_is_not_an_ha_app(self) -> None:
         base_configs = [
@@ -114,6 +124,101 @@ class HaAppConfigTests(unittest.TestCase):
         errors: list[str] = []
         for path in configs:
             errors.extend(validate_config(path))
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_installable_apps_have_store_images(self) -> None:
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        errors: list[str] = []
+        for path in configs:
+            icon = path.parent / "icon.png"
+            logo = path.parent / "logo.png"
+            if not icon.is_file():
+                errors.append(f"{path.parent}: missing icon.png (HA store tile)")
+            else:
+                size = _png_size(icon)
+                if size is None:
+                    errors.append(f"{icon}: not a PNG")
+                elif size != (128, 128):
+                    errors.append(
+                        f"{icon}: expected 128x128 HA store tile (got {size[0]}x{size[1]})"
+                    )
+            if not logo.is_file():
+                errors.append(f"{path.parent}: missing logo.png (HA Info header)")
+            else:
+                size = _png_size(logo)
+                if size is None:
+                    errors.append(f"{logo}: not a PNG")
+                elif size != (250, 100):
+                    errors.append(
+                        f"{logo}: expected 250x100 HA Info header (got {size[0]}x{size[1]})"
+                    )
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_store_icons_are_unique_per_game(self) -> None:
+        """Copying another game folder leaves its icon.png behind; hashes must differ."""
+        configs = [
+            p for p in discover_configs(ROOT) if "game-server-base" not in p.parts
+        ]
+        hashes: dict[bytes, str] = {}
+        errors: list[str] = []
+        for path in configs:
+            icon = path.parent / "icon.png"
+            if not icon.is_file():
+                continue
+            digest = hashlib.sha256(icon.read_bytes()).digest()
+            other = hashes.get(digest)
+            if other:
+                errors.append(
+                    f"{path.parent.name} icon.png is identical to {other} "
+                    "(replace leftover art from the folder you copied)"
+                )
+            else:
+                hashes[digest] = path.parent.name
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_compose_addons_dockerignore_excludes_data(self) -> None:
+        dockerfiles = sorted(ROOT.glob("*-dedicated-server/Dockerfile"))
+        self.assertTrue(dockerfiles, "expected game add-on Dockerfiles")
+        errors: list[str] = []
+        for dockerfile in dockerfiles:
+            ignore = dockerfile.parent / ".dockerignore"
+            if not ignore.is_file():
+                errors.append(f"{dockerfile.parent.name}: missing .dockerignore")
+                continue
+            lines = {
+                line.strip()
+                for line in ignore.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            }
+            if "data/" not in lines and "data" not in lines:
+                errors.append(
+                    f"{ignore}: must exclude data/ so compose build context "
+                    "does not upload the Steam/game install"
+                )
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_ingress_theme_accents_are_distinct(self) -> None:
+        """Each game's Ingress accent should differ so store UIs don't look cloned."""
+        plugins = sorted(ROOT.glob("*-dedicated-server/games/game.yaml"))
+        self.assertTrue(plugins, "expected game plugins")
+        accents: dict[str, str] = {}
+        errors: list[str] = []
+        for path in plugins:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            theme = data.get("ui_theme") or {}
+            accent = str(theme.get("accent") or "").strip().lower()
+            if not accent:
+                errors.append(f"{path}: ui_theme.accent is required")
+                continue
+            other = accents.get(accent)
+            if other:
+                errors.append(
+                    f"{path.parent.parent.name} accent {accent} matches {other}"
+                )
+            else:
+                accents[accent] = path.parent.parent.name
         self.assertEqual(errors, [], "\n".join(errors))
 
 
