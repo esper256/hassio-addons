@@ -309,8 +309,16 @@ class CoreKeeperAdminTests(unittest.TestCase):
     def test_parse_steam_ids_skips_invalid(self) -> None:
         mod = _load_defaults()
         self.assertTrue(mod.is_valid_steam64("76561197968471340"))
+        self.assertTrue(mod.is_valid_steam64(str(mod._STEAM64_INDIVIDUAL_BASE)))
+        self.assertTrue(mod.is_valid_steam64(str(mod._STEAM64_INDIVIDUAL_MAX)))
+        self.assertTrue(mod.is_valid_steam64("76561200000000000"))  # past 7656119 prefix
+        self.assertFalse(mod.is_valid_steam64(str(mod._STEAM64_INDIVIDUAL_BASE - 1)))
+        self.assertFalse(mod.is_valid_steam64(str(mod._STEAM64_INDIVIDUAL_MAX + 1)))
+        self.assertFalse(mod.is_valid_steam64("76561190000000000"))  # 17 digits, below base
         self.assertFalse(mod.is_valid_steam64("7656119"))
         self.assertFalse(mod.is_valid_steam64("steam:123"))
+        self.assertFalse(mod.is_valid_steam64("STEAM_0:1:12345"))
+        self.assertFalse(mod.is_valid_steam64("[U:1:12345]"))
         self.assertEqual(
             mod.parse_admin_steam_ids(
                 "76561198012345678, 76561198087654321;76561198012345678"
