@@ -19,7 +19,7 @@ from .backup import EMPTY_WORLD, backup_generation_key
 from .disk import format_bytes
 from .lifecycle import LIFECYCLE_HEALTHY
 from .log_bridge import strip_ansi
-from .version import app_version
+from .version import app_version, supervisor_version
 
 LOG = logging.getLogger("game_server.status_http")
 
@@ -1365,8 +1365,13 @@ def _fmt_ago(timestamp: Any, *, now: float | None = None) -> str:
 
 
 def _format_subtitle(status: dict[str, Any]) -> str:
-    version = str(status.get("app_version") or app_version())
-    subtitle = f"Dedicated server supervisor v{version}"
+    supervisor = str(
+        status.get("supervisor_version") or supervisor_version()
+    ).strip()
+    app = str(status.get("app_version") or app_version()).strip()
+    subtitle = f"Dedicated server supervisor {supervisor}"
+    if app and app not in {"unknown", "", supervisor}:
+        subtitle += f" · app {app}"
     method = str(status.get("install_method") or "steamcmd").strip().lower()
     if method == "package":
         channel = str(status.get("release_channel") or "").strip()
@@ -1657,6 +1662,7 @@ def _ui_view(
     ui_theme: dict[str, str] | None = None,
     toolbox: Any = None,
     extra_examples: dict[str, list[str]] | None = None,
+    alternate_examples: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Formatted strings for the status page and soft-refresh JSON."""
 
@@ -1674,6 +1680,7 @@ def _ui_view(
         toolbox,
         game_name,
         extra_examples=extra_examples,
+        alternate_examples=alternate_examples,
     )
     players_known = bool(monitor.get("players_known"))
     presence_mode = tracking_mode == "presence"
@@ -2144,6 +2151,24 @@ def _prompt_sample_line(item: dict[str, Any]) -> str:
     return last
 
 
+def _configured_pattern_matches_line(
+    configured_items: list[dict[str, Any]], line: str
+) -> bool:
+    text = str(line).strip()
+    if not text:
+        return False
+    for item in configured_items:
+        pat = str(item.get("pattern") or "")
+        if not pat:
+            continue
+        try:
+            if re.search(pat, text, re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+
 _PROMOTE_CATEGORY_ORDER = (
     "ready",
     "game_version",
@@ -2184,12 +2209,53 @@ _PROMOTE_CATEGORY_HELP = {
 }
 
 
+def _examples_from_toolbox(
+    toolbox: Any,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return (configured/not-configured samples, alternate guess lines)."""
+
+    extra: dict[str, list[str]] = {}
+    alts: dict[str, list[str]] = {}
+    try:
+        if hasattr(toolbox, "example_groups_by_category"):
+            groups = toolbox.example_groups_by_category() or {}
+            for category, data in groups.items():
+                if isinstance(data, dict) and not isinstance(data, list):
+                    matches = [
+                        str(line).strip()
+                        for line in list(data.get("matches") or [])
+                        if str(line).strip()
+                    ]
+                    other = [
+                        str(line).strip()
+                        for line in list(data.get("alternates") or [])
+                        if str(line).strip()
+                    ]
+                    if matches:
+                        extra[str(category)] = matches
+                    if other:
+                        alts[str(category)] = other
+                elif isinstance(data, list):
+                    lines = [
+                        str(line).strip() for line in data if str(line).strip()
+                    ]
+                    if lines:
+                        extra[str(category)] = lines
+            return extra, alts
+        extra = toolbox.example_lines_by_category() or {}
+        return extra, {}
+    except Exception:
+        LOG.exception("log-file rescan for pattern prompt failed")
+        return {}, {}
+
+
 def _log_pattern_prompt(
     status: dict[str, Any],
     toolbox: Any,
     game_name: str,
     *,
     extra_examples: dict[str, list[str]] | None = None,
+    alternate_examples: dict[str, list[str]] | None = None,
 ) -> str:
     """Same text as the debug textarea, with log-file rescan examples when possible."""
 
@@ -2197,17 +2263,17 @@ def _log_pattern_prompt(
     patterns = list(log_patterns.get("patterns") or [])
     tracking = str(status.get("player_tracking_mode") or "count")
     extra = extra_examples
+    alts = alternate_examples
     if extra is None and toolbox is not None:
-        try:
-            extra = toolbox.example_lines_by_category()
-        except Exception:
-            LOG.exception("log-file rescan for pattern prompt failed")
-            extra = {}
+        extra, scanned_alts = _examples_from_toolbox(toolbox)
+        if alts is None:
+            alts = scanned_alts
     return _format_promote_prompt(
         game_name,
         patterns,
         player_tracking_mode=tracking,
         extra_examples=extra,
+        alternate_examples=alts,
     )
 
 
@@ -2217,6 +2283,7 @@ def _format_promote_prompt(
     *,
     player_tracking_mode: str = "count",
     extra_examples: dict[str, list[str]] | None = None,
+    alternate_examples: dict[str, list[str]] | None = None,
 ) -> str:
     """Preamble + live regexes and sample lines so an AI can wire game.yaml."""
 
@@ -2236,7 +2303,11 @@ def _format_promote_prompt(
     for item in patterns:
         by_category.setdefault(str(item.get("category") or ""), []).append(item)
     extra = extra_examples or {}
+    alts = alternate_examples or {}
     for category, lines in extra.items():
+        if category and lines and category not in by_category:
+            by_category[category] = []
+    for category, lines in alts.items():
         if category and lines and category not in by_category:
             by_category[category] = []
     categories = [name for name in _PROMOTE_CATEGORY_ORDER if name in by_category]
@@ -2294,12 +2365,50 @@ def _format_promote_prompt(
                 )
                 if sample:
                     lines_out.append(f"    sample: {sample}")
+        alt_lines: list[str] = []
+        seen_alts: set[str] = set()
+
+        def _add_alt(text: str) -> None:
+            line = str(text).strip()
+            if not line or line in seen_alts:
+                return
+            if configured_items and _configured_pattern_matches_line(
+                configured_items, line
+            ):
+                return
+            seen_alts.add(line)
+            alt_lines.append(line)
+
+        for line in alts.get(category) or []:
+            _add_alt(line)
+        if configured_items:
+            for item in guess_hits:
+                _add_alt(_prompt_sample_line(item))
+            kept_scan: list[str] = []
+            for line in scan_lines:
+                if _configured_pattern_matches_line(configured_items, line):
+                    kept_scan.append(line)
+                else:
+                    _add_alt(line)
+            scan_lines = kept_scan
         if scan_lines:
-            lines_out.append("Example log lines (file rescan):")
+            header = (
+                "Example log lines matching the configured regex (file rescan):"
+                if configured_items
+                else "Example log lines (file rescan):"
+            )
+            lines_out.append(header)
             for line in scan_lines[:25]:
                 lines_out.append(f"  {line}")
-        elif display == _NOT_CONFIGURED and not guess_hits:
+        elif display == _NOT_CONFIGURED and not guess_hits and not alt_lines:
             lines_out.append("No sample log lines yet for this category.")
+        if configured_items and alt_lines:
+            lines_out.append(
+                "Other interesting lines (not captured by the configured regex — "
+                "possible better sources):"
+            )
+            for line in alt_lines[:25]:
+                lines_out.append(f"  {line}")
         block = "\n".join(lines_out)
         if display in ("stale", _NOT_CONFIGURED):
             work_blocks.append(block)
@@ -2337,6 +2446,7 @@ def _format_promote_prompt(
             "- Network connect, character select, and in-world spawn are different events. Promote the in-world line (or the pair that matches leave), not the handshake.",
             "- ready means the process is accepting connections (port bind / listening). Do not use a later GameInfo / public-IP / started-session line that can fire after a client already connected.",
             "- Hits do not prove a configured pattern is the right event. Keep it only if it still matches the category meaning.",
+            "- Configured categories also list other interesting lines guesses found. Those can be a better source than the current regex; replace it when a sample is a clearer event.",
             "- version_mismatch is a client rejected for protocol/version. Disconnect reasons (App_Min, AppException_Max, Misc_Timeout, and similar) and crash-dump headers that repeat a version phrase are not mismatch.",
             "- Zero session hits on version_mismatch usually means it did not happen this boot, not that the regex is wrong.",
             "- Omit player_count unless the game logs an integer headcount. Omit any category with no trustworthy line.",

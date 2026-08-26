@@ -12,7 +12,7 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
 ## What you get
 
 - SteamCMD install and updates (`public` or `beta` branch)
-- **Direct Connect by default** (UDP **7778**): friends join by IP:port + password (lower lag than Steam Datagram Relay alone). Steam **Game ID** join still works. There is no public server-browser listing
+- **Direct Connect and Game ID together** (UDP **7778**): not XOR. LAN friends Join Game Via IP; Steam friends paste the Game ID (Valve relay, no port-forward). Cross-play (Epic / Xbox / GOG) uses IP. There is no public server-browser listing
 - Player-aware update restarts (join/leave detection once patterns are promoted)
 - Several world **slots** on one install (`0.world.gzip` …); Open Web UI follows the active slot; backups keep a separate history per slot
 - Generational world backups, plus pre-update and pre-restore safety copies
@@ -34,11 +34,13 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
 
 2. Install **Core Keeper Dedicated Server**.
 3. Open the app → **Documentation** tab for configuration, ports, and Open Web UI notes.
-4. Set at least **World name**. Leave **Game ID** and **Join password** blank unless you already have values to pin. Leave the default **World slot** `0` unless you already keep several caverns. Nothing is listed on a public browser.
+4. Set at least **World name**. Leave **Game ID**, **Join password**, and **Admin Steam IDs** blank unless you already have values to pin. Leave the default **World slot** `0` unless you already keep several caverns. Nothing is listed on a public browser.
 5. **Start**. First Steam download is ~650 MB.
-6. Forward **UDP 7778** on your router to the Home Assistant host (change the Network port in HA only if 7778 is already taken).
-7. Copy the **Game ID** and **Join password** from **Logs**. Do not post them in a public Discord/forum if you want the cavern private.
-8. In Core Keeper → **Multiplayer** → **Join Game Via IP** (host IP and port **7778**, plus the join password), or **Join Game** with the Game ID.
+6. Copy the **Game ID** and **Join password** from **Logs**. Do not post them in a public Discord/forum if you want the cavern private.
+7. In Core Keeper → **Multiplayer**:
+   - **Join Game** with the Game ID (Steam Datagram Relay — no router forward)
+   - **Join Game Via IP** with the Home Assistant host LAN IP, port **7778**, and the join password
+8. Forward **UDP 7778** on your router to the Home Assistant host only if someone will Join Via IP from outside the LAN (change the Network port in HA only if 7778 is already taken). Game ID joiners do not need that forward.
 
 With the app started, use **Open Web UI** on the Info tab (optional: **Show in sidebar**).
 
@@ -56,9 +58,17 @@ Restoring stops the server, makes a world backup, then restores onto the active 
 
 ---
 
-## Joining (Direct Connect + Game ID)
+## Joining (Direct Connect **and** Game ID)
 
-Direct Connect is the default: the dedicated server listens on **UDP 7778** (`-port`) with a join **password**. That is the lower-lag path (no Valve relay). Steam users can still paste the **Game ID** (Steam Datagram Relay). Cross-play IP join uses the password; the Game ID remains the secret for relay join.
+Official `ARGUMENTS.txt`: passing `-port` **adds** Direct Connect (the server accepts IP joins and cross-play). Omitting `-port` makes it Steam Datagram Relay only, with no IP join. Game ID (`-gameid`) is independent. This app always passes `-port`, so **both methods are on at once**. Mixed play is the point: household on the LAN via IP, remote Steam friends via Game ID.
+
+| How they join | Who | Port-forward UDP 7778? | Password? |
+| --- | --- | --- | --- |
+| **Join Game** (Game ID) | Steam | No — Valve relay | No (the Game ID is the secret) |
+| **Join Game Via IP** on the LAN | Any platform | No | Yes |
+| **Join Game Via IP** from the internet | Any platform (cross-play: Epic / Xbox / GOG) | Yes | Yes |
+
+Direct Connect is the lower-lag path (no Valve relay). Game ID join hides the host IP and needs no router change. Cross-play IP join uses the password; the Game ID remains the secret for relay join.
 
 Unity’s `GameInfo.txt` / `Started session with info:` line often shows the router WAN address after `failed get internal IP`. That is Steam discovering a public IP, not the address LAN clients should type. On the LAN, **Join Game Via IP** still uses the Home Assistant host’s LAN IP and port **7778**. Ingress **Server: running** means the Unity process is up; the game port is not open until Logs show `Listening on ip:`. A first Direct Connect attempt during ECS conversion can be connection refused; a retry after that line works. Stale SteamNet sockets from a previous process can log `InvalidState` / `Misc_Timeout` / `SteamNet Bug` on the next boot — that is leftover UDP cleanup, not a bind failure.
 
@@ -68,7 +78,17 @@ Leave **Game ID** and **Join password** blank for stable per-install values (gen
 
 Wiping the whole add-on data disk is a new install and gets a new Game ID and join password. Restoring a Home Assistant backup of this app restores the salt (and the world), so the codes stay put.
 
-Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-forwarding and keeps the host IP off the wire, and it can add latency. There is no SDR quality slider on the dedicated server. To use relay-only (no published game port), you would have to drop `-port` — this app does not do that.
+Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-forwarding and keeps the host IP off the wire, and it can add latency. There is no SDR quality slider on the dedicated server. This app does not omit `-port` (that would drop IP join and cross-play).
+
+---
+
+## Who is admin (the server is not a player)
+
+The dedicated server process is not a character. On a **new** world, the first player who joins becomes a full admin (privilege 2 in `Admins.json` under `-datapath` `/data/world`). From in-game, that person opens ESC → player list → star to grant others. Admins can kick/ban and reset the Game ID.
+
+That first-join race is easy to lose to a guest. **Admin Steam IDs** (comma-separated SteamID64, 17 digits starting with `7656119`) merges those accounts into `Admins.json` as privilege-2 admins **before** Unity starts, and does not wipe anyone starred in-game. Leave it blank to keep first-joiner behavior. Steam only — Epic / Xbox / GOG clients have no SteamID in this file.
+
+Find a SteamID64 from the Steam profile URL or a lookup site; it is not the friend-code shown in Core Keeper.
 
 ---
 
@@ -96,7 +116,7 @@ Bouncing back and forth is safe: each slot is a separate file, and backup retent
 docker compose -f core-keeper-dedicated-server/docker-compose.yml up -d --build
 ```
 
-Set `WORLD_NAME` in the compose environment. Leave `GAME_ID` / `SERVER_PASSWORD` unset for stable generated values. UDP **7778** for Direct Connect; status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
+Set `WORLD_NAME` in the compose environment. Leave `GAME_ID` / `SERVER_PASSWORD` unset for stable generated values. Optional `ADMIN_STEAM_IDS` pins full admins. UDP **7778** for Direct Connect (forward only for remote IP join); Game ID join needs no forward. Status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
 
 First SteamCMD download is ~650 MB. If Logs show `Connecting anonymously to Steam Public... Retrying... FAILED (No Connection)` while HTTPS to Steam’s CDN works, the Docker **bridge** cannot reach Steam connection managers. That is an environment NAT issue, not this app. See [Local Compose](../game-server-base/README.md#local-compose). Do **not** turn on HA `host_network`.
 
@@ -106,7 +126,7 @@ First SteamCMD download is ~650 MB. If Logs show `Connecting anonymously to St
 
 ```text
 /data/game/          # Steam install (CoreKeeperServer, GameInfo.txt, GameID.txt)
-/data/world/         # -datapath (ServerConfig.json, worlds/<n>.world.gzip)
+/data/world/         # -datapath (ServerConfig.json, Admins.json, worlds/<n>.world.gzip)
 /data/logs/          # Unity -logfile (server.log)
 /data/backups/       # world backups (names include the slot file)
 /data/supervisor/    # status.json, steam gate, log captures, instance salt

@@ -3,12 +3,21 @@
 Kept outside the shared ``game_server`` package so title-specific naming
 never leaks into ``game-server-base``.
 
-Core Keeper clients join with a **Game ID** (Steam Datagram Relay) and,
-when Direct Connect is on (this app's default), also by IP:port + password.
+Join is **both** at once, not XOR. Official ``ARGUMENTS.txt``: ``-port``
+makes the server accept Direct Connect (IP); omit ``-port`` and it is Steam
+Datagram Relay only. ``-gameid`` is independent. This app always passes
+``-port``, so LAN IP, forwarded WAN IP, and Game ID work together — mixed
+household-on-LAN + remote-Steam-on-Game-ID is the intended default.
+
 An empty or invalid ``-gameid`` makes the dedicated server mint a new ID on
 start, which would change the join code and strand players. An omitted
 ``-password`` under Direct Connect would mint a new IP-join password. This
 helper pins stable per-install values so friends can keep using the same codes.
+
+The dedicated server is not a player. Pugstorm makes the first character who
+joins a new world a full admin (``Admins.json``, privilege 2). Optional
+``admin_steam_ids`` merges SteamID64 values into that file so a guest cannot
+win first-join admin. Blank leaves first-joiner / in-game star behavior.
 """
 
 from __future__ import annotations
@@ -16,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -31,6 +41,11 @@ _GAME_ID_MIN = 15
 _GAME_ID_MAX = 28
 _PASSWORD_LENGTH = 16
 _PASSWORD_MAX = 28
+_ADMINS_FILENAME = "Admins.json"
+_PRIVILEGE_FULL_ADMIN = 2
+# SteamID64 for individual accounts: 7656119xxxxxxxxxx (17 digits).
+_STEAM64_RE = re.compile(r"^7656119\d{10}$")
+_STEAM_ID_SPLIT = re.compile(r"[\s,;]+")
 
 
 def is_valid_game_id(value: object) -> bool:
@@ -257,11 +272,188 @@ def resolve_server_password(
     return default_server_password(state_dir=state_dir)
 
 
+def is_valid_steam64(value: object) -> bool:
+    """True when ``value`` looks like a SteamID64 (17 digits, 7656119…)."""
+
+    text = str(value or "").strip()
+    return bool(_STEAM64_RE.fullmatch(text))
+
+
+def parse_admin_steam_ids(value: object) -> list[int]:
+    """Split a comma/space/semicolon list of SteamID64 values; skip invalids."""
+
+    text = str(value or "").strip()
+    if not text:
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for part in _STEAM_ID_SPLIT.split(text):
+        token = part.strip()
+        if not token:
+            continue
+        if not is_valid_steam64(token):
+            _warn(
+                "Ignoring invalid Core Keeper admin Steam ID "
+                f"({token!r}); expected a 17-digit SteamID64 starting "
+                "with 7656119."
+            )
+            continue
+        steam_id = int(token)
+        if steam_id in seen:
+            continue
+        seen.add(steam_id)
+        out.append(steam_id)
+    return out
+
+
+def resolve_admin_steam_ids(
+    *,
+    options_file: str | Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[int]:
+    """Prefer env ``ADMIN_STEAM_IDS``, then HA ``admin_steam_ids``."""
+
+    env = environ if environ is not None else os.environ
+    from_env = str(env.get("ADMIN_STEAM_IDS") or "").strip()
+    if from_env:
+        return parse_admin_steam_ids(from_env)
+
+    path = Path(
+        options_file
+        or env.get("OPTIONS_FILE")
+        or env.get("HASSIO_OPTIONS_FILE")
+        or "/data/options.json"
+    )
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            from_options = str(data.get("admin_steam_ids") or "").strip()
+            if from_options:
+                return parse_admin_steam_ids(from_options)
+    return []
+
+
+def _entry_steam_id(entry: object) -> int | None:
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("steamId", entry.get("steam_id"))
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _entry_index(entry: object) -> int:
+    if not isinstance(entry, dict):
+        return 0
+    try:
+        return int(entry.get("index") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def ensure_admins(
+    *,
+    options_file: str | Path | None = None,
+    data_dir: str | Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> Path | None:
+    """Merge pinned SteamID64 admins into ``Admins.json`` under ``-datapath``.
+
+    Blank option: do not create or rewrite the file (first player to join a
+    new world becomes privilege-2 admin; in-game ESC star still works).
+    Non-empty: add missing Steam IDs at privilege 2; never delete in-game
+    admins; bump privilege to 2 when a pinned ID is already listed lower.
+    """
+
+    env = environ if environ is not None else os.environ
+    steam_ids = resolve_admin_steam_ids(options_file=options_file, environ=env)
+    world_root = Path(data_dir or env.get("DATA_DIR") or "/data/world")
+    path = world_root / _ADMINS_FILENAME
+    if not steam_ids:
+        print(
+            "Admins: none pinned; first player to join a new world becomes "
+            "admin (in-game ESC player-list star). Set admin_steam_ids to "
+            "pin household SteamID64 values."
+        )
+        return None
+
+    world_root.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {"adminList": []}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            _warn(f"Ignoring unreadable {_ADMINS_FILENAME} ({exc}); rewriting.")
+            loaded = {}
+        if isinstance(loaded, dict):
+            payload = loaded
+
+    raw_list = payload.get("adminList")
+    admin_list: list[object]
+    if isinstance(raw_list, list):
+        admin_list = list(raw_list)
+    else:
+        admin_list = []
+
+    by_id: dict[int, dict] = {}
+    max_index = 0
+    for entry in admin_list:
+        steam_id = _entry_steam_id(entry)
+        if steam_id is not None and isinstance(entry, dict):
+            by_id[steam_id] = entry
+        max_index = max(max_index, _entry_index(entry))
+
+    added = 0
+    promoted = 0
+    for steam_id in steam_ids:
+        existing = by_id.get(steam_id)
+        if existing is not None:
+            try:
+                current = int(existing.get("privileges") or 0)
+            except (TypeError, ValueError):
+                current = 0
+            if current < _PRIVILEGE_FULL_ADMIN:
+                existing["privileges"] = _PRIVILEGE_FULL_ADMIN
+                existing["steamId"] = steam_id
+                promoted += 1
+            continue
+        max_index += 1
+        entry = {
+            "index": max_index,
+            "privileges": _PRIVILEGE_FULL_ADMIN,
+            "name": "",
+            "steamId": steam_id,
+        }
+        admin_list.append(entry)
+        by_id[steam_id] = entry
+        added += 1
+
+    payload["adminList"] = admin_list
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=4) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    print(
+        f"Admins: merged {len(steam_ids)} SteamID64 "
+        f"(added {added}, privilege-bumped {promoted}) into {path} "
+        f"(privilege {_PRIVILEGE_FULL_ADMIN}). In-game admins were kept."
+    )
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     what = (args[0] if args else "game-id").strip().lower().replace("_", "-")
     if what in {"password", "server-password"}:
         print(resolve_server_password())
+    elif what in {"ensure-admins", "admins"}:
+        ensure_admins()
     else:
         print(resolve_game_id())
     return 0

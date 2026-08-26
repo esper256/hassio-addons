@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0
+
+- Version scheme: `{supervisor}.{minor}.{game patch}`. Shared supervisor is **3.0**; this app is **3.0.0**. Future supervisor features bump every game to `3.1.0`; a Core Keeper-only fix is `3.0.1`
+- Ingress subtitle advertises supervisor **3.0** separately from the HA app version
+- Promote prompt lists other interesting log lines on configured patterns (guess hits the current regex did not capture)
+- Shared dry-run guess regexes refreshed from the four live dedicated servers
+- Join is **both** Direct Connect (`-port`) and Game ID (Steam Datagram Relay), not XOR. Mixed LAN IP + remote Game ID is the default; port-forward UDP 7778 only for remote IP join; password is IP-only
+- Optional **Admin Steam IDs** merges SteamID64 values into `Admins.json` as privilege-2 admins. Blank keeps first-joiner admin (the dedicated server is not a player)
+
 ## 1.0.2
 
 - Ready pattern is `Listening on ip:` (UDP port bound). `Started session with info:` is GameInfo / public-IP print and can happen after a client already connected

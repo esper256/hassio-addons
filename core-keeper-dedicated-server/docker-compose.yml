@@ -6,9 +6,11 @@
 # (below), or put it behind your own reverse-proxy auth. Do not publish 8099 on
 # a public interface.
 #
-# Join is Direct Connect on UDP 7778 by default (IP:port + password). Steam
-# Game ID join still works. Map 7778/udp on the host; forward it on your router
-# for friends outside the LAN.
+# Join is both Direct Connect (UDP 7778, IP:port + password) and Steam Game ID
+# (Datagram Relay) at once. Map 7778/udp on the host; forward it on your router
+# only for remote IP join. Game ID joiners need no port-forward. Optional
+# ADMIN_STEAM_IDS pins full admins in Admins.json (first joiner is otherwise
+# auto-admin).
 services:
   corekeeper:
     build:
@@ -31,6 +33,9 @@ services:
       # Leave GAME_ID / SERVER_PASSWORD unset for stable generated values.
       # GAME_ID: yourExistingJoinCode
       # SERVER_PASSWORD: yourJoinPassword
+      # Optional: pin household SteamID64 admins (comma-separated). Blank =
+      # first player to join a new world becomes admin.
+      # ADMIN_STEAM_IDS: "76561198012345678,76561198087654321"
       UPDATE_ON_START: "true"
       AUTO_UPDATE_CHECK_HOUR: "5"
       AUTO_UPDATE_INTERVAL_MINUTES: "1440"

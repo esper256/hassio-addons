@@ -1,3 +1,5 @@
 """Generic SteamCMD dedicated game server supervisor for HAOS / Docker."""
 
-__version__ = "1.0.0"
+from .version import SUPERVISOR_VERSION as __version__
+
+__all__ = ["__version__"]

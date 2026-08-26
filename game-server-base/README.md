@@ -65,7 +65,18 @@ Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flag
 
    Copies **only** `game_server/` into each sibling add-on that has `config.yaml` + `games/` (bytecode `__pycache__` is skipped). Never overwrites `games/*.yaml`. Not part of the Docker build. CI runs `./game-server-base/check-addon-sync.sh` so forgotten syncs fail the build. Running the unit tests does not dirty this check.
 
-6. Bump that add-on’s `config.yaml` version, then install via the HA repo or Docker compose modeled on an existing game.
+6. Bump versions, then install via the HA repo or Docker compose modeled on an existing game.
+
+   **Version scheme:** `{supervisor_major}.{supervisor_minor}.{game_patch}`.
+   The shared supervisor advertises major.minor in `game_server/version.py`
+   (`SUPERVISOR_VERSION`, currently `3.0`). Each game `config.yaml` is that
+   plus a patch (`3.0.0` for the first release on supervisor 3.0).
+
+   - Supervisor change → bump `SUPERVISOR_VERSION` (e.g. `3.0` → `3.1`) **and**
+     set **every** game add-on to `{new}.0` (`3.1.0`) so users see them all
+     update together.
+   - Game-only fix (no supervisor change) → bump that game’s patch only
+     (`3.1.0` → `3.1.1`). Leave other games and `SUPERVISOR_VERSION` alone.
 
 **Copy `run.sh`’s `export SERVER_PORT=…` when HA publishes a container port the game must bind** (Necesse, Factorio, Stationeers, Core Keeper Direct Connect). The Network UI remaps the *host* port; the process still has to listen on the container port in `config.yaml`. Do **not** set `host_network: true`. Titles that join only through a relay with no listen port can omit it — Core Keeper is not that case: Direct Connect (`-port`) is the default, and Steam Game ID join still works alongside it.
 
@@ -186,7 +197,7 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 - Prefer many broad, case-insensitive guesses (over-match) over one clever regex. The debug table shows **one row per category** (Mode / Hits / recent matches); regex text stays out of the UI.
 - Turn on **Debug mode**, start the server, watch which categories light up (green = active, orange = dry-run), then promote a precise regex into `log_patterns` for that category.
 - Copy the debug textarea (or **Troubleshooting → Log pattern prompt**, `/api/logs/prompt`) into an AI chat. Both are the same text: live hits plus a log-file rescan (the live tailer starts at EOF, so startup lines are only in the rescan).
-- Write a new precise regex from the sample lines. Do not copy guess regexes — a guess can hit the right line with the wrong pattern. Join and leave must capture the **same** identity token (Steam id, internal userid, and display name are different namespaces). `ready` is port bind / accepting connections, not a later GameInfo or public-IP line.
+- Write a new precise regex from the sample lines. Do not copy guess regexes — a guess can hit the right line with the wrong pattern. Join and leave must capture the **same** identity token (Steam id, internal userid, and display name are different namespaces). `ready` is port bind / accepting connections, not a later GameInfo or public-IP line. Configured categories still list **other interesting lines** guesses found, so a working regex can still be replaced later.
 - Without Debug mode, Ingress hides the HTML table. The **Log pattern prompt** link still works.
 - Without active join/leave patterns, “update only when empty” cannot wait for players to leave.
 
@@ -211,7 +222,7 @@ PYTHONPATH=game-server-base python3 -m unittest discover -s game-server-base/tes
 python3 -m unittest discover -s tests -q
 ```
 
-CI runs both suites (plus `check-addon-sync.sh`). After supervisor changes: sync → bump **each** game add-on version → rebuild/reinstall.
+CI runs both suites (plus `check-addon-sync.sh`). After supervisor changes: sync → bump `SUPERVISOR_VERSION` if needed → set **each** game add-on to `{major}.{minor}.0` → rebuild/reinstall.
 
 ---
 

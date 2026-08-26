@@ -1,14 +1,26 @@
-"""Resolve the packaged Home Assistant app / image version."""
+"""Resolve supervisor and packaged Home Assistant app / image versions."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+# Major.minor of the shared supervisor. Game add-on versions are
+# ``{this}.{game_patch}`` (e.g. supervisor 3.0 → add-on 3.0.0; a game-only
+# reroll is 3.0.1). Bump this when the supervisor changes, then set every
+# game ``config.yaml`` to ``{new}.0``.
+SUPERVISOR_VERSION = "3.0"
+
 _VERSION_FILES = (
     Path("/etc/hassio_app_version"),
     Path("/APP_VERSION"),
 )
+
+
+def supervisor_version() -> str:
+    """Return the vendored supervisor major.minor (not the HA app patch)."""
+
+    return SUPERVISOR_VERSION
 
 
 def app_version() -> str:

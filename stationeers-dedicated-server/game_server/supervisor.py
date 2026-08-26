@@ -27,7 +27,7 @@ from .process_manager import ProcessManager
 from .status_http import StatusServer
 from .steam_gate import configure_gate
 from .steamcmd import SteamCMDError
-from .version import app_version
+from .version import app_version, supervisor_version
 from .world_save import (
     apply_world_upload,
     backup_sources_for,
@@ -519,6 +519,7 @@ class GameServerSupervisor:
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
+            "supervisor_version": supervisor_version(),
             "steam_app_id": self.plugin.steam_app_id,
             "install_method": (
                 "package" if self.plugin.uses_package_install else "steamcmd"
@@ -1365,6 +1366,7 @@ def main(argv: list[str] | None = None) -> int:
     version = app_version()
     LOG.info("============================================================")
     LOG.info("Home Assistant app version: %s", version)
+    LOG.info("Supervisor version: %s", supervisor_version())
     LOG.info("============================================================")
 
     plugin_path = resolve_plugin_path(args.plugin)

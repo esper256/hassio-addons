@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -104,7 +105,8 @@ from game_server.steamcmd import (  # noqa: E402
     wait_for_app_info,
 )
 from game_server.supervisor import GameServerSupervisor  # noqa: E402
-from game_server.version import app_version  # noqa: E402
+from game_server.version import SUPERVISOR_VERSION, app_version, supervisor_version  # noqa: E402
+from game_server.patterns import DEFAULT_CANDIDATE_PATTERNS  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "example.game.yaml"
 NECESSE_PLUGIN = ROOT.parent / "necesse-dedicated-server" / "games" / "game.yaml"
@@ -216,6 +218,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("SERVER_SLOTS", ck_keys)
         self.assertIn("SERVER_PORT", ck_keys)
         self.assertIn("SERVER_PASSWORD", ck_keys)
+        self.assertIn("ADMIN_STEAM_IDS", ck_keys)
         self.assertNotIn("JAVA_OPTS", ck_keys)
 
 
@@ -1747,6 +1750,13 @@ class VersionTests(unittest.TestCase):
             else:
                 os.environ["APP_VERSION"] = old
 
+    def test_supervisor_version_is_major_minor(self) -> None:
+        self.assertEqual(supervisor_version(), SUPERVISOR_VERSION)
+        self.assertRegex(SUPERVISOR_VERSION, r"^\d+\.\d+$")
+        import game_server
+
+        self.assertEqual(game_server.__version__, SUPERVISOR_VERSION)
+
 
 class StatusFormatTests(unittest.TestCase):
     def test_html_page_placeholders_are_only_known_fields(self) -> None:
@@ -2613,7 +2623,7 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(installed, "")
         self.assertEqual(
             _format_subtitle({"app_version": "2.1.12", "steamcmd_version": "1785186678"}),
-            "Dedicated server supervisor v2.1.12 · SteamCMD 1785186678",
+            f"Dedicated server supervisor {SUPERVISOR_VERSION} · app 2.1.12 · SteamCMD 1785186678",
         )
         self.assertEqual(
             _format_subtitle(
@@ -2624,7 +2634,13 @@ class StatusFormatTests(unittest.TestCase):
                     "steamcmd_version": "should-be-ignored",
                 }
             ),
-            "Dedicated server supervisor v1.0.9 · stable channel",
+            f"Dedicated server supervisor {SUPERVISOR_VERSION} · app 1.0.9 · stable channel",
+        )
+        self.assertEqual(
+            _format_subtitle(
+                {"supervisor_version": "3.0", "app_version": "3.0.0"}
+            ),
+            "Dedicated server supervisor 3.0 · app 3.0.0",
         )
         version, build, _installed = _format_game_version(
             {
@@ -2923,6 +2939,38 @@ class StatusFormatTests(unittest.TestCase):
         )
         self.assertIn("Example log lines (file rescan):", with_scan)
         self.assertIn("Alice joined the cavern", with_scan)
+        configured_alts = _format_promote_prompt(
+            "ExampleGame",
+            [
+                {
+                    "mode": "active",
+                    "category": "player_join",
+                    "pattern": r"\[userid:(?P<player>\d+)\] player \S+ connected",
+                    "hits": 1,
+                    "last_line": "[userid:9] player Test connected",
+                },
+                {
+                    "mode": "dry_run",
+                    "category": "player_join",
+                    "pattern": r"\bconnected\b",
+                    "hits": 2,
+                    "recent_lines": ["Accepted connection from 1 with result OK"],
+                },
+            ],
+            extra_examples={
+                "player_join": ["[userid:9] player Test connected"]
+            },
+            alternate_examples={
+                "player_join": ["Accepted connection from 1 with result OK"]
+            },
+        )
+        self.assertIn("matching the configured regex", configured_alts)
+        self.assertIn("Other interesting lines", configured_alts)
+        self.assertIn("Accepted connection from 1 with result OK", configured_alts)
+        self.assertIn(
+            "other interesting lines guesses found",
+            configured_alts,
+        )
         view_scan = _ui_view(
             {
                 "running": True,
@@ -3685,6 +3733,95 @@ class LogToolsTests(unittest.TestCase):
             report = box.suggest(lines=50)
             self.assertEqual(report["not_configured"], {})
             self.assertEqual(report["configured"], {})
+
+    def test_suggest_configured_keeps_alternate_guess_lines(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            player_join=[r"\[userid:(?P<player>\d+)\] player \S+ connected"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text(
+                "[userid:9] player Test connected\n"
+                "Accepted connection from 1 with result OK\n",
+                encoding="utf-8",
+            )
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            groups = box.example_groups_by_category(lines=50)
+            join = groups["player_join"]
+            self.assertTrue(any("userid:9" in line for line in join["matches"]))
+            self.assertTrue(
+                any("Accepted connection" in line for line in join["alternates"])
+            )
+            self.assertFalse(
+                any("Accepted connection" in line for line in join["matches"])
+            )
+
+
+class GenericCandidatePatternTests(unittest.TestCase):
+    def test_all_generic_candidates_compile(self) -> None:
+        for category, patterns in DEFAULT_CANDIDATE_PATTERNS.items():
+            for pattern in patterns:
+                try:
+                    re.compile(pattern, re.IGNORECASE)
+                except re.error as exc:
+                    self.fail(f"{category}: {pattern!r} failed to compile: {exc}")
+
+    def test_generic_candidates_hit_common_log_shapes(self) -> None:
+        samples = {
+            "ready": [
+                "Listening on ip: 0.0.0.0",
+                "Started server using port 14159",
+                "Hosting game at 34197",
+                "changing state from(CreatingGame) to(InGame)",
+                "successfully loaded world file",
+                "registered with session #12",
+            ],
+            "player_join": [
+                '[JOIN] Alice joined the game',
+                'Client "Bob" connected on slot 1/8',
+                "[userid:9] player Test connected",
+                "Accepted connection from 1 with result OK",
+                "Client: Sam (123). Connected",
+            ],
+            "player_leave": [
+                "[LEAVE] Alice left the game",
+                "Disconnected from userid:9",
+                "Client disconnected: timeout | Bob",
+                "Player 7656 (\"Name\") disconnected",
+            ],
+            "players_empty": [
+                "No clients connected",
+                "0 players online",
+            ],
+            "game_version": [
+                "Game version: 1.2.3",
+                "game version 1.3.1",
+                "Version : 0.2.5029.24605",
+                "Loading dedicated server on version 1.3.1",
+            ],
+            "version_mismatch": [
+                'Client "1" had wrong version (1.3.0)',
+                "RpcSystem received bad protocol version",
+                "outdated client",
+            ],
+        }
+        compiled = {
+            category: [
+                re.compile(pattern, re.IGNORECASE) for pattern in patterns
+            ]
+            for category, patterns in DEFAULT_CANDIDATE_PATTERNS.items()
+        }
+        for category, lines in samples.items():
+            regexes = compiled[category]
+            for line in lines:
+                self.assertTrue(
+                    any(rx.search(line) for rx in regexes),
+                    f"{category} generics missed {line!r}",
+                )
 
 
 class PackageInstallTests(unittest.TestCase):
