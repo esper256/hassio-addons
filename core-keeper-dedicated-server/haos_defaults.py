@@ -4,10 +4,10 @@ Kept outside the shared ``game_server`` package so title-specific naming
 never leaks into ``game-server-base``.
 
 Core Keeper clients join with a **Game ID** (Steam Datagram Relay), not an
-IP:port. An empty ``-gameid`` makes the dedicated server mint a new ID on
-start, which would change the join code after every restart. This helper
-pins a stable per-install ID (or an explicit HA option) so friends can
-keep using the same code.
+IP:port. An empty or invalid ``-gameid`` makes the dedicated server mint a
+new ID on start, which would change the join code and strand players. This
+helper pins a stable per-install ID (or an explicit HA option) so friends
+can keep using the same code.
 """
 
 from __future__ import annotations
@@ -16,13 +16,29 @@ import hashlib
 import json
 import os
 import secrets
+import sys
 from pathlib import Path
 
 INSTANCE_SALT_NAME = "instance_salt"
 # Official ARGUMENTS.txt: 15–28 alphanumeric characters; may not include
-# Y, y, x, 0, or O. Also skip lookalikes I/l/o so the ID stays readable.
+# Y, y, x, 0, or O. Generated IDs also skip lookalikes I/l/o so the code
+# stays readable; user-pinned IDs only have to satisfy the official rules.
+_OFFICIAL_FORBIDDEN = frozenset("Yyx0O")
 _GAME_ID_ALPHABET = "abcdefghijkmnpqrstuvwzABCDEFGHJKLMNPQRSTUVWXZ123456789"
 _GAME_ID_LENGTH = 20
+_GAME_ID_MIN = 15
+_GAME_ID_MAX = 28
+
+
+def is_valid_game_id(value: object) -> bool:
+    """True when ``value`` is a Game ID the dedicated server will accept."""
+
+    text = str(value or "").strip()
+    if not (_GAME_ID_MIN <= len(text) <= _GAME_ID_MAX):
+        return False
+    if not text.isalnum():
+        return False
+    return not (set(text) & _OFFICIAL_FORBIDDEN)
 
 
 def ensure_instance_salt(path: Path) -> str:
@@ -68,18 +84,60 @@ def default_game_id(
     return "".join(chars)
 
 
+def _warn(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _read_gameid_file(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("gameid:"):
+            return stripped.split(":", 1)[1].strip()
+    return text.splitlines()[0].strip()
+
+
+def _read_server_config_game_id(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("gameId") or "").strip()
+
+
 def resolve_game_id(
     *,
     options_file: str | Path | None = None,
     state_dir: str | Path | None = None,
+    install_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> str:
-    """Prefer an explicit Game ID; otherwise generate a stable default."""
+    """Prefer an explicit Game ID; otherwise reuse a persisted one; else generate.
+
+    Order: valid env ``GAME_ID``, valid HA ``game_id``, ``GameID.txt`` /
+    ``GameInfo.txt`` next to the binary, ``ServerConfig.json`` ``gameId``, then
+    the salt-derived default. Invalid values are skipped so the dedicated
+    server never sees a code it would replace with a random one.
+    """
 
     env = environ if environ is not None else os.environ
+    candidates: list[tuple[str, str]] = []
+
     from_env = str(env.get("GAME_ID") or "").strip()
     if from_env:
-        return from_env
+        candidates.append(("GAME_ID", from_env))
 
     path = Path(
         options_file
@@ -95,7 +153,32 @@ def resolve_game_id(
         if isinstance(data, dict):
             from_options = str(data.get("game_id") or "").strip()
             if from_options:
-                return from_options
+                candidates.append(("options.game_id", from_options))
+
+    game_root = Path(
+        install_dir or env.get("INSTALL_DIR") or "/data/game"
+    )
+    candidates.append(("GameID.txt", _read_gameid_file(game_root / "GameID.txt")))
+    candidates.append(("GameInfo.txt", _read_gameid_file(game_root / "GameInfo.txt")))
+
+    world_root = Path(data_dir or env.get("DATA_DIR") or "/data/world")
+    candidates.append(
+        (
+            "ServerConfig.json",
+            _read_server_config_game_id(world_root / "ServerConfig.json"),
+        )
+    )
+
+    for source, value in candidates:
+        if not value:
+            continue
+        if is_valid_game_id(value):
+            return value
+        _warn(
+            f"Ignoring invalid Core Keeper Game ID from {source} "
+            f"({len(value)} chars); the dedicated server would mint a new "
+            "random code if this were passed through."
+        )
 
     return default_game_id(state_dir=state_dir)
 

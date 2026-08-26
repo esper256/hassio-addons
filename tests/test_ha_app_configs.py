@@ -199,6 +199,28 @@ class HaAppConfigTests(unittest.TestCase):
                 )
         self.assertEqual(errors, [], "\n".join(errors))
 
+    def test_ingress_theme_accents_are_distinct(self) -> None:
+        """Each game's Ingress accent should differ so store UIs don't look cloned."""
+        plugins = sorted(ROOT.glob("*-dedicated-server/games/game.yaml"))
+        self.assertTrue(plugins, "expected game plugins")
+        accents: dict[str, str] = {}
+        errors: list[str] = []
+        for path in plugins:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            theme = data.get("ui_theme") or {}
+            accent = str(theme.get("accent") or "").strip().lower()
+            if not accent:
+                errors.append(f"{path}: ui_theme.accent is required")
+                continue
+            other = accents.get(accent)
+            if other:
+                errors.append(
+                    f"{path.parent.parent.name} accent {accent} matches {other}"
+                )
+            else:
+                accents[accent] = path.parent.parent.name
+        self.assertEqual(errors, [], "\n".join(errors))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,12 +12,13 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
 ## What you get
 
 - SteamCMD install and updates (`public` or `beta` branch)
-- **Game ID join** via Steam Datagram Relay (no router port-forward for the game)
+- **Private by default:** Game ID join via Steam Datagram Relay. There is no public server browser listing and no published UDP game port. Anyone who should play needs the Game ID (treat it like a password)
 - Player-aware update restarts (join/leave detection once patterns are promoted)
+- Several world **slots** on one install (`0.world.gzip` …); Open Web UI backs up the active slot
 - Generational world backups, plus pre-update and pre-restore safety copies
 - **Open Web UI**: status, players, game version / updates, world download, restore, upload, troubleshooting
 - HA notifications for crash / update failure / version mismatch
-- Image includes Xvfb — Core Keeper’s Unity dedicated server needs a virtual display
+- Image includes Xvfb — Pugstorm’s dedicated server needs a virtual display (world gen uses the GPU; `-nographics` is not supported)
 
 **Architecture:** amd64 only (SteamCMD). Not offered on aarch64 HAOS.
 
@@ -33,9 +34,10 @@ SteamCMD keeps the build current, the world is backed up automatically, and **Op
 
 2. Install **Core Keeper Dedicated Server**.
 3. Open the app → **Documentation** tab for configuration, Game ID join, and Open Web UI notes.
-4. Set at least **World name**, then **Start**.
-5. Copy the **Game ID** from **Logs** (`Game ID: …`).
-6. In Core Keeper → **Multiplayer** → **Join Game**, paste that Game ID.
+4. Set at least **World name**. Leave **Game ID** blank. Leave the default **World slot** `0` unless you already keep several caverns. The server stays **private** (invite-only Game ID) — there is nothing to turn off for listing.
+5. **Start**. First Steam download is ~650 MB.
+6. Copy the **Game ID** from **Logs** (`Game ID: …`). Do not post it in a public Discord/forum if you want the cavern private.
+7. In Core Keeper → **Multiplayer** → **Join Game**, paste that Game ID.
 
 With the app started, use **Open Web UI** on the Info tab (optional: **Show in sidebar**).
 
@@ -55,9 +57,23 @@ Restoring stops the server, makes a world backup, then restores the selected bac
 
 ## Joining (Game ID, not IP)
 
-Core Keeper’s dedicated server defaults to **Steam Datagram Relay**. Players paste a Game ID in-game. There is no published UDP game port, and you should not forward one unless you later switch the server to Direct Connect yourself (this app does not).
+Core Keeper’s dedicated server, with **no `-port`**, uses **Steam Datagram Relay**. Players paste a Game ID in-game. That is the default this app ships: **invite-only**, not listed on a public browser, no game UDP port on the router.
 
-The Game ID is stable for this install when **Game ID** is left blank (generated once, reused on restart). Pin one only if you already have a code you want to keep.
+The Game ID is stable for this install when **Game ID** is left blank (generated once from a salt on `/data/supervisor`, reused on restart, recovered from `GameID.txt` / `ServerConfig.json` if that salt is missing). Pin one only if you already have a code you want to keep. An invalid pin is ignored rather than passed through (Pugstorm would otherwise mint a **new random** ID and friends would bounce).
+
+Wiping the whole add-on data disk is a new install and gets a new Game ID. Restoring a Home Assistant backup of this app restores the salt (and the world), so the join code stays put.
+
+### Lag and Direct Connect
+
+Steam Datagram Relay sends traffic through Valve’s relay. That avoids port-forwarding and keeps the host IP off the wire, and it can add latency — the same thing people notice on some Steam-hosted sessions.
+
+Pugstorm’s other mode is **Direct Connect**: pass `-port`, forward that UDP port, and players can join by IP (cross-play) while Steam users can still use the Game ID. IPs are then shared with players; a `-password` applies only to IP join (the Game ID remains the secret for relay join). This app **does not** turn that on. There is no SDR quality slider in the dedicated server. Direct Connect is the official way to cut relay lag, and it is a different network/privacy model (published UDP port, HA `ports:`, IP sharing). Default stays private Game ID join.
+
+---
+
+## World slots
+
+The dedicated server keeps many caverns in one datapath: `worlds/0.world.gzip`, `worlds/1.world.gzip`, … (official index **0–29**). **World slot** (`-world`) selects which file this process hosts. Open Web UI backups/download/upload follow the **active** slot. Switching slot does not delete the previous file; it just hosts a different one. Seed and world mode apply only when that slot’s file does not exist yet.
 
 ---
 

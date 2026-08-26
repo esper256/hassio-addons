@@ -20,6 +20,7 @@ export OPTIONS_FILE="${OPTIONS_FILE:-/data/options.json}"
 export GAME_PLUGIN="${GAME_PLUGIN:-/opt/games/game.yaml}"
 export PYTHONPATH="${PYTHONPATH:-/opt}"
 export INSTALL_DIR="${INSTALL_DIR:-/data/game}"
+export DATA_DIR="${DATA_DIR:-/data/world}"
 # HA Ingress default port; override for plain Docker if needed.
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
 

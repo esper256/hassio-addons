@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Core Keeper launch wrapper (game layer, not game-server-base).
 #
-# The dedicated server is a Unity binary that needs a virtual display on
-# Linux, a 64-bit steamclient.so, and a Game ID printed somewhere operators
-# can actually see it. Keep that here so the shared supervisor stays generic.
+# The dedicated server is a Unity build. Pugstorm's official README says
+# part of world generation runs on the GPU, so `-nographics` is wrong, and
+# `-batchmode` is unreliable on Linux. Their own `_launch.sh` starts Xvfb.
+# This wrapper is that same virtual display, plus steamclient.so / Game ID
+# printing — not a substitute for a dedicated-server headless flag that does
+# not exist.
 set -euo pipefail
 
 ckpid=""

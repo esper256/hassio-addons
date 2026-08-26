@@ -113,11 +113,29 @@ Non-Steam titles: the same idea from the developer’s store page (square box ar
 
 ---
 
+## Ingress theme colors
+
+The status UI reads `ui_theme` from `games/game.yaml` (keys merged onto `status_http.DEFAULT_UI_THEME`). This is **not** generated art — it is a 10-color CSS palette so Open Web UI matches the title without looking like a clone of Necesse.
+
+| Key | Where it shows | Pick |
+| --- | --- | --- |
+| `accent` | Buttons, links, focus, the distinctive brand stripe | The one color people would name from the store page (Necesse gold, Factorio factory orange, Stationeers ice blue, Core Keeper cavern teal) |
+| `bg` / `wash` / `panel` / `glow` | Page, header wash, cards | Shadows from the same store header / capsule — dark, not pure black unless the marketing is |
+| `ink` / `muted` | Body text / secondary | High contrast on `panel`; muted can be a greyed accent |
+| `good` / `bad` | Running / error | Stay readable green / red; a slight tint toward the brand is fine |
+| `depth` | Recessed wells | Darker than `panel` |
+
+**How to choose (same assets as the store images):** eyedropper the Steam header / library capsule (or the developer’s site). Do not invent a complementary scheme in a palette generator. Then compare `accent` against the other `*-dedicated-server/games/game.yaml` files — CI fails if two games share the same accent hex.
+
+A usable check: open two Ingress tabs (or the screenshots in each `GUIDE.md`) and confirm you can tell the games apart at a glance from the header stripe and background, not only the title string.
+
+---
+
 ## Local Compose
 
 Plain Docker / Portainer uses each game folder’s `docker-compose.yml` (`build.context: .`, volume `./data:/data`).
 
-**`.dockerignore` must list `data/`.** Without it, `docker compose build` sends the Steam/game install as build context (Core Keeper’s dedicated server is ~650 MB). That is slow and a footgun if a `COPY` is ever too broad. Sibling add-ons ship this file; CI checks that it exists and excludes `data/`.
+**`.dockerignore` must list `data/`.** Compose `build.context: .` tars this folder and sends it to the Docker daemon *before* the Dockerfile runs. The Steam/game install lives on the runtime volume `./data` and is never `COPY`’d into the image — but without an ignore file that whole tree still rides along as build context (Core Keeper’s dedicated server is ~650 MB). That is slow and a footgun if a `COPY` is ever too broad. Sibling add-ons ship this file; CI checks that it exists and excludes `data/`.
 
 **SteamCMD `FAILED (No Connection)` on the default bridge** while `curl https://steamcdn-a.akamaihd.net` works is almost always Steam **connection managers** (not the CDN) failing through nested Docker NAT. It is not an add-on bug and it is **not** a reason to set `host_network: true` in `config.yaml` (that drops the Home Assistant security rating). HAOS has its own network stack; real installs typically reach Steam CMs on the default bridge.
 
@@ -156,6 +174,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `backup_paths` | Fallback roots when no named world exists yet; also used to restore legacy `*.tar.gz` snapshots |
 | `log_patterns` | Active regexes (ready, players, version, `players_empty`, …). Prefer empty until proven. |
 | `log_pattern_candidates` | Extra dry-run regexes for Ingress highlighting |
+| `ui_theme` | Ingress CSS colors (`accent`, `bg`, `panel`, …). Sample from official store art; keep `accent` unique vs sibling games. See [Ingress theme colors](#ingress-theme-colors) |
 | `player_tracking_mode` | `count` (default, numeric/named) or `presence` (Idle vs occupied; unknown leave → idle) |
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`

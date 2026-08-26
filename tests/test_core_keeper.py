@@ -57,6 +57,8 @@ class CoreKeeperPluginTests(unittest.TestCase):
             worlds.mkdir(parents=True)
             save = worlds / "0.world.gzip"
             save.write_bytes(b"fake-world" * 200)
+            other = worlds / "3.world.gzip"
+            other.write_bytes(b"other-world" * 200)
             active = locate_active_world(
                 plugin,
                 {"world_index": 0, "data_dir": str(data_dir)},
@@ -65,6 +67,13 @@ class CoreKeeperPluginTests(unittest.TestCase):
             self.assertEqual(active.path, str(save))
             self.assertEqual(active.kind, "file")
             self.assertEqual(active.label, "0.world.gzip")
+            slotted = locate_active_world(
+                plugin,
+                {"world_index": 3, "data_dir": str(data_dir)},
+                data_dir=str(data_dir),
+            )
+            self.assertEqual(slotted.path, str(other))
+            self.assertEqual(slotted.label, "3.world.gzip")
 
     def test_cli_keeps_numeric_zero_from_env_strings(self) -> None:
         plugin = load_plugin(PLUGIN)
@@ -99,6 +108,7 @@ class CoreKeeperPluginTests(unittest.TestCase):
         data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
         self.assertNotIn("ports", data)
         self.assertFalse(data.get("host_network"))
+        self.assertEqual(data["schema"]["world_index"], "int(0,29)")
         self.assertEqual(data["slug"], "core_keeper_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
 
@@ -145,6 +155,8 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
                 mod.resolve_game_id(
                     options_file=options,
                     state_dir=root / "state",
+                    install_dir=root / "game",
+                    data_dir=root / "world",
                     environ={},
                 ),
                 "PinnedJoinCode12345",
@@ -153,6 +165,8 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
                 mod.resolve_game_id(
                     options_file=options,
                     state_dir=root / "state",
+                    install_dir=root / "game",
+                    data_dir=root / "world",
                     environ={"GAME_ID": "FromEnvJoinCode1234"},
                 ),
                 "FromEnvJoinCode1234",
@@ -161,9 +175,51 @@ class CoreKeeperHaosDefaultsTests(unittest.TestCase):
             generated = mod.resolve_game_id(
                 options_file=options,
                 state_dir=root / "state",
+                install_dir=root / "game",
+                data_dir=root / "world",
                 environ={},
             )
             self.assertEqual(len(generated), 20)
+
+    def test_invalid_pinned_id_does_not_pass_through(self) -> None:
+        mod = _load_defaults()
+        self.assertTrue(mod.is_valid_game_id("abcdeFGHIJ12345KLMN"))
+        self.assertFalse(mod.is_valid_game_id("short"))
+        self.assertFalse(mod.is_valid_game_id("YYYYYYYYYYYYYYY"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            options = root / "options.json"
+            options.write_text('{"game_id": "not-valid"}', encoding="utf-8")
+            game = root / "game"
+            game.mkdir()
+            (game / "GameID.txt").write_text("PersistedJoinCode123", encoding="utf-8")
+            resolved = mod.resolve_game_id(
+                options_file=options,
+                state_dir=root / "state",
+                install_dir=game,
+                data_dir=root / "world",
+                environ={},
+            )
+            self.assertEqual(resolved, "PersistedJoinCode123")
+
+    def test_recovers_id_from_server_config_if_salt_missing(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            world = root / "world"
+            world.mkdir()
+            (world / "ServerConfig.json").write_text(
+                '{"gameId": "FromConfigJoinCode1"}',
+                encoding="utf-8",
+            )
+            resolved = mod.resolve_game_id(
+                options_file=root / "missing.json",
+                state_dir=root / "state",
+                install_dir=root / "game",
+                data_dir=world,
+                environ={},
+            )
+            self.assertEqual(resolved, "FromConfigJoinCode1")
 
 
 if __name__ == "__main__":
