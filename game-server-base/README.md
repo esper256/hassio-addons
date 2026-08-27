@@ -233,4 +233,4 @@ CI runs both suites (plus `check-addon-sync.sh`). After supervisor changes: sync
 | `game-server-base/game_server/` | Shared Python package |
 | `game-server-base/Dockerfile` | Generic SteamCMD + Python image |
 | `game-server-base/tests/` | Unit tests + synthetic plugin |
-| `game-server-base/games/` | Empty on purpose — plugins live in each add-on |
+| `game-server-base/games/` | Empty on purpose — plugins live in each add-on
