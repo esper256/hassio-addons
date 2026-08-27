@@ -302,6 +302,15 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             )
         )
 
+    def test_signin_log_lines_put_url_on_its_own_line(self) -> None:
+        mod = _load_defaults()
+        url = "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        lines = mod.signin_log_lines(url, "GLrYHNyp")
+        self.assertIn("Sign-in from HA Logs: open this URL in a browser", lines)
+        self.assertIn(url, lines)
+        self.assertTrue(any("GLrYHNyp" in line for line in lines))
+        self.assertTrue(any("email" in line.lower() for line in lines))
+
     def test_merge_server_config_keeps_unknown_keys(self) -> None:
         mod = _load_defaults()
         with tempfile.TemporaryDirectory() as tmp:

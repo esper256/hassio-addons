@@ -79,6 +79,19 @@ def signin_finished_line(line: str) -> bool:
     return bool(_SIGNIN_DONE_RE.search(line))
 
 
+def signin_log_lines(url: str, code: str) -> list[str]:
+    """HA Logs copy of the Ingress card — URL on its own line so it is easy to copy."""
+
+    lines = ["Sign-in from HA Logs: open this URL in a browser"]
+    if url:
+        lines.append(url)
+    if code:
+        lines.append(
+            f"Device code (Authorize a device page only, not an email OTP): {code}"
+        )
+    return lines
+
+
 def ensure_instance_salt(path: Path) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
@@ -442,8 +455,8 @@ def _tee_process(
         )
         key = f"{seen_url}|{seen_code}"
         if key != last_published:
-            print(f"Ingress sign-in URL: {seen_url}", flush=True)
-            print(f"Ingress sign-in code: {seen_code}", flush=True)
+            for line in signin_log_lines(seen_url, seen_code):
+                print(line, flush=True)
             last_published = key
 
     def write_child_stdin(text: str) -> None:

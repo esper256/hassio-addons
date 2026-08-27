@@ -31,7 +31,7 @@ The app uses Hypixel’s **official Linux downloader** (OAuth device-code, not S
 2. Install **Hytale Dedicated Server**.
 3. Open the app → **Documentation** tab for configuration, ports, and Open Web UI notes.
 4. Set at least **World name** and a **Game password**, then **Start**.
-5. Open **Open Web UI**. Complete both sign-in cards (new browser tab, not the Ingress iframe). Hytale emails a login code first; after you are signed in, click the card link again to reach **Authorize a device**. Paste the card code only on that page. The downloader waits 10 minutes.
+5. Open **Open Web UI**, or stay on the **Logs** tab. Complete both sign-ins (new browser tab). Logs print `Sign-in from HA Logs` plus the URL and device code. Hytale emails a login code first; after you are signed in, open the URL again to reach **Authorize a device**. Paste the device code only on that page. The downloader waits 10 minutes.
 6. Forward **UDP 5520** on your router to the Home Assistant host (QUIC; do not forward TCP only).
 7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port 5520).
 

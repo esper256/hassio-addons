@@ -6,7 +6,7 @@
 - Keep the downloader's complete `?user_code=` sign-in URL (the fallback URL without the code no longer overwrites it)
 - Sign-in card: device code vs emailed login code; finish Hytale login first, then open the link to reach Authorize a device; 10-minute downloader wait
 - Retry download sign-in with a fresh device code when the official downloader hits `error obtaining token: context deadline exceeded` (keeps waiting until sign-in succeeds or you stop the app)
-- Drop the Ingress sign-in card when the downloader starts fetching files (`downloading latest`), not only on the Java `authentication successful` line
+- HA Logs print the coalesced sign-in URL (own line) and device code so you can finish OAuth from the Logs tab without Open Web UI
 
 ## 3.1.2
 
