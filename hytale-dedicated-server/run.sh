@@ -24,9 +24,11 @@ export DATA_DIR="${DATA_DIR:-/data/world}"
 export STATE_DIR="${STATE_DIR:-/data/supervisor}"
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
 # HA Network can remap the *host* port, but the container side of that mapping
-# is fixed at 5520 in config.yaml. Hytale must listen on that same container
-# port or joins fail. (We do not use host_network.)
-export SERVER_PORT=5520
+# is fixed at 25565 in config.yaml. Hytale must listen on that same container
+# port or joins fail. 25565 is the client Direct Connect default (omit-port);
+# the dedicated-server binary defaults to 5520 only when --bind is omitted.
+# (We do not use host_network.)
+export SERVER_PORT=25565
 export PATH="/opt/java/bin:${PATH}"
 
 mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game

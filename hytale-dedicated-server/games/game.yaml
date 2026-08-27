@@ -30,9 +30,9 @@ executable:
   - /opt/launch_wrapper.sh
 bool_style: true_false
 ready_timeout_seconds: 180
-# server_port is forced to 5520 by run.sh (HA container-side Network mapping).
-# Official --bind accepts a port or host:port; bind all interfaces explicitly
-# so we never land on localhost-only.
+# server_port is forced to 25565 by run.sh (HA container-side Network mapping).
+# That matches the Hytale client's Direct Connect default when the port is
+# omitted. Official --bind without a port would be 5520. Bind all interfaces.
 argv_prefix:
   - --bind
   - 0.0.0.0:{server_port}
@@ -56,7 +56,7 @@ player_tracking_mode: presence
 log_patterns: {}
 log_pattern_candidates:
   ready:
-    - '(?i)\b(?:listening|bound|bind).*(?:port|5520|:5520)\b'
+    - '(?i)\b(?:listening|bound|bind).*(?:port|25565|:25565)\b'
     - '(?i)\baccepting (?:connections|players)\b'
     - '(?i)\bserver started\b'
     - '(?i)\bstarted.*dedicated server\b'

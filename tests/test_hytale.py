@@ -74,7 +74,7 @@ class HytalePluginTests(unittest.TestCase):
             backup_enabled=False,
             ha_notifications=False,
             game_options={
-                "server_port": "5520",
+                "server_port": "25565",
                 "data_dir": "/data/world",
                 "logs_dir": "/data/logs",
                 "java_opts": "-Xms2G -Xmx4G",
@@ -83,7 +83,7 @@ class HytalePluginTests(unittest.TestCase):
         cmd = ProcessManager(plugin, cfg).build_command()
         self.assertEqual(cmd[0], "/opt/launch_wrapper.sh")
         self.assertIn("--bind", cmd)
-        self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:5520")
+        self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:25565")
         self.assertNotIn("-Xmx4G", cmd)
 
     def test_world_save_is_universe_folder(self) -> None:
@@ -107,7 +107,7 @@ class HytalePluginTests(unittest.TestCase):
         import yaml
 
         data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-        self.assertEqual(data["ports"], {"5520/udp": 5520})
+        self.assertEqual(data["ports"], {"25565/udp": 25565})
         self.assertFalse(data.get("host_network"))
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
@@ -123,7 +123,7 @@ class HytalePluginTests(unittest.TestCase):
         wrapper = WRAPPER.read_text(encoding="utf-8")
         self.assertIn("haos_defaults.py run", wrapper)
         runsh = RUNSH.read_text(encoding="utf-8")
-        self.assertIn("export SERVER_PORT=5520", runsh)
+        self.assertIn("export SERVER_PORT=25565", runsh)
         self.assertIn("print-name", runsh)
         self.assertIn("do not use host_network", runsh.lower())
 
@@ -423,7 +423,7 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             try:
                 os.environ["INSTALL_DIR"] = str(install)
                 os.environ["JAVA_OPTS"] = "-Xms2G -Xmx4G"
-                cmd = mod.build_java_command(["--bind", "0.0.0.0:5520"])
+                cmd = mod.build_java_command(["--bind", "0.0.0.0:25565"])
             finally:
                 if env_old is None:
                     os.environ.pop("INSTALL_DIR", None)
@@ -439,7 +439,7 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             self.assertTrue(any(part.startswith("-XX:AOTCache=") for part in cmd))
             self.assertIn("-jar", cmd)
             self.assertIn("--assets", cmd)
-            self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:5520")
+            self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:25565")
 
 
 class HytaleIdentityIsolationTests(unittest.TestCase):
