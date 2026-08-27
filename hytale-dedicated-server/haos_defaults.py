@@ -19,7 +19,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import IO, Any, Mapping, NamedTuple
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
 SERVER_NAME_PREFIX = "HAOS Hytale"
@@ -54,6 +54,9 @@ _CODE_RE = re.compile(
     r"(?:user_code|enter code|code)\s*[=:]\s*([A-Za-z0-9][A-Za-z0-9._-]{2,31})",
     re.IGNORECASE,
 )
+_CODE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,31}")
+# Java /auth colors the device code; CSI reset is ESC[m and must not enter user_code.
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\x1b\\|\x07))")
 # Java /auth prints "authentication successful"; the official downloader does not —
 # it starts the zip fetch instead. Either means drop the Ingress sign-in card.
 _SIGNIN_DONE_RE = re.compile(
@@ -77,6 +80,18 @@ def token_wait_timed_out_line(line: str) -> bool:
 
 def signin_finished_line(line: str) -> bool:
     return bool(_SIGNIN_DONE_RE.search(line))
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text or "")
+
+
+def _sanitize_device_code(raw: str) -> str:
+    text = _strip_ansi(raw or "").strip()
+    if not text:
+        return ""
+    found = _CODE_TOKEN_RE.match(text)
+    return found.group(0) if found else ""
 
 
 def signin_log_lines(url: str, code: str) -> list[str]:
@@ -228,6 +243,7 @@ def clear_operator_action(state_dir: str | Path | None = None) -> None:
 def scrape_device_login(line: str) -> tuple[str, str]:
     """Return (url, code) found on one log line (empty strings if none)."""
 
+    line = _strip_ansi(line)
     url = ""
     code = ""
     for match in _URL_RE.finditer(line):
@@ -246,11 +262,14 @@ def scrape_device_login(line: str) -> tuple[str, str]:
         qs = parse_qs(parsed.query)
         for key in ("user_code", "userCode"):
             if qs.get(key):
-                code = str(qs[key][0]).strip()
+                code = _sanitize_device_code(str(qs[key][0]))
                 break
     found = _CODE_RE.search(line)
     if found:
-        code = found.group(1).strip()
+        code = _sanitize_device_code(found.group(1))
+    code = _sanitize_device_code(code)
+    if url:
+        url = _url_with_code(url, code)
     return url, code
 
 
@@ -262,17 +281,24 @@ def _url_has_user_code(url: str) -> bool:
 
 
 def _url_with_code(url: str, code: str) -> str:
-    """Keep a complete verification URL; attach user_code when the CLI omitted it."""
+    """Keep a complete verification URL; attach or replace user_code with a clean token."""
 
-    if not url or not code:
+    url = _strip_ansi(url or "")
+    code = _sanitize_device_code(code)
+    if not url:
         return url
     parsed = urlparse(url)
-    qs = parse_qs(parsed.query)
-    if qs.get("user_code") or qs.get("userCode"):
-        return url
-    extra = urlencode({"user_code": code})
-    new_query = f"{parsed.query}&{extra}" if parsed.query else extra
-    return urlunparse(parsed._replace(query=new_query))
+    pairs: list[tuple[str, str]] = []
+    existing = ""
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower() in {"user_code", "usercode"}:
+            existing = _sanitize_device_code(value)
+            continue
+        pairs.append((key, value))
+    final = code or existing
+    if final:
+        pairs.append(("user_code", final))
+    return urlunparse(parsed._replace(query=urlencode(pairs)))
 
 
 def coalesce_device_login(
