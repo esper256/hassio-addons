@@ -20,6 +20,7 @@ from .log_bridge import configure_logging
 from .log_tools import LogToolbox
 from .monitor import LogMonitor
 from .notify import Notifier
+from .operator_action import read_operator_action
 from .package_install import PackageInstallError
 from .plugin import GamePlugin, load_plugin, resolve_plugin_path
 from .privileges import prepare_owned_paths
@@ -172,6 +173,18 @@ class GameServerSupervisor:
         self.status_server: StatusServer | None = None
         self._update_thread: threading.Thread | None = None
         self._status_thread: threading.Thread | None = None
+
+    def _package_extra_env(self) -> dict[str, str]:
+        """Env for plugin command installers (dirs + optional release channel)."""
+
+        env = {
+            "INSTALL_DIR": self.config.install_dir,
+            "STATE_DIR": self.config.state_dir,
+        }
+        channel = str(self.config.game_options.get("release_channel") or "").strip()
+        if channel:
+            env["RELEASE_CHANNEL"] = channel
+        return env
 
     def capture_logs(self, reason: str = "manual") -> dict[str, Any]:
         return self.log_tools.capture(reason=reason, status=self.status())
@@ -447,11 +460,14 @@ class GameServerSupervisor:
         """Return a single phase a person can reason about.
 
         Values: stopping, stopped, restoring, installing, updating, running,
-        waiting (update queued), failed (crash loop / left down), starting.
+        waiting (operator action or update queued), failed (crash loop / left
+        down), starting.
         """
 
         if self._stop.is_set():
             return "stopping" if self.process.running else "stopped"
+        if read_operator_action(self.config.state_dir):
+            return "waiting"
         if self._activity in ("installing", "updating", "restoring"):
             return self._activity
         if self._restore_pending or self._upload_pending is not None:
@@ -516,6 +532,7 @@ class GameServerSupervisor:
         )
         world_size.update(world_upload_accepts(active_world))
         phase = self.lifecycle()
+        action = read_operator_action(self.config.state_dir)
         return {
             "game": self.plugin.name,
             "app_version": app_version(),
@@ -582,6 +599,7 @@ class GameServerSupervisor:
             "process": self.process.to_dict(),
             "backups": self.backups.to_dict(),
             "log_captures": self.log_tools.list_captures(),
+            "operator_action": action,
         }
 
     def _publish_status(self) -> None:
@@ -796,6 +814,7 @@ class GameServerSupervisor:
                         stop_event=self._stop,
                         run_uid=run_uid,
                         run_gid=run_gid,
+                        extra_env=self._package_extra_env(),
                     )
                 else:
                     self.local_build_id = steamcmd.install_or_update(
@@ -943,6 +962,7 @@ class GameServerSupervisor:
                         stop_event=self._stop,
                         run_uid=run_uid,
                         run_gid=run_gid,
+                        extra_env=self._package_extra_env(),
                     )
                 else:
                     self.local_build_id = steamcmd.install_or_update(
@@ -1059,6 +1079,7 @@ class GameServerSupervisor:
             result = package_install.update_available(
                 self.config.install_dir,
                 self.plugin,
+                extra_env=self._package_extra_env(),
             )
         else:
             run_uid, run_gid = self._steamcmd_identity()

@@ -207,6 +207,42 @@ HTML_PAGE = """<!DOCTYPE html>
     .stat .value {{ font-size: 1.35rem; font-weight: 600; }}
     .stat .hint {{ color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem; }}
     .stat .hint:empty {{ display: none; margin: 0; }}
+    .operator-action {{
+      background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+      border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+      padding: 1rem 1.15rem;
+      margin: 0 0 1.1rem;
+    }}
+    .operator-action.hidden {{ display: none; }}
+    .operator-action .op-title {{
+      font-weight: 600;
+      font-size: 1.15rem;
+      margin: 0 0 0.35rem;
+    }}
+    .operator-action .op-detail {{
+      color: var(--muted);
+      margin: 0 0 0.75rem;
+      font-size: 0.92rem;
+    }}
+    .operator-action .op-detail:empty {{ display: none; }}
+    .operator-action .op-code {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 1.45rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      margin: 0 0.35rem 0 0;
+    }}
+    .operator-action .op-code:empty,
+    .operator-action .op-code-row.hidden {{ display: none; }}
+    .operator-action .op-steps {{
+      margin: 0.65rem 0 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }}
+    .operator-action .op-step-active {{ color: var(--accent); font-weight: 600; }}
+    .operator-action .op-step-done {{ color: var(--good); }}
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
     .idle {{ color: var(--accent); }}
@@ -474,6 +510,18 @@ HTML_PAGE = """<!DOCTYPE html>
   <main>
     <h1>{game}</h1>
     <p class="sub" id="subtitle">{subtitle}</p>
+    <div class="operator-action {operator_action_class}" id="operator-action">
+      <div class="op-title" id="op-title">{operator_action_title}</div>
+      <p class="op-detail" id="op-detail">{operator_action_detail}</p>
+      <div class="actions">
+        <a class="btn btn-primary {operator_action_url_class}" id="op-url" href="{operator_action_url}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>
+      </div>
+      <div class="capture-row {operator_action_code_class}" id="op-code-row">
+        <span class="op-code" id="op-code">{operator_action_code}</span>
+        <button type="button" class="btn" id="btn-copy-op-code" onclick="return copyOperatorCode(event)">Copy code</button>
+      </div>
+      <ol class="op-steps" id="op-steps">{operator_action_steps}</ol>
+    </div>
     <div class="grid grid-primary" id="status-grid-primary">
       <div class="stat"><div class="label">Server</div><div class="value {running_class}" id="v-running">{running}</div></div>
       <div class="stat {players_card_class}" id="card-players">
@@ -798,12 +846,46 @@ HTML_PAGE = """<!DOCTYPE html>
       const el = document.getElementById(id);
       if (el) el.innerHTML = value == null ? '' : String(value);
     }}
+    async function copyOperatorCode(ev) {{
+      ev.preventDefault();
+      const code = (document.getElementById('op-code') || {{}}).textContent || '';
+      const text = code.trim();
+      if (!text) return false;
+      try {{
+        await navigator.clipboard.writeText(text);
+      }} catch (e) {{
+        const area = document.createElement('textarea');
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        try {{ document.execCommand('copy'); }} catch (e2) {{}}
+        document.body.removeChild(area);
+      }}
+      return false;
+    }}
     async function softRefresh() {{
       try {{
         const res = await fetch('api/ui', {{ headers: {{ 'Accept': 'application/json' }} }});
         if (!res.ok) return;
         const u = await res.json();
         setText('subtitle', u.subtitle);
+        const opCard = document.getElementById('operator-action');
+        if (opCard) {{
+          opCard.classList.toggle('hidden', !!u.operator_action_hidden);
+        }}
+        setText('op-title', u.operator_action_title);
+        setText('op-detail', u.operator_action_detail);
+        setText('op-code', u.operator_action_code);
+        const opUrl = document.getElementById('op-url');
+        if (opUrl) {{
+          opUrl.className = 'btn btn-primary ' + (u.operator_action_url_class || '');
+          if (u.operator_action_url) opUrl.setAttribute('href', u.operator_action_url);
+        }}
+        const opCodeRow = document.getElementById('op-code-row');
+        if (opCodeRow) {{
+          opCodeRow.classList.toggle('hidden', !!u.operator_action_code_hidden);
+        }}
+        setHtml('op-steps', u.operator_action_steps);
         const running = document.getElementById('v-running');
         if (running) {{
           running.textContent = u.running;
@@ -1626,9 +1708,41 @@ def _format_world_upload(status: dict[str, Any]) -> tuple[str, str, str]:
     return hint, accept or ".zip,application/zip", ""
 
 
+def _format_operator_action(
+    status: dict[str, Any],
+) -> tuple[str, str, str, str, str, bool]:
+    """Return title, detail, url, code, steps HTML, hidden."""
+
+    action = status.get("operator_action")
+    if not isinstance(action, dict) or not action:
+        return "", "", "", "", "", True
+    title = str(action.get("title") or "Sign in required").strip()
+    detail = str(action.get("detail") or "").strip()
+    url = str(action.get("url") or "").strip()
+    code = str(action.get("code") or "").strip()
+    steps_html_parts: list[str] = []
+    for index, item in enumerate(action.get("steps") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        state = str(item.get("state") or "pending").strip().lower()
+        if state not in {"pending", "active", "done"}:
+            state = "pending"
+        steps_html_parts.append(
+            f'<li class="op-step op-step-{_html_escape(state)}">'
+            f"{index}. {_html_escape(label)}</li>"
+        )
+    return title, detail, url, code, "".join(steps_html_parts), False
+
+
 def _format_running(status: dict[str, Any]) -> tuple[str, str]:
     """Hero server label from lifecycle (falls back to running bool)."""
 
+    action = status.get("operator_action")
+    if isinstance(action, dict) and action:
+        return "waiting for sign-in", "accent"
     phase = str(status.get("lifecycle") or "").strip()
     # Restore/update stop the game first; surface that while it is still up.
     if phase == "restoring":
@@ -1747,6 +1861,9 @@ def _ui_view(
     )
     disk, disk_class, disk_hint = _format_disk(status)
     running_label, running_class = _format_running(status)
+    op_title, op_detail, op_url, op_code, op_steps, op_hidden = _format_operator_action(
+        status
+    )
     update_pending = bool(status.get("update_pending"))
     update_check_hint = _format_update_check_hint(status)
     theme = resolve_ui_theme(ui_theme)
@@ -1797,6 +1914,16 @@ def _ui_view(
         "capture_options": _format_capture_options(status.get("log_captures") or []),
         "backup_options": _format_backup_options(status),
         "empty_world_token": EMPTY_WORLD,
+        "operator_action_title": op_title,
+        "operator_action_detail": op_detail,
+        "operator_action_url": op_url,
+        "operator_action_code": op_code,
+        "operator_action_steps": op_steps,
+        "operator_action_class": "hidden" if op_hidden else "",
+        "operator_action_hidden": op_hidden,
+        "operator_action_url_class": "hidden" if not op_url else "",
+        "operator_action_code_class": "hidden" if not op_code else "",
+        "operator_action_code_hidden": not op_code,
     }
     for key in UI_THEME_KEYS:
         view[f"theme_{key}"] = theme[key]
@@ -1843,6 +1970,14 @@ _STATUS_HTML_KEYS = (
     "capture_options",
     "backup_options",
     "empty_world_token",
+    "operator_action_class",
+    "operator_action_title",
+    "operator_action_detail",
+    "operator_action_url",
+    "operator_action_url_class",
+    "operator_action_code",
+    "operator_action_code_class",
+    "operator_action_steps",
 ) + tuple(f"theme_{key}" for key in UI_THEME_KEYS)
 
 
@@ -1898,6 +2033,18 @@ def render_status_html(view: dict[str, Any], *, base_href: str = "/") -> str:
         capture_options=view["capture_options"],
         backup_options=view["backup_options"],
         empty_world_token=_html_escape(view.get("empty_world_token") or EMPTY_WORLD),
+        operator_action_class=_html_escape(view.get("operator_action_class") or ""),
+        operator_action_title=_html_escape(view.get("operator_action_title") or ""),
+        operator_action_detail=_html_escape(view.get("operator_action_detail") or ""),
+        operator_action_url=_html_escape(view.get("operator_action_url") or "#"),
+        operator_action_url_class=_html_escape(
+            view.get("operator_action_url_class") or ""
+        ),
+        operator_action_code=_html_escape(view.get("operator_action_code") or ""),
+        operator_action_code_class=_html_escape(
+            view.get("operator_action_code_class") or ""
+        ),
+        operator_action_steps=view.get("operator_action_steps") or "",
         theme_bg=_html_escape(theme["bg"]),
         theme_panel=_html_escape(theme["panel"]),
         theme_ink=_html_escape(theme["ink"]),

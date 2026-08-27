@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0
+
+- Shared supervisor **3.1**: `package_install.kind: command` (plugin argv installers), Ingress operator-action card for device-code sign-in, `waiting` lifecycle while that file is present. Vendored `game_server/` sync.
+
 ## 3.0.0
 
 - Version scheme: `{supervisor}.{minor}.{game patch}`. Shared supervisor is **3.0**; this app is **3.0.0**. Future supervisor features bump every game to `3.1.0`; a Stationeers-only fix is `3.0.1`

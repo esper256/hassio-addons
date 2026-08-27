@@ -1,0 +1,76 @@
+name: "Hytale Dedicated Server"
+description: "Hytale dedicated multiplayer server (official Linux downloader, Java 25) with auto-updates, world backups, and an Ingress status UI. First start needs two Hytale account sign-ins (download, then server)."
+version: "3.1.0"
+slug: "hytale_dedicated_server"
+url: "https://github.com/esper256/hassio-addons/tree/main/hytale-dedicated-server"
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+host_network: false
+hassio_api: true
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+ingress_stream: true
+panel_icon: mdi:cube-outline
+panel_title: Hytale
+# HA format is "container-port/protocol: host-port". Container port is fixed
+# at 5520 (Hytale default, QUIC/UDP). The Network UI only changes the host port.
+ports:
+  5520/udp: 5520
+ports_description:
+  5520/udp: Game port players use on this Home Assistant machine (UDP/QUIC). Leave at 5520 unless that port is already taken. TCP is not used.
+options:
+  world_name: "default"
+  server_name: ""
+  server_motd: "Welcome to the family Hytale server!"
+  server_password: ""
+  server_slots: 20
+  java_opts: "-Xms2G -Xmx4G"
+  release_channel: release
+  update_on_start: true
+  auto_update_interval_minutes: 1440
+  auto_update_check_hour: 5
+  update_when_empty_only: true
+  update_on_version_mismatch: false
+  debug_mode: false
+  restart_on_crash: true
+  status_http_enabled: true
+  ha_notifications: true
+  backup_enabled: true
+  backup_on_update: true
+  backup_retention: standard
+  min_free_disk_mb: 4096
+schema:
+  world_name: str
+  server_name: str?
+  server_motd: str
+  server_password: password
+  server_slots: int(1,200)
+  java_opts: str?
+  release_channel: list(release|pre-release)
+  update_on_start: bool
+  auto_update_interval_minutes: int(0,)
+  auto_update_check_hour: int(0,23)?
+  update_when_empty_only: bool
+  update_on_version_mismatch: bool
+  debug_mode: bool
+  update_window_start_hour: int(0,23)?
+  update_window_end_hour: int(0,23)?
+  restart_on_crash: bool
+  status_http_enabled: bool
+  ha_notifications: bool
+  backup_enabled: bool
+  backup_on_update: bool
+  backup_retention: list(minimal|standard|extended)
+  min_free_disk_mb: int(0,)
+backup_exclude:
+  - "**/steamapps/**"
+  - "**/steamcmd/**"
+  - "game/**"
+watchdog: http://[HOST]:[PORT:8099]/healthz
+# Supervisor hard-caps timeout at 300. Values above that make the app vanish from the store.
+timeout: 300

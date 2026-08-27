@@ -1,7 +1,13 @@
-"""HTTP archive install/update for games that are not SteamCMD apps.
+"""Non-SteamCMD install/update for games that declare ``package_install``.
 
-Used when a plugin declares ``package_install`` (e.g. a free headless tarball).
-No game names or URLs live here — plugins supply version/download templates.
+Kinds:
+
+- ``http_archive`` — GET a version JSON document, download a tarball, extract
+- ``command`` — run plugin argv to print a version and to install/update
+
+No game names or URLs live here — plugins supply version/download templates
+or argv. Command installers may block on a human (device-code login) and
+write ``operator_action.json`` under ``STATE_DIR`` for the Ingress card.
 """
 
 from __future__ import annotations
@@ -10,15 +16,18 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
+from .privileges import make_preexec
 from .update_check import UpdateCheckResult
 
 LOG = logging.getLogger("game_server.package")
@@ -31,7 +40,7 @@ class _PackagePlugin(Protocol):
     package_install: Any
 
 
-_SUPPORTED_KINDS = frozenset({"http_archive"})
+_SUPPORTED_KINDS = frozenset({"http_archive", "command"})
 VERSION_FILENAME = ".package_version"
 
 
@@ -45,14 +54,16 @@ def _marker_installed(install_dir: str | Path, marker_relative: str) -> bool:
 
 @dataclass
 class PackageInstallSpec:
-    """Declarative HTTP archive install source from ``game.yaml``."""
+    """Declarative install source from ``game.yaml``."""
 
     kind: str
-    version_url: str
-    version_json_path: str
-    download_url: str
+    version_url: str = ""
+    version_json_path: str = ""
+    download_url: str = ""
     strip_components: int = 1
     version_filename: str = VERSION_FILENAME
+    version_argv: list[str] = field(default_factory=list)
+    install_argv: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Any) -> "PackageInstallSpec | None":
@@ -63,7 +74,24 @@ class PackageInstallSpec:
         kind = str(data.get("kind") or "").strip().lower()
         if kind not in _SUPPORTED_KINDS:
             raise ValueError(
-                f"Unsupported package_install.kind {kind!r}; expected http_archive"
+                f"Unsupported package_install.kind {kind!r}; "
+                "expected http_archive or command"
+            )
+        version_filename = str(data.get("version_filename") or VERSION_FILENAME).strip()
+        if not version_filename:
+            version_filename = VERSION_FILENAME
+        if kind == "command":
+            version_argv = _coerce_argv(data.get("version_argv"), "version_argv")
+            install_argv = _coerce_argv(data.get("install_argv"), "install_argv")
+            if not version_argv or not install_argv:
+                raise ValueError(
+                    "package_install.kind command requires version_argv and install_argv"
+                )
+            return cls(
+                kind=kind,
+                version_argv=version_argv,
+                install_argv=install_argv,
+                version_filename=version_filename,
             )
         version_url = str(data.get("version_url") or "").strip()
         version_json_path = str(data.get("version_json_path") or "").strip()
@@ -75,9 +103,6 @@ class PackageInstallSpec:
         strip = int(data.get("strip_components") or 1)
         if strip < 0:
             raise ValueError("package_install.strip_components must be >= 0")
-        version_filename = str(data.get("version_filename") or VERSION_FILENAME).strip()
-        if not version_filename:
-            version_filename = VERSION_FILENAME
         return cls(
             kind=kind,
             version_url=version_url,
@@ -86,6 +111,17 @@ class PackageInstallSpec:
             strip_components=strip,
             version_filename=version_filename,
         )
+
+
+def _coerce_argv(raw: Any, field_name: str) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"package_install.{field_name} must be a non-empty list")
+    argv = [str(x) for x in raw if str(x).strip()]
+    if not argv:
+        raise ValueError(f"package_install.{field_name} must be a non-empty list")
+    return argv
 
 
 def _json_path(data: Any, dotted: str) -> Any:
@@ -105,8 +141,33 @@ def fetch_remote_version(
     spec: PackageInstallSpec,
     *,
     timeout: float = 60.0,
+    install_dir: str | Path | None = None,
+    extra_env: Mapping[str, str] | None = None,
+    on_line: LineCallback | None = None,
+    stop_event: threading.Event | None = None,
+    run_uid: int | None = None,
+    run_gid: int | None = None,
 ) -> str:
-    """GET version_url and extract the version string via version_json_path."""
+    """Return the remote version string (JSON path or command stdout)."""
+
+    if spec.kind == "command":
+        cwd = Path(install_dir) if install_dir is not None else Path.cwd()
+        cwd.mkdir(parents=True, exist_ok=True)
+        output = _run_argv(
+            spec.version_argv,
+            cwd=cwd,
+            extra_env=extra_env,
+            timeout=timeout,
+            on_line=on_line,
+            stop_event=stop_event,
+            run_uid=run_uid,
+            run_gid=run_gid,
+            label="version",
+        )
+        version = _version_from_command_output(output)
+        if not version:
+            raise PackageInstallError("version_argv printed an empty version")
+        return version
 
     try:
         request = urllib.request.Request(
@@ -132,6 +193,13 @@ def fetch_remote_version(
             f"Empty version at {spec.version_json_path!r} from {spec.version_url}"
         )
     return version
+
+
+def _version_from_command_output(output: str) -> str:
+    """Last non-empty line of command stdout is the version string."""
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def version_path(install_dir: str | Path, spec: PackageInstallSpec) -> Path:
@@ -172,6 +240,96 @@ def _emit(on_line: LineCallback | None, message: str) -> None:
             on_line(message)
         except Exception:  # noqa: BLE001
             LOG.debug("package on_line callback failed", exc_info=True)
+
+
+def _command_env(extra_env: Mapping[str, str] | None) -> dict[str, str]:
+    env = os.environ.copy()
+    if extra_env:
+        for key, value in extra_env.items():
+            if key:
+                env[str(key)] = str(value)
+    return env
+
+
+def _run_argv(
+    argv: list[str],
+    *,
+    cwd: Path,
+    extra_env: Mapping[str, str] | None,
+    timeout: float,
+    on_line: LineCallback | None,
+    stop_event: threading.Event | None,
+    run_uid: int | None,
+    run_gid: int | None,
+    label: str,
+) -> str:
+    """Run argv, stream stdout to logs, return combined output. Raises on non-zero."""
+
+    _emit(on_line, f"Running {label}: {' '.join(argv)}")
+    preexec = make_preexec(run_uid, run_gid)
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd),
+            env=_command_env(extra_env),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            preexec_fn=preexec,
+        )
+    except OSError as exc:
+        raise PackageInstallError(f"Failed starting {label} command: {exc}") from exc
+
+    chunks: list[str] = []
+    started = time.monotonic()
+    try:
+        assert proc.stdout is not None
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise PackageInstallError(f"Stopped while running {label} command")
+            if timeout > 0 and (time.monotonic() - started) > timeout:
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise PackageInstallError(
+                    f"{label} command timed out after {timeout:.0f}s"
+                )
+            line = proc.stdout.readline()
+            if line == "" and proc.poll() is not None:
+                break
+            if not line:
+                continue
+            chunks.append(line)
+            _emit(on_line, line.rstrip("\n"))
+        proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        if proc.stdout is not None:
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
+
+    output = "".join(chunks)
+    if proc.returncode != 0:
+        raise PackageInstallError(
+            f"{label} command exited {proc.returncode}"
+        )
+    return output
 
 
 def _download_file(
@@ -286,6 +444,17 @@ def _extract_archive(
     _emit(on_line, "Extract complete")
 
 
+def _chown_tree(root: Path, run_uid: int, run_gid: int | None) -> None:
+    if not hasattr(os, "chown"):
+        return
+    try:
+        for path in root.rglob("*"):
+            os.chown(path, run_uid, run_gid if run_gid is not None else -1)
+        os.chown(root, run_uid, run_gid if run_gid is not None else -1)
+    except OSError:
+        LOG.debug("chown after package install failed", exc_info=True)
+
+
 def install_or_update(
     install_dir: str | Path,
     plugin: _PackagePlugin,
@@ -296,6 +465,7 @@ def install_or_update(
     on_line: LineCallback | None = None,
     run_uid: int | None = None,
     run_gid: int | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> str:
     """Install or update from package_install. Returns the installed version."""
 
@@ -304,51 +474,90 @@ def install_or_update(
         raise PackageInstallError("plugin has no package_install configuration")
     root = Path(install_dir)
     root.mkdir(parents=True, exist_ok=True)
-
-    remote = fetch_remote_version(spec, timeout=min(60.0, timeout))
+    env = dict(extra_env or {})
+    env.setdefault("INSTALL_DIR", str(root))
     local = read_local_version(root, spec)
     installed = _marker_installed(root, plugin.install_marker)
-    if installed and local == remote and not force:
-        _emit(on_line, f"Already up to date (version {remote})")
-        return remote
+
+    remote: str | None = None
+    if spec.kind == "command" and (not installed or force):
+        # Fresh command installs often cannot print a version until the
+        # installer has run (device login, payload extract, …).
+        remote = None
+    else:
+        remote = fetch_remote_version(
+            spec,
+            timeout=min(60.0, timeout) if timeout > 0 else 60.0,
+            install_dir=root,
+            extra_env=env,
+            on_line=on_line,
+            stop_event=stop_event,
+            run_uid=run_uid,
+            run_gid=run_gid,
+        )
+        if installed and local == remote and not force:
+            _emit(on_line, f"Already up to date (version {remote})")
+            return remote
 
     _emit(
         on_line,
-        f"Installing package version {remote}"
+        f"Installing package version {remote or 'unknown'}"
         + (f" (was {local})" if local else " (fresh install)"),
     )
-    url = download_url_for(spec, remote)
-    with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
-        archive = Path(tmp) / "package.tar"
-        _download_file(
-            url,
-            archive,
-            timeout=timeout,
+    if spec.kind == "command":
+        # Device-code login + large payloads: honor stop_event, no wall clock.
+        _run_argv(
+            spec.install_argv,
+            cwd=root,
+            extra_env=env,
+            timeout=0,
             on_line=on_line,
             stop_event=stop_event,
+            run_uid=run_uid,
+            run_gid=run_gid,
+            label="install",
         )
-        if stop_event is not None and stop_event.is_set():
-            raise PackageInstallError("Stopped before extract")
-        _extract_archive(
-            archive,
-            root,
-            strip_components=spec.strip_components,
+        remote = fetch_remote_version(
+            spec,
+            timeout=60.0,
+            install_dir=root,
+            extra_env=env,
             on_line=on_line,
+            stop_event=stop_event,
+            run_uid=run_uid,
+            run_gid=run_gid,
         )
+    else:
+        if not remote:
+            raise PackageInstallError("Remote version missing before download")
+        url = download_url_for(spec, remote)
+        with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
+            archive = Path(tmp) / "package.tar"
+            _download_file(
+                url,
+                archive,
+                timeout=timeout,
+                on_line=on_line,
+                stop_event=stop_event,
+            )
+            if stop_event is not None and stop_event.is_set():
+                raise PackageInstallError("Stopped before extract")
+            _extract_archive(
+                archive,
+                root,
+                strip_components=spec.strip_components,
+                on_line=on_line,
+            )
 
     if not _marker_installed(root, plugin.install_marker):
         raise PackageInstallError(
-            f"Package extract finished but install marker missing: {plugin.install_marker}"
+            f"Package install finished but install marker missing: {plugin.install_marker}"
         )
+    if not remote:
+        raise PackageInstallError("Installer finished without a version string")
     write_local_version(root, spec, remote)
-    # Best-effort ownership when running as root before drop.
-    if run_uid is not None and hasattr(os, "chown"):
-        try:
-            for path in root.rglob("*"):
-                os.chown(path, run_uid, run_gid if run_gid is not None else -1)
-            os.chown(root, run_uid, run_gid if run_gid is not None else -1)
-        except OSError:
-            LOG.debug("chown after package install failed", exc_info=True)
+    if run_uid is not None:
+        _chown_tree(root, run_uid, run_gid)
     _emit(on_line, f"Installed version {remote}")
     return remote
 
@@ -358,6 +567,7 @@ def update_available(
     plugin: _PackagePlugin,
     *,
     timeout: float = 60.0,
+    extra_env: Mapping[str, str] | None = None,
 ) -> UpdateCheckResult:
     """Compare local package version to remote (same shape as Steam checks)."""
 
@@ -369,9 +579,16 @@ def update_available(
             remote_build_id=None,
             error="no package_install configured",
         )
+    env = dict(extra_env or {})
+    env.setdefault("INSTALL_DIR", str(install_dir))
     local = read_local_version(install_dir, spec)
     try:
-        remote = fetch_remote_version(spec, timeout=timeout)
+        remote = fetch_remote_version(
+            spec,
+            timeout=timeout,
+            install_dir=install_dir,
+            extra_env=env,
+        )
     except PackageInstallError as exc:
         return UpdateCheckResult(
             update_available=False,
