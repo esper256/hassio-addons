@@ -11,7 +11,7 @@ Hytale uses **UDP/QUIC** (not TCP). First start needs **two** sign-ins in **Open
    - **Game password** (recommended)
 2. Leave **Server name** blank for a stable generated `HAOS Hytale ####`.
 3. **Start** the app. Open **Open Web UI**.
-4. When the sign-in card appears, **open the link in a new browser tab** (not inside this panel) and sign in. The code on the card is Hytale's **device** login. If Hytale **emails** you a login code, that is a different code — type the email code in the email box; do not paste the card code there. Paste the card code only if the Hytale page asks for it. Wait for the several-gigabyte download.
+4. When the sign-in card appears, **open the link in a new browser tab** (not inside this panel). Hytale emails a login code for your account — that is **not** the code on the card. After you are signed in, click the link again so you reach **Authorize a device**, then paste the card code only if that page asks. The official downloader waits **10 minutes**. First download is several gigabytes.
 5. A **second** sign-in card appears for the running server (a different Hytale login). Repeat. After that, tokens stay on disk.
 6. Forward **UDP 5520** on your router to this Home Assistant host (TCP is not used).
 7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port 5520).

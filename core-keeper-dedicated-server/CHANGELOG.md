@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.0
+
+- Shared supervisor **3.2**: Ingress toast when live status refresh fails (app stopped or unresponsive). Vendored `game_server/` sync.
+
 ## 3.1.0
 
 - Shared supervisor **3.1**: `package_install.kind: command` (plugin argv installers), Ingress operator-action card for device-code sign-in, `waiting` lifecycle while that file is present. Vendored `game_server/` sync.

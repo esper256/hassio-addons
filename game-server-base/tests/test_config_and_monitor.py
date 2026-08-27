@@ -2340,6 +2340,11 @@ class StatusFormatTests(unittest.TestCase):
         self.assertIn("https://example.invalid/device", html)
         self.assertIn("Download files", html)
         self.assertNotIn('class="operator-action hidden"', html)
+        self.assertIn('id="live-toast"', html)
+        self.assertIn("stopped or unresponsive", html)
+        self.assertIn("live-toast hidden", html)
+        self.assertIn("setLiveStatus", html)
+        self.assertIn("setInterval(softRefresh, 5000)", html)
 
     def test_restore_api_accepts_query_when_body_empty(self) -> None:
         """Ingress sometimes omits Content-Length; query-string must still work."""

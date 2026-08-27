@@ -18,7 +18,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from typing import IO, Any, Mapping
+from typing import IO, Any, Mapping, NamedTuple
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
@@ -30,10 +30,10 @@ AUTH_ENC_NAME = "auth.enc"
 GAME_ZIP_NAME = "game.zip"
 INSTALL_MARKER = "Assets.zip"
 SIGNIN_DETAIL = (
-    "Open the link in a new browser tab (not this panel) and sign in. "
-    "The code on this card is Hytale's device login — paste it only if that page asks. "
-    "If Hytale emails you a login code, type the email code there; do not paste this one. "
-    "The device code appears within a second, before any email arrives."
+    "Open the link in a new browser tab (not this panel). "
+    "Hytale emails a login code first; after you are signed in, click the link again "
+    "to reach Authorize a device. You have 10 minutes. "
+    "Paste this card's device code only on that page, never into an email box."
 )
 DOWNLOAD_SIGNIN_DETAIL = SIGNIN_DETAIL + " First download is several gigabytes."
 SERVER_SIGNIN_DETAIL = (
@@ -41,6 +41,12 @@ SERVER_SIGNIN_DETAIL = (
     + SIGNIN_DETAIL
     + " Hosting does not lock your client."
 )
+TIMEOUT_RETRY_DETAIL = (
+    "The last sign-in timed out after 10 minutes (Hytale's downloader stopped waiting). "
+    "A new device code is below. Sign in first, then open the link to Authorize a device. "
+    "Paste this code only on that page. You have 10 minutes."
+)
+INSTALL_TOKEN_ATTEMPTS = 3
 
 _URL_RE = re.compile(r"https://[^\s\"'<>]+", re.IGNORECASE)
 _CODE_RE = re.compile(
@@ -48,6 +54,19 @@ _CODE_RE = re.compile(
     re.IGNORECASE,
 )
 _AUTH_OK_RE = re.compile(r"authentication successful", re.IGNORECASE)
+_TOKEN_TIMEOUT_RE = re.compile(
+    r"error obtaining token:.*context deadline exceeded",
+    re.IGNORECASE,
+)
+
+
+class TeeResult(NamedTuple):
+    returncode: int
+    token_wait_timed_out: bool = False
+
+
+def token_wait_timed_out_line(line: str) -> bool:
+    return bool(_TOKEN_TIMEOUT_RE.search(line))
 
 
 def ensure_instance_salt(path: Path) -> str:
@@ -377,7 +396,7 @@ def _tee_process(
     send_after_start: str | None = None,
     success_clears: bool = True,
     stdin: IO[str] | None = None,
-) -> int:
+) -> TeeResult:
     """Run argv, scrape device-code lines, optional stdin inject, forward stdin."""
 
     proc = subprocess.Popen(
@@ -394,6 +413,7 @@ def _tee_process(
     )
     seen_url = ""
     seen_code = ""
+    token_wait_timed_out = False
     stop = threading.Event()
     stdin_lock = threading.Lock()
     last_published = ""
@@ -428,12 +448,14 @@ def _tee_process(
             pass
 
     def reader() -> None:
-        nonlocal seen_url, seen_code
+        nonlocal seen_url, seen_code, token_wait_timed_out
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
                 sys.stdout.write(line)
                 sys.stdout.flush()
+                if token_wait_timed_out_line(line):
+                    token_wait_timed_out = True
                 url, code = scrape_device_login(line)
                 if url or code:
                     seen_url, seen_code = coalesce_device_login(
@@ -484,7 +506,7 @@ def _tee_process(
     thread.join(timeout=5)
     if success_clears:
         clear_operator_action()
-    return int(rc or 0)
+    return TeeResult(int(rc or 0), token_wait_timed_out)
 
 
 def cmd_print_version() -> int:
@@ -529,27 +551,48 @@ def cmd_install() -> int:
         {"label": "Download files", "state": "active"},
         {"label": "Authenticate server", "state": "pending"},
     ]
-    write_operator_action(
-        title="Sign in to download Hytale",
-        detail=DOWNLOAD_SIGNIN_DETAIL,
-        steps=steps,
-    )
     argv = _downloader_cmd(
         *_patchline_args(_channel()),
         "-download-path",
         str(archive),
     )
-    rc = _tee_process(
-        argv,
-        cwd=state,
-        env=env,
-        steps=steps,
-        title="Sign in to download Hytale",
-        detail=DOWNLOAD_SIGNIN_DETAIL,
-        success_clears=False,
-    )
-    if rc != 0:
-        return rc
+    rc = 1
+    for attempt in range(1, INSTALL_TOKEN_ATTEMPTS + 1):
+        timed_out = attempt > 1
+        title = (
+            "Sign in again — previous code expired"
+            if timed_out
+            else "Sign in to download Hytale"
+        )
+        detail = TIMEOUT_RETRY_DETAIL if timed_out else DOWNLOAD_SIGNIN_DETAIL
+        if timed_out:
+            print(
+                "Downloader token wait timed out; requesting a new device code "
+                f"({attempt}/{INSTALL_TOKEN_ATTEMPTS})",
+                flush=True,
+            )
+        write_operator_action(title=title, detail=detail, steps=steps)
+        result = _tee_process(
+            argv,
+            cwd=state,
+            env=env,
+            steps=steps,
+            title=title,
+            detail=detail,
+            success_clears=False,
+        )
+        rc = result.returncode
+        if rc == 0:
+            break
+        if not result.token_wait_timed_out:
+            return rc
+        if attempt == INSTALL_TOKEN_ATTEMPTS:
+            print(
+                "Hytale downloader stopped waiting for the device token after 10 minutes. "
+                "Restart this app and finish Authorize a device within 10 minutes.",
+                flush=True,
+            )
+            return rc
     if not archive.is_file():
         print(f"downloader finished but {archive} is missing", file=sys.stderr)
         return 1
@@ -601,7 +644,7 @@ def cmd_run_server(java_argv: list[str]) -> int:
             detail=SERVER_SIGNIN_DETAIL,
             steps=steps,
         )
-    rc = _tee_process(
+    result = _tee_process(
         java_argv,
         cwd=data_dir,
         env=env,
@@ -611,7 +654,7 @@ def cmd_run_server(java_argv: list[str]) -> int:
         send_after_start=inject,
         success_clears=True,
     )
-    return rc
+    return result.returncode
 
 
 def build_java_command(extra: list[str]) -> list[str]:

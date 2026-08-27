@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.0
+
+- Shared supervisor **3.2**: Ingress toast when live status refresh fails (app stopped or unresponsive). Vendored `game_server/` sync.
+
 ## 3.1.0
 
 - Supervisor **3.1** vendored sync (app **3.1.0**). Factorio still uses `package_install.kind: http_archive` (factorio.com headless tarball); install, version-check, and update behavior is unchanged. The new command-install path and Ingress operator-action card are unused by this app.

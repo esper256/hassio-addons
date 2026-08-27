@@ -112,7 +112,7 @@ class HytalePluginTests(unittest.TestCase):
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
-        self.assertTrue(str(data["version"]).startswith("3.1."))
+        self.assertTrue(str(data["version"]).startswith("3.2."))
         self.assertEqual(data["schema"]["release_channel"], "list(release|pre-release)")
         self.assertEqual(data["schema"]["server_password"], "password")
 
@@ -261,12 +261,24 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             mod.SIGNIN_DETAIL,
             mod.DOWNLOAD_SIGNIN_DETAIL,
             mod.SERVER_SIGNIN_DETAIL,
+            mod.TIMEOUT_RETRY_DETAIL,
         ):
             self.assertLessEqual(len(text), 400)
             lowered = text.lower()
             self.assertIn("device", lowered)
-            self.assertIn("email", lowered)
+            self.assertIn("10 minutes", lowered)
             self.assertNotIn("enter the code", lowered)
+        self.assertIn("email", mod.SIGNIN_DETAIL.lower())
+        self.assertIn("authorize a device", mod.SIGNIN_DETAIL.lower())
+
+    def test_token_wait_timeout_line_matches_official_downloader(self) -> None:
+        mod = _load_defaults()
+        line = "2026/08/27 14:16:41 error obtaining token: context deadline exceeded"
+        self.assertTrue(mod.token_wait_timed_out_line(line))
+        self.assertFalse(mod.token_wait_timed_out_line("Authorization code: GLrYHNyp"))
+        self.assertFalse(
+            mod.token_wait_timed_out_line("authentication successful! Mode: OAUTH_DEVICE")
+        )
 
     def test_merge_server_config_keeps_unknown_keys(self) -> None:
         mod = _load_defaults()

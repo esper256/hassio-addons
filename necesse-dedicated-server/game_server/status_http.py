@@ -243,6 +243,26 @@ HTML_PAGE = """<!DOCTYPE html>
     }}
     .operator-action .op-step-active {{ color: var(--accent); font-weight: 600; }}
     .operator-action .op-step-done {{ color: var(--good); }}
+    .live-toast {{
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      margin: 0 0 1rem;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--bad);
+      background: color-mix(in srgb, var(--bad) 18%, var(--panel));
+      color: var(--ink);
+      font-weight: 600;
+    }}
+    .live-toast.hidden {{ display: none; }}
+    .live-toast .live-toast-detail {{
+      display: block;
+      font-weight: 400;
+      color: var(--muted);
+      margin-top: 0.3rem;
+      font-size: 0.9rem;
+    }}
     .good {{ color: var(--good); }}
     .bad {{ color: var(--bad); }}
     .idle {{ color: var(--accent); }}
@@ -508,6 +528,10 @@ HTML_PAGE = """<!DOCTYPE html>
 </head>
 <body>
   <main>
+    <div id="live-toast" class="live-toast hidden" role="status" aria-live="polite">
+      This app looks stopped or unresponsive.
+      <span class="live-toast-detail" id="live-toast-detail">Live status refresh failed. The cards on this page may be stale until you start the app again.</span>
+    </div>
     <h1>{game}</h1>
     <p class="sub" id="subtitle">{subtitle}</p>
     <div class="operator-action {operator_action_class}" id="operator-action">
@@ -863,11 +887,27 @@ HTML_PAGE = """<!DOCTYPE html>
       }}
       return false;
     }}
+    function setLiveStatus(ok, detail) {{
+      const toast = document.getElementById('live-toast');
+      const detailEl = document.getElementById('live-toast-detail');
+      if (!toast) return;
+      toast.classList.toggle('hidden', !!ok);
+      if (detailEl && detail) detailEl.textContent = detail;
+    }}
     async function softRefresh() {{
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 8000);
       try {{
-        const res = await fetch('api/ui', {{ headers: {{ 'Accept': 'application/json' }} }});
-        if (!res.ok) return;
+        const res = await fetch('api/ui', {{
+          headers: {{ 'Accept': 'application/json' }},
+          signal: ctl.signal,
+        }});
+        if (!res.ok) {{
+          setLiveStatus(false, 'Live status refresh failed (HTTP ' + res.status + '). This app looks stopped or unresponsive.');
+          return;
+        }}
         const u = await res.json();
+        setLiveStatus(true);
         setText('subtitle', u.subtitle);
         const opCard = document.getElementById('operator-action');
         if (opCard) {{
@@ -959,9 +999,13 @@ HTML_PAGE = """<!DOCTYPE html>
           bsel.innerHTML = u.backup_options;
           if (prev) bsel.value = prev;
         }}
-      }} catch (e) {{}}
+      }} catch (e) {{
+        setLiveStatus(false, 'Live status refresh failed. This app looks stopped or unresponsive; the cards on this page may be stale.');
+      }} finally {{
+        clearTimeout(timer);
+      }}
     }}
-    setInterval(softRefresh, 20000);
+    setInterval(softRefresh, 5000);
   </script>
 </body>
 </html>
