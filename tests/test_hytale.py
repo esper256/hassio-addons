@@ -205,6 +205,31 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
         url, code = mod.scrape_device_login("javascript:alert(1)")
         self.assertEqual((url, code), ("", ""))
 
+    def test_scrape_strips_java_ansi_reset_from_device_code(self) -> None:
+        """Java /auth colors the code; ESC[m must not ride into user_code."""
+
+        mod = _load_defaults()
+        dirty = (
+            "https://oauth.accounts.hytale.com/oauth2/device/verify"
+            "?user_code=KuFxp9fw\x1b[m"
+        )
+        url, code = mod.scrape_device_login(f"Or visit: {dirty}")
+        self.assertEqual(code, "KuFxp9fw")
+        self.assertEqual(
+            url,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=KuFxp9fw",
+        )
+        self.assertNotIn("\x1b", url)
+        url, code = mod.scrape_device_login("Enter code: \x1b[33mKuFxp9fw\x1b[m")
+        self.assertEqual(code, "KuFxp9fw")
+        url, code = mod.scrape_device_login("Authorization code: KuFxp9fw\x1b[m")
+        self.assertEqual(code, "KuFxp9fw")
+        cleaned = mod._url_with_code(dirty, "KuFxp9fw")
+        self.assertEqual(
+            cleaned,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=KuFxp9fw",
+        )
+
     def test_coalesce_keeps_complete_url_from_official_downloader_block(self) -> None:
         """Official CLI prints verification_uri_complete, then a bare fallback URL.
 
