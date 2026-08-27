@@ -1,0 +1,74 @@
+name: Hytale
+# Official files come from the Hytale Downloader CLI (OAuth device-code),
+# not SteamCMD and not an anonymous HTTP tarball.
+package_install:
+  kind: command
+  version_argv:
+    - python3
+    - /opt/haos_defaults.py
+    - print-version
+  install_argv:
+    - python3
+    - /opt/haos_defaults.py
+    - install
+working_dir: /data/world
+data_dir: /data/world
+logs_dir: /data/logs
+install_marker: Assets.zip
+min_backup_bytes: 1024
+stop_timeout_seconds: 120
+stop_stdin_commands:
+  - /stop
+backup_paths:
+  - /data/world
+# Universe folder holds worlds + player data. Named backups zip that folder.
+world_save:
+  strategy: named_path
+  paths:
+    - "{data_dir}/universe"
+executable:
+  - /opt/launch_wrapper.sh
+bool_style: true_false
+ready_timeout_seconds: 180
+# server_port is forced to 5520 by run.sh (HA container-side Network mapping).
+# Official --bind accepts a port or host:port; bind all interfaces explicitly
+# so we never land on localhost-only.
+argv_prefix:
+  - --bind
+  - 0.0.0.0:{server_port}
+env:
+  HYTALE_DISABLE_UPDATES: "1"
+env_options:
+  - JAVA_OPTS
+# Official wordmark: icy crystal letters + leaf glow on navy (#15243A).
+ui_theme:
+  bg: "#0e1a24"
+  panel: "#15243a"
+  ink: "#e8f0e4"
+  muted: "#8aa090"
+  accent: "#8ee04a"
+  good: "#8fbf5a"
+  bad: "#e05545"
+  glow: "#1a3320"
+  wash: "#0a1218"
+  depth: "#0c1410"
+player_tracking_mode: presence
+log_patterns: {}
+log_pattern_candidates:
+  ready:
+    - '(?i)\b(?:listening|bound|bind).*(?:port|5520|:5520)\b'
+    - '(?i)\baccepting (?:connections|players)\b'
+    - '(?i)\bserver started\b'
+    - '(?i)\bstarted.*dedicated server\b'
+  game_version:
+    - '(?i)\bversion[:\s]+(?P<version>\d+(?:\.\d+)+)\b'
+    - '(?i)\bhytale[^\n]{0,40}(?P<version>\d+\.\d+\.\d+)\b'
+  player_join:
+    - '(?i)\b(?P<player>\S+)\s+(?:joined|connected)\b'
+    - '(?i)\bplayer\s+(?P<player>\S+)\s+joined\b'
+  player_leave:
+    - '(?i)\b(?P<player>\S+)\s+(?:left|disconnected)\b'
+    - '(?i)\bplayer\s+(?P<player>\S+)\s+(?:left|disconnected)\b'
+  version_mismatch:
+    - '(?i)\b(?:protocol|version).*(?:mismatch|incompatible|outdated)\b'
+    - '(?i)\bwrong version\b'

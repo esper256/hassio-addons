@@ -230,6 +230,8 @@ class GamePlugin:
             download_url=spec.download_url.replace(token, channel),
             strip_components=spec.strip_components,
             version_filename=spec.version_filename,
+            version_argv=[item.replace(token, channel) for item in spec.version_argv],
+            install_argv=[item.replace(token, channel) for item in spec.install_argv],
         )
 
     def docker_env_keys(self) -> list[str]:

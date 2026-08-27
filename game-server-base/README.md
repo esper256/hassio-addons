@@ -4,7 +4,7 @@
 
 Most visitors want a **specific game**: start at the [repository README](../README.md) (e.g. [Necesse guide](../necesse-dedicated-server/GUIDE.md)).
 
-This guide is for packaging **another Steam dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
+This guide is for packaging **another dedicated server** on the same supervisor (auto-update, by-kind world backups, crash restart, Ingress status, Steam rate gate).
 
 > **AI experiment:** like the rest of this repo, `game-server-base` is a deliberate AI-coding experiment. It works and is useful, and it has been **100% written with AI**. See the [repository README](../README.md).
 
@@ -36,7 +36,7 @@ Primary cards answer “is it up / can people play / do I need to act?” World 
 
 ## What you are building
 
-`game-server-base` is a **game-agnostic** SteamCMD supervisor. It does not know Necesse — or any other title.
+`game-server-base` is a **game-agnostic** supervisor (SteamCMD, HTTP archive, or plugin command install). It does not know Necesse — or any other title.
 
 A game add-on is a thin layer:
 
@@ -69,8 +69,8 @@ Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flag
 
    **Version scheme:** `{supervisor_major}.{supervisor_minor}.{game_patch}`.
    The shared supervisor advertises major.minor in `game_server/version.py`
-   (`SUPERVISOR_VERSION`, currently `3.0`). Each game `config.yaml` is that
-   plus a patch (`3.0.0` for the first release on supervisor 3.0).
+   (`SUPERVISOR_VERSION`, currently `3.1`). Each game `config.yaml` is that
+   plus a patch (`3.1.0` for the first release on supervisor 3.1).
 
    - Supervisor change → bump `SUPERVISOR_VERSION` (e.g. `3.0` → `3.1`) **and**
      set **every** game add-on to `{new}.0` (`3.1.0`) so users see them all
@@ -170,7 +170,7 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 | `name` | Display / notification label |
 | `steam_app_id` | SteamCMD app id (required unless `package_install` is set) |
 | `steam_branch` | Default SteamCMD branch (overridable by HA option `steam_branch`) |
-| `package_install` | Optional non-Steam HTTP archive install (`version_url`, `version_json_path`, `download_url`, `strip_components`). `version_json_path` may include `{release_channel}` (HA option `release_channel`, default `stable`) |
+| `package_install` | Optional non-Steam install. `kind: http_archive` needs `version_url`, `version_json_path`, `download_url`, `strip_components`. `kind: command` needs `version_argv` / `install_argv` (plugin-supplied commands; stdout is logged). `{release_channel}` is substituted from HA option `release_channel` (default `stable`) in JSON paths, download URLs, and argv tokens. Command installers may write `operator_action.json` under the state dir while they wait on a human (device-code login): Ingress shows the URL + code. |
 | `executable` | argv to launch the server (may be a game-layer wrapper script) |
 | `install_marker` | File **or directory** under the install dir that means “install looks present” (`.exists()`, so a Unity `*_Data/` folder is fine when the binary name varies) |
 | `arg_map` | HA/options keys → simple CLI flags (`-flag value`) |
@@ -190,6 +190,25 @@ Point the container at your plugin with `GAME_PLUGIN` (Necesse’s `run.sh` does
 
 Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
+### Operator action card (optional)
+
+A game-layer install or launch script may write `/data/supervisor/operator_action.json` while it blocks on a human (device-code login, “open this URL and enter this code”). Ingress shows a first-class card: open the `url` in a **new browser tab** (HA Ingress is already an iframe — do not embed third-party login pages), copy the `code`, optional `steps`. Delete the file when the action is finished so the card disappears. The supervisor only *reads* this file; OAuth clients and token storage stay in the game layer. URLs must be `http` or `https`.
+
+```json
+{
+  "title": "Sign in required",
+  "detail": "Open the link in a new tab, enter the code, then return here.",
+  "url": "https://example.invalid/device?user_code=ABCD-1234",
+  "code": "ABCD-1234",
+  "steps": [
+    {"label": "Download files", "state": "active"},
+    {"label": "Authenticate server", "state": "pending"}
+  ]
+}
+```
+
+`steps[].state` is `pending`, `active`, or `done`. Command `package_install` argv processes inherit `INSTALL_DIR` and `STATE_DIR`.
+
 ### Log patterns (dry-run first)
 
 - **New games must ship `log_patterns: {}`** (empty active). Put guesses in `log_pattern_candidates` plus the shared generics in `patterns.py`.
@@ -207,6 +226,8 @@ Shape reference: `game-server-base/tests/fixtures/example.game.yaml`
 
 - HA `/data/options.json` (+ env overrides)
 - SteamCMD install/update with a rate gate (serialize, spacing, backoff)
+- Non-Steam `package_install` (`http_archive` or plugin `command` argv)
+- Optional Ingress operator-action card (`operator_action.json`: open URL, copy code)
 - Process supervision, crash restarts, privilege drop to `gameserver`
 - By-kind world backups + retention profiles (per world name/slot); Ingress restore / NEW WORLD / upload
 - HA Core notifications + `/data/supervisor/status.json`

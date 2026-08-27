@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0
+
+- Supervisor **3.1** vendored sync (app **3.1.0**). Factorio still uses `package_install.kind: http_archive` (factorio.com headless tarball); install, version-check, and update behavior is unchanged. The new command-install path and Ingress operator-action card are unused by this app.
+
 ## 3.0.0
 
 - Version scheme: `{supervisor}.{minor}.{game patch}`. Shared supervisor is **3.0**; this app is **3.0.0**. Future supervisor features bump every game to `3.1.0`; a Factorio-only fix is `3.0.1`

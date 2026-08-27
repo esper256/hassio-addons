@@ -44,6 +44,7 @@ from game_server.launch_prepare import (  # noqa: E402
     world_needs_prepare,
     write_config_files,
 )
+from game_server.operator_action import read_operator_action  # noqa: E402
 from game_server.package_install import (  # noqa: E402
     PackageInstallSpec,
     download_url_for,
@@ -242,6 +243,8 @@ class PluginTests(unittest.TestCase):
         self.assertTrue(plugin.uses_package_install)
         assert plugin.package_install is not None
         self.assertEqual(plugin.package_install.kind, "http_archive")
+        self.assertEqual(plugin.package_install.version_argv, [])
+        self.assertEqual(plugin.package_install.install_argv, [])
         self.assertIn("{version}", plugin.package_install.download_url)
         self.assertIn("{release_channel}", plugin.package_install.version_json_path)
         self.assertEqual(plugin.install_marker, "bin/x64/factorio")
@@ -1758,6 +1761,53 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(game_server.__version__, SUPERVISOR_VERSION)
 
 
+class OperatorActionTests(unittest.TestCase):
+    def test_read_operator_action_sanitizes_and_requires_http_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "operator_action.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "title": "Sign in required",
+                        "detail": "Open the link in a new tab.",
+                        "url": "javascript:alert(1)",
+                        "code": "ABCD-1234",
+                        "steps": [
+                            {"label": "Download files", "state": "active"},
+                            {"label": "Authenticate server", "state": "nope"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            action = read_operator_action(tmp)
+            self.assertIsNotNone(action)
+            assert action is not None
+            self.assertEqual(action["code"], "ABCD-1234")
+            self.assertEqual(action["url"], "")
+            self.assertEqual(action["steps"][0]["state"], "active")
+            self.assertEqual(action["steps"][1]["state"], "pending")
+
+            path.write_text(
+                json.dumps(
+                    {
+                        "title": "Sign in required",
+                        "url": "https://example.invalid/device?user_code=AB",
+                        "code": "AB",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ok = read_operator_action(tmp)
+            self.assertIsNotNone(ok)
+            assert ok is not None
+            self.assertTrue(ok["url"].startswith("https://example.invalid/"))
+
+    def test_missing_operator_action_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(read_operator_action(tmp))
+
+
 class StatusFormatTests(unittest.TestCase):
     def test_html_page_placeholders_are_only_known_fields(self) -> None:
         """Catch unescaped JSON/CSS braces before they break Ingress GET /."""
@@ -2226,7 +2276,7 @@ class StatusFormatTests(unittest.TestCase):
     def test_lifecycle_healthz_and_running_label(self) -> None:
         self.assertTrue(healthz_ok({"lifecycle": "running"}))
         self.assertTrue(healthz_ok({"lifecycle": "installing"}))
-        self.assertTrue(healthz_ok({"lifecycle": "updating"}))
+        self.assertTrue(healthz_ok({"lifecycle": "waiting"}))
         self.assertTrue(healthz_ok({"ok": True}))
         self.assertFalse(healthz_ok({"lifecycle": "failed"}))
         self.assertFalse(healthz_ok({"lifecycle": "stopped"}))
@@ -2244,6 +2294,52 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(label, "stopping for restore")
         label, css = _format_running({"lifecycle": "restoring", "running": False})
         self.assertEqual(label, "restoring world")
+        label, css = _format_running(
+            {
+                "lifecycle": "waiting",
+                "operator_action": {
+                    "title": "Sign in required",
+                    "url": "https://example.invalid/device",
+                    "code": "ABCD-1234",
+                },
+            }
+        )
+        self.assertEqual(label, "waiting for sign-in")
+        self.assertEqual(css, "accent")
+        html = render_status_html(
+            _ui_view(
+                {
+                    "running": False,
+                    "lifecycle": "waiting",
+                    "operator_action": {
+                        "title": "Sign in required",
+                        "detail": "Open the link in a new tab.",
+                        "url": "https://example.invalid/device",
+                        "code": "ABCD-1234",
+                        "steps": [
+                            {"label": "Download files", "state": "active"},
+                            {"label": "Authenticate server", "state": "pending"},
+                        ],
+                    },
+                    "crash_count": 0,
+                    "app_version": "3.1.0",
+                    "supervisor_version": "3.1",
+                    "install_method": "package",
+                    "world_save": {"bytes": 0, "label": "", "scope": "missing"},
+                    "disk": {"ok": True, "free_mb": 4096, "min_free_disk_mb": 512},
+                    "monitor": {},
+                    "backups": {"count": 0},
+                    "log_patterns": {"patterns": []},
+                },
+                "Example",
+            ),
+            base_href="/",
+        )
+        self.assertIn("operator-action", html)
+        self.assertIn("ABCD-1234", html)
+        self.assertIn("https://example.invalid/device", html)
+        self.assertIn("Download files", html)
+        self.assertNotIn('class="operator-action hidden"', html)
 
     def test_restore_api_accepts_query_when_body_empty(self) -> None:
         """Ingress sometimes omits Content-Length; query-string must still work."""
@@ -2754,7 +2850,11 @@ class StatusFormatTests(unittest.TestCase):
         self.assertEqual(waiting["update_check_hint"], "")
         self.assertIn("experimental channel", waiting["subtitle"])
         self.assertNotIn("SteamCMD", waiting["subtitle"])
+        self.assertTrue(waiting["operator_action_hidden"])
+        self.assertEqual(waiting["running"], "running")
         html = render_status_html(waiting, base_href="/")
+        self.assertIn('class="operator-action hidden"', html)
+        self.assertNotIn("waiting for sign-in", html)
         self.assertIn("update available", html)
         self.assertNotIn("Update available", html)
         self.assertIn("Update now", html)
@@ -4004,6 +4104,85 @@ class PackageInstallTests(unittest.TestCase):
         plugin.apply_install_channel_options({})
         assert plugin.package_install is not None
         self.assertEqual(plugin.package_install.version_json_path, "stable.headless")
+
+    def test_command_package_install_spec_and_argv(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        plugin.package_install = PackageInstallSpec.from_dict(
+            {
+                "kind": "command",
+                "version_argv": ["/bin/echo", "{release_channel}-9"],
+                "install_argv": ["/opt/install.sh", "{release_channel}"],
+            }
+        )
+        self.assertIsNotNone(plugin.package_install)
+        assert plugin.package_install is not None
+        self.assertEqual(plugin.package_install.kind, "command")
+        plugin.apply_install_channel_options({"release_channel": "beta"})
+        assert plugin.package_install is not None
+        self.assertEqual(plugin.package_install.version_argv, ["/bin/echo", "beta-9"])
+        self.assertEqual(plugin.package_install.install_argv, ["/opt/install.sh", "beta"])
+
+    def test_command_package_install_runs_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install_dir = root / "game"
+            install_dir.mkdir()
+            installer = root / "install.sh"
+            installer.write_text(
+                "#!/bin/sh\n"
+                "set -e\n"
+                "mkdir -p \"$INSTALL_DIR\"\n"
+                "echo payload > \"$INSTALL_DIR/server.bin\"\n",
+                encoding="utf-8",
+            )
+            installer.chmod(0o755)
+            version_sh = root / "version.sh"
+            version_sh.write_text(
+                "#!/bin/sh\n"
+                "echo chatter\n"
+                "echo 4.2.0\n",
+                encoding="utf-8",
+            )
+            version_sh.chmod(0o755)
+            plugin = load_plugin(FIXTURE)
+            plugin.install_marker = "server.bin"
+            plugin.package_install = PackageInstallSpec.from_dict(
+                {
+                    "kind": "command",
+                    "version_argv": [str(version_sh)],
+                    "install_argv": [str(installer)],
+                }
+            )
+            lines: list[str] = []
+            version = package_install_or_update(
+                install_dir,
+                plugin,
+                extra_env={"INSTALL_DIR": str(install_dir)},
+                on_line=lines.append,
+            )
+            self.assertEqual(version, "4.2.0")
+            self.assertTrue((install_dir / "server.bin").is_file())
+            assert plugin.package_install is not None
+            self.assertEqual(read_local_version(install_dir, plugin.package_install), "4.2.0")
+            again = package_install_or_update(
+                install_dir,
+                plugin,
+                extra_env={"INSTALL_DIR": str(install_dir)},
+            )
+            self.assertEqual(again, "4.2.0")
+            check = package_update_available(
+                install_dir,
+                plugin,
+                extra_env={"INSTALL_DIR": str(install_dir)},
+            )
+            self.assertTrue(check.check_ok)
+            self.assertFalse(check.update_available)
+
+    def test_http_archive_spec_still_requires_urls(self) -> None:
+        with self.assertRaises(ValueError):
+            PackageInstallSpec.from_dict({"kind": "http_archive"})
+        with self.assertRaises(ValueError):
+            PackageInstallSpec.from_dict({"kind": "command", "version_argv": ["true"]})
 
     def test_steam_branch_option_overrides_plugin(self) -> None:
         plugin = load_plugin(NECESSE_PLUGIN)
