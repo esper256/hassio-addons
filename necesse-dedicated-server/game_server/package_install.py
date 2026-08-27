@@ -474,49 +474,84 @@ def install_or_update(
         raise PackageInstallError("plugin has no package_install configuration")
     root = Path(install_dir)
     root.mkdir(parents=True, exist_ok=True)
-    env = dict(extra_env or {})
-    env.setdefault("INSTALL_DIR", str(root))
     local = read_local_version(root, spec)
     installed = _marker_installed(root, plugin.install_marker)
 
-    remote: str | None = None
-    if spec.kind == "command" and (not installed or force):
-        # Fresh command installs often cannot print a version until the
-        # installer has run (device login, payload extract, …).
-        remote = None
-    else:
-        remote = fetch_remote_version(
+    if spec.kind == "command":
+        return _install_or_update_command(
+            root,
+            plugin,
             spec,
-            timeout=min(60.0, timeout) if timeout > 0 else 60.0,
-            install_dir=root,
-            extra_env=env,
-            on_line=on_line,
+            force=force,
+            local=local,
+            installed=installed,
             stop_event=stop_event,
+            on_line=on_line,
             run_uid=run_uid,
             run_gid=run_gid,
+            extra_env=extra_env,
         )
-        if installed and local == remote and not force:
-            _emit(on_line, f"Already up to date (version {remote})")
-            return remote
+
+    remote = fetch_remote_version(spec, timeout=min(60.0, timeout))
+    if installed and local == remote and not force:
+        _emit(on_line, f"Already up to date (version {remote})")
+        return remote
 
     _emit(
         on_line,
-        f"Installing package version {remote or 'unknown'}"
+        f"Installing package version {remote}"
         + (f" (was {local})" if local else " (fresh install)"),
     )
-    if spec.kind == "command":
-        # Device-code login + large payloads: honor stop_event, no wall clock.
-        _run_argv(
-            spec.install_argv,
-            cwd=root,
-            extra_env=env,
-            timeout=0,
+    url = download_url_for(spec, remote)
+    with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
+        archive = Path(tmp) / "package.tar"
+        _download_file(
+            url,
+            archive,
+            timeout=timeout,
             on_line=on_line,
             stop_event=stop_event,
-            run_uid=run_uid,
-            run_gid=run_gid,
-            label="install",
         )
+        if stop_event is not None and stop_event.is_set():
+            raise PackageInstallError("Stopped before extract")
+        _extract_archive(
+            archive,
+            root,
+            strip_components=spec.strip_components,
+            on_line=on_line,
+        )
+
+    if not _marker_installed(root, plugin.install_marker):
+        raise PackageInstallError(
+            f"Package extract finished but install marker missing: {plugin.install_marker}"
+        )
+    write_local_version(root, spec, remote)
+    if run_uid is not None:
+        _chown_tree(root, run_uid, run_gid)
+    _emit(on_line, f"Installed version {remote}")
+    return remote
+
+
+def _install_or_update_command(
+    root: Path,
+    plugin: _PackagePlugin,
+    spec: PackageInstallSpec,
+    *,
+    force: bool,
+    local: str | None,
+    installed: bool,
+    stop_event: threading.Event | None,
+    on_line: LineCallback | None,
+    run_uid: int | None,
+    run_gid: int | None,
+    extra_env: Mapping[str, str] | None,
+) -> str:
+    """Command-kind install (plugin argv). HTTP archive stays on install_or_update."""
+
+    env = dict(extra_env or {})
+    env.setdefault("INSTALL_DIR", str(root))
+    remote: str | None = None
+    if installed and not force:
         remote = fetch_remote_version(
             spec,
             timeout=60.0,
@@ -527,28 +562,37 @@ def install_or_update(
             run_uid=run_uid,
             run_gid=run_gid,
         )
-    else:
-        if not remote:
-            raise PackageInstallError("Remote version missing before download")
-        url = download_url_for(spec, remote)
-        with tempfile.TemporaryDirectory(prefix="pkg-dl-", dir=str(root.parent)) as tmp:
-            archive = Path(tmp) / "package.tar"
-            _download_file(
-                url,
-                archive,
-                timeout=timeout,
-                on_line=on_line,
-                stop_event=stop_event,
-            )
-            if stop_event is not None and stop_event.is_set():
-                raise PackageInstallError("Stopped before extract")
-            _extract_archive(
-                archive,
-                root,
-                strip_components=spec.strip_components,
-                on_line=on_line,
-            )
+        if local == remote:
+            _emit(on_line, f"Already up to date (version {remote})")
+            return remote
 
+    _emit(
+        on_line,
+        f"Installing package version {remote or 'unknown'}"
+        + (f" (was {local})" if local else " (fresh install)"),
+    )
+    # Device-code login + large payloads: honor stop_event, no wall clock.
+    _run_argv(
+        spec.install_argv,
+        cwd=root,
+        extra_env=env,
+        timeout=0,
+        on_line=on_line,
+        stop_event=stop_event,
+        run_uid=run_uid,
+        run_gid=run_gid,
+        label="install",
+    )
+    remote = fetch_remote_version(
+        spec,
+        timeout=60.0,
+        install_dir=root,
+        extra_env=env,
+        on_line=on_line,
+        stop_event=stop_event,
+        run_uid=run_uid,
+        run_gid=run_gid,
+    )
     if not _marker_installed(root, plugin.install_marker):
         raise PackageInstallError(
             f"Package install finished but install marker missing: {plugin.install_marker}"
@@ -579,16 +623,19 @@ def update_available(
             remote_build_id=None,
             error="no package_install configured",
         )
-    env = dict(extra_env or {})
-    env.setdefault("INSTALL_DIR", str(install_dir))
     local = read_local_version(install_dir, spec)
     try:
-        remote = fetch_remote_version(
-            spec,
-            timeout=timeout,
-            install_dir=install_dir,
-            extra_env=env,
-        )
+        if spec.kind == "command":
+            env = dict(extra_env or {})
+            env.setdefault("INSTALL_DIR", str(install_dir))
+            remote = fetch_remote_version(
+                spec,
+                timeout=timeout,
+                install_dir=install_dir,
+                extra_env=env,
+            )
+        else:
+            remote = fetch_remote_version(spec, timeout=timeout)
     except PackageInstallError as exc:
         return UpdateCheckResult(
             update_available=False,

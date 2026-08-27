@@ -2,7 +2,7 @@
 
 ## 3.1.0
 
-- Shared supervisor **3.1**: `package_install.kind: command` (plugin argv installers), Ingress operator-action card for device-code sign-in, `waiting` lifecycle while that file is present. Vendored `game_server/` sync.
+- Supervisor **3.1** vendored sync (app **3.1.0**). Factorio still uses `package_install.kind: http_archive` (factorio.com headless tarball); install, version-check, and update behavior is unchanged. The new command-install path and Ingress operator-action card are unused by this app.
 
 ## 3.0.0
 
