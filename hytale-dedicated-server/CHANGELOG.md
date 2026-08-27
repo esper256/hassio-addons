@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.0
+
+- Shared supervisor **3.3**: a Home Assistant stop (SIGTERM) during first install exits cleanly instead of crashing with `package install failed`; install commands notice stop without waiting for the next log line; `/healthz` stays reachable for watchdog and Docker healthchecks when Ingress peer checks apply. Vendored `game_server/` sync.
+- If the app restarts during the first Hytale sign-in, press **Start** again — a new device code is issued. Uninstall is not required.
+
 ## 3.2.1
 
 - Strip ANSI color resets from Java `/auth` device-code lines so `user_code` is not `KuFxp9fw` plus ESC[m

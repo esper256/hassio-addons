@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.3.0
+
+- Shared supervisor **3.3**: SIGTERM during first install exits cleanly (no false “install failed” crash); package install commands honor stop without waiting for the next log line; `/healthz` stays reachable for HA watchdog and Docker healthchecks. Vendored `game_server/` sync.
+
 ## 3.2.0
 
 - Shared supervisor **3.2**: Ingress toast when live status refresh fails (app stopped or unresponsive). Vendored `game_server/` sync.

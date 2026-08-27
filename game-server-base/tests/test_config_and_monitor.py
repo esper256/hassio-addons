@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime
@@ -46,7 +47,9 @@ from game_server.launch_prepare import (  # noqa: E402
 )
 from game_server.operator_action import read_operator_action  # noqa: E402
 from game_server.package_install import (  # noqa: E402
+    PackageInstallError,
     PackageInstallSpec,
+    _run_argv,
     download_url_for,
     install_or_update as package_install_or_update,
     read_local_version,
@@ -58,6 +61,7 @@ from game_server.steam_gate import SteamGate, SteamPolicy, reset_gate_for_tests 
 from game_server.status_http import (  # noqa: E402
     DEFAULT_UI_THEME,
     HTML_PAGE,
+    INGRESS_PEER,
     _STATUS_HTML_KEYS,
     _fmt_ago,
     _format_backups,
@@ -76,7 +80,9 @@ from game_server.status_http import (  # noqa: E402
     _format_promote_prompt,
     _log_pattern_prompt,
     _ui_view,
+    canonical_peer,
     healthz_ok,
+    peer_is_allowed,
     render_status_html,
     resolve_ui_theme,
 )
@@ -2011,6 +2017,69 @@ class StatusFormatTests(unittest.TestCase):
             if old is not None:
                 os.environ["SUPERVISOR_TOKEN"] = old
 
+    def test_canonical_peer_strips_ipv4_mapped_ipv6(self) -> None:
+        self.assertEqual(canonical_peer("172.30.32.2"), INGRESS_PEER)
+        self.assertEqual(canonical_peer("::ffff:172.30.32.2"), INGRESS_PEER)
+        self.assertEqual(canonical_peer("::1"), "127.0.0.1")
+        self.assertEqual(canonical_peer("127.0.0.1"), "127.0.0.1")
+
+    def test_peer_allowlist_open_without_supervisor_token(self) -> None:
+        old = os.environ.pop("SUPERVISOR_TOKEN", None)
+        try:
+            self.assertTrue(peer_is_allowed("10.0.0.9"))
+            os.environ["SUPERVISOR_TOKEN"] = "test-token"
+            self.assertTrue(peer_is_allowed(INGRESS_PEER))
+            self.assertTrue(peer_is_allowed("::ffff:172.30.32.2"))
+            self.assertFalse(peer_is_allowed("10.0.0.9"))
+            self.assertFalse(peer_is_allowed("127.0.0.1"))
+        finally:
+            os.environ.pop("SUPERVISOR_TOKEN", None)
+            if old is not None:
+                os.environ["SUPERVISOR_TOKEN"] = old
+
+    def test_healthz_ok_from_localhost_when_supervisor_token_set(self) -> None:
+        """HA watchdog / Docker HEALTHCHECK curl 127.0.0.1 must not 403."""
+
+        import urllib.error
+        import urllib.request
+
+        from game_server.status_http import StatusServer
+
+        status = {
+            "running": False,
+            "lifecycle": "installing",
+            "monitor": {},
+            "log_patterns": {"patterns": []},
+            "log_captures": [],
+            "backups": {"archive_count": 0, "restorable": []},
+        }
+        old = os.environ.get("SUPERVISOR_TOKEN")
+        os.environ["SUPERVISOR_TOKEN"] = "test-token"
+        server = StatusServer("127.0.0.1", 0, lambda: status, game_name="Example")
+        try:
+            server.start()
+            assert server._httpd is not None
+            port = server._httpd.server_address[1]
+            with urllib.request.urlopen(  # noqa: S310
+                f"http://127.0.0.1:{port}/healthz", timeout=5
+            ) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.read(), b"ok\n")
+            try:
+                urllib.request.urlopen(  # noqa: S310
+                    f"http://127.0.0.1:{port}/", timeout=5
+                )
+            except urllib.error.HTTPError as exc:
+                self.assertEqual(exc.code, 403)
+            else:
+                self.fail("GET / from localhost should be 403 under SUPERVISOR_TOKEN")
+        finally:
+            server.stop()
+            if old is None:
+                os.environ.pop("SUPERVISOR_TOKEN", None)
+            else:
+                os.environ["SUPERVISOR_TOKEN"] = old
+
     def test_status_http_prompt_matches_textarea_with_file_rescan(self) -> None:
         """GET /, /api/ui, and /api/logs/prompt share the file-rescan prompt."""
 
@@ -3598,6 +3667,80 @@ class LogBridgeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("steam-line-one", output)
         self.assertIn("steam-line-two", output)
+
+    def test_package_install_run_argv_notices_stop_while_child_is_silent(self) -> None:
+        """SIGTERM during OAuth must not wait for the next downloader log line."""
+
+        stop = threading.Event()
+        started = time.monotonic()
+
+        def _stop_soon() -> None:
+            time.sleep(0.3)
+            stop.set()
+
+        threading.Thread(target=_stop_soon, daemon=True).start()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(PackageInstallError) as ctx:
+                _run_argv(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    cwd=Path(tmp),
+                    extra_env=None,
+                    timeout=0,
+                    on_line=None,
+                    stop_event=stop,
+                    run_uid=None,
+                    run_gid=None,
+                    label="install",
+                )
+        elapsed = time.monotonic() - started
+        self.assertIn("Stopped while running install command", str(ctx.exception))
+        self.assertLess(elapsed, 8.0)
+
+    def test_ensure_installed_stop_is_not_a_failed_install(self) -> None:
+        """HA SIGTERM during first package install must not notify or crash."""
+
+        from unittest import mock
+
+        plugin = load_plugin(FACTORIO_PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=True,
+                update_on_start=True,
+                state_dir=str(root / "state"),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            supervisor = GameServerSupervisor(plugin, cfg)
+            notes: list[tuple] = []
+
+            def _note(*args: object, **kwargs: object) -> bool:
+                notes.append((args, kwargs))
+                return True
+
+            supervisor.notifier.notify = _note  # type: ignore[method-assign]
+
+            def _fake_install(*_a: object, **_k: object) -> str:
+                supervisor._stop.set()
+                raise PackageInstallError("Stopped while running install command")
+
+            with mock.patch(
+                "game_server.supervisor.package_install.install_or_update",
+                side_effect=_fake_install,
+            ):
+                supervisor.ensure_installed()
+            self.assertEqual(notes, [])
+            self.assertTrue(supervisor._stop.is_set())
 
 
 class SteamCMDHelperTests(unittest.TestCase):
