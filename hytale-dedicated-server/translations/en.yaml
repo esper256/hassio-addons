@@ -66,4 +66,4 @@ configuration:
     name: Minimum free disk (MiB)
     description: Skip backups/updates when free space under /data falls below this threshold. Keep extra room for Assets.zip (~3 GB).
 network:
-  5520/udp: Game port players use in Hytale to reach this server on your Home Assistant machine (UDP/QUIC). Leave at 5520 unless that port is already taken. TCP is not used.
+  25565/udp: Game port players use in Hytale Direct Connect (UDP/QUIC). Matches the client default when you omit the port (the in-game hint shows :25565). TCP is not used.

@@ -1,6 +1,6 @@
 name: "Hytale Dedicated Server"
 description: "Hytale dedicated multiplayer server (official Linux downloader, Java 25) with auto-updates, world backups, and an Ingress status UI. First start needs two Hytale account sign-ins (download, then server)."
-version: "3.3.0"
+version: "3.3.1"
 slug: "hytale_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/hytale-dedicated-server"
 arch:
@@ -18,11 +18,13 @@ ingress_stream: true
 panel_icon: mdi:cube-outline
 panel_title: Hytale
 # HA format is "container-port/protocol: host-port". Container port is fixed
-# at 5520 (Hytale default, QUIC/UDP). The Network UI only changes the host port.
+# at 25565 (Hytale client Direct Connect default). The Network UI only changes
+# the host port. The dedicated-server --bind default is 5520 if omitted; we
+# pass --bind so IP-only joins match the client (placeholder :25565).
 ports:
-  5520/udp: 5520
+  25565/udp: 25565
 ports_description:
-  5520/udp: Game port players use on this Home Assistant machine (UDP/QUIC). Leave at 5520 unless that port is already taken. TCP is not used.
+  25565/udp: Game port players use in Hytale Direct Connect (UDP/QUIC). Matches the client default when you omit the port. TCP is not used.
 options:
   world_name: "default"
   server_name: ""

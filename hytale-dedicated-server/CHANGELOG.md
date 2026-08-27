@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.3.1
+
+- Listen on UDP **25565**, the Hytale client Direct Connect default when you omit the port (the join box hint is `:25565`). The dedicated-server binary still defaults to 5520 if you omit `--bind`; we pass `--bind 0.0.0.0:25565`. After updating, forward **UDP 25565** and join with the host IP alone (or `:25565`). A previous 5520 forward will not match.
+
 ## 3.3.0
 
 - Shared supervisor **3.3**: a Home Assistant stop (SIGTERM) during first install exits cleanly instead of crashing with `package install failed`; install commands notice stop without waiting for the next log line; `/healthz` stays reachable for watchdog and Docker healthchecks when Ingress peer checks apply. Vendored `game_server/` sync.

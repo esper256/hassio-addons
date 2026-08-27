@@ -13,8 +13,8 @@ Hytale uses **UDP/QUIC** (not TCP). First start needs **two** sign-ins in **Open
 3. **Start** the app. Open **Open Web UI**. If Home Assistant restarts the app during the first sign-in, press **Start** again. A new device code is issued; you do not need to uninstall.
 4. Sign in from **Open Web UI** or from the **Logs** tab (same URL and device code). Open the URL that includes `user_code=` in a new browser tab. Hytale emails a login code for your account — that is **not** the device code. After you are signed in, open the URL again so you reach **Authorize a device**, then paste the device code only if that page asks. The official downloader waits **10 minutes**. First download is several gigabytes.
 5. A **second** sign-in card appears for the running server (a different Hytale login). Repeat. After that, tokens stay on disk.
-6. Forward **UDP 5520** on your router to this Home Assistant host (TCP is not used).
-7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port 5520).
+6. Forward **UDP 25565** on your router to this Home Assistant host (TCP is not used). That is the port the Hytale client uses when you leave the port off Direct Connect.
+7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port optional; `:25565` if you include it).
 
 ## OPEN WEB UI
 
@@ -34,7 +34,7 @@ That page shows server status, the sign-in card when needed, world save, backups
 | Daily update check hour | Default **5** |
 | Backup retention | `minimal` / `standard` / `extended` |
 | HA notifications | Crash / update failure alerts |
-| Network → UDP port | Host port players use (default 5520, QUIC) |
+| Network → UDP port | Host port players use (default **25565**, QUIC). Matches the in-game Direct Connect hint. |
 
 ## Backups and restore
 
