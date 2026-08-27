@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.1
+
+- Store art: square tile is the official Hytale H; Info header wordmark is letterboxed so letters are not cropped
+
 ## 3.1.0
 
 - First Hytale dedicated-server app on supervisor **3.1**

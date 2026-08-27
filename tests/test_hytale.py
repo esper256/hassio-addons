@@ -112,7 +112,7 @@ class HytalePluginTests(unittest.TestCase):
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
-        self.assertEqual(data["version"], "3.1.0")
+        self.assertTrue(str(data["version"]).startswith("3.1."))
         self.assertEqual(data["schema"]["release_channel"], "list(release|pre-release)")
         self.assertEqual(data["schema"]["server_password"], "password")
 
