@@ -1,12 +1,15 @@
 # Changelog
 
+## 3.2.1
+
+- Strip ANSI color resets from Java `/auth` device-code lines so `user_code` is not `KuFxp9fw` plus ESC[m
+
 ## 3.2.0
 
 - Shared supervisor **3.2**: Ingress toast when live status refresh fails (app stopped or unresponsive)
 - Keep the downloader's complete `?user_code=` sign-in URL (the fallback URL without the code no longer overwrites it)
 - Sign-in card: device code vs emailed login code; finish Hytale login first, then open the link to reach Authorize a device; 10-minute downloader wait
 - Retry download sign-in with a fresh device code when the official downloader hits `error obtaining token: context deadline exceeded` (keeps waiting until sign-in succeeds or you stop the app)
-- Strip ANSI color resets from Java `/auth` device-code lines so `user_code` is not `KuFxp9fw` plus ESC[m
 
 ## 3.1.2
 
