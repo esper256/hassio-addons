@@ -26,6 +26,26 @@ LOG = logging.getLogger("game_server.status_http")
 # Home Assistant Ingress proxy source address (Supervisor).
 INGRESS_PEER = "172.30.32.2"
 
+
+def canonical_peer(host: str) -> str:
+    """Strip IPv4-mapped IPv6 so Ingress/watchdog allowlists match."""
+
+    raw = (host or "").strip()
+    if raw.startswith("::ffff:"):
+        raw = raw[7:]
+    if raw in {"::1", "https://example.net/id/garnet"}:
+        return "127.0.0.1"
+    return raw
+
+
+def peer_is_allowed(host: str) -> bool:
+    """Whether this TCP peer may hit Ingress UI/API (not /healthz)."""
+
+    # Outside HA (Portainer/Docker), allow all peers.
+    if not os.environ.get("SUPERVISOR_TOKEN"):
+        return True
+    return canonical_peer(host) == INGRESS_PEER
+
 # Default Ingress palette; games override via ``ui_theme`` in games/game.yaml.
 DEFAULT_UI_THEME: dict[str, str] = {
     "bg": "#1a1d24",
@@ -1065,12 +1085,10 @@ class StatusServer:
                 LOG.debug("%s - %s", self.address_string(), fmt % args)
 
             def _peer_allowed(self) -> bool:
-                # Under Home Assistant, Ingress + watchdog come from Supervisor.
-                # Outside HA (Portainer/Docker), allow all peers.
-                if not os.environ.get("SUPERVISOR_TOKEN"):
-                    return True
-                peer = self.client_address[0]
-                return peer == INGRESS_PEER
+                # Ingress UI/API: Supervisor proxy only. /healthz is exempt so
+                # HA watchdog and in-container Docker healthchecks (127.0.0.1)
+                # are not 403'd when SUPERVISOR_TOKEN is set.
+                return peer_is_allowed(self.client_address[0])
 
             def _ingress_base(self) -> str:
                 raw = (self.headers.get("X-Ingress-Path") or "").strip()
@@ -1315,11 +1333,12 @@ class StatusServer:
                 self._json(404, {"error": "not found"})
 
             def do_GET(self) -> None:  # noqa: N802
-                if not self._peer_allowed():
-                    self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
-                    return
                 parsed = urlparse(self.path)
                 path = parsed.path
+                # Probe paths must stay reachable from localhost and Supervisor.
+                if path not in ("/healthz", "/health") and not self._peer_allowed():
+                    self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                    return
 
                 if path in ("/healthz", "/health"):
                     # Cheap path: avoid full status() disk/manifest scans.

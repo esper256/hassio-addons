@@ -277,6 +277,7 @@ def _run_argv(
             text=True,
             encoding="utf-8",
             errors="replace",
+            bufsize=1,
             preexec_fn=preexec,
         )
     except OSError as exc:
@@ -284,46 +285,85 @@ def _run_argv(
 
     chunks: list[str] = []
     started = time.monotonic()
-    try:
+    stopped = False
+    timed_out = False
+
+    def _reader() -> None:
         assert proc.stdout is not None
+        try:
+            for raw in proc.stdout:
+                chunks.append(raw)
+                _emit(on_line, raw.rstrip("\n"))
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            except OSError:
+                pass
+
+    # Reader thread so stop_event is noticed during a silent OAuth wait
+    # (blocking readline() used to hold SIGTERM until the next downloader line).
+    reader = threading.Thread(
+        target=_reader, name=f"package-{label}-stdout", daemon=True
+    )
+    reader.start()
+    try:
         while True:
             if stop_event is not None and stop_event.is_set():
-                proc.terminate()
+                stopped = True
+                LOG.info("Stop requested; terminating %s command", label)
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
-                raise PackageInstallError(f"Stopped while running {label} command")
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                break
             if timeout > 0 and (time.monotonic() - started) > timeout:
-                proc.kill()
+                timed_out = True
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     pass
-                raise PackageInstallError(
-                    f"{label} command timed out after {timeout:.0f}s"
-                )
-            line = proc.stdout.readline()
-            if line == "" and proc.poll() is not None:
                 break
-            if not line:
+            try:
+                proc.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
                 continue
-            chunks.append(line)
-            _emit(on_line, line.rstrip("\n"))
-        proc.wait(timeout=30)
     finally:
         if proc.poll() is None:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-        if proc.stdout is not None:
-            try:
-                proc.stdout.close()
-            except OSError:
-                pass
+        reader.join(timeout=30)
 
+    if stopped:
+        raise PackageInstallError(f"Stopped while running {label} command")
+    if timed_out:
+        raise PackageInstallError(
+            f"{label} command timed out after {timeout:.0f}s"
+        )
     output = "".join(chunks)
     if proc.returncode != 0:
         raise PackageInstallError(

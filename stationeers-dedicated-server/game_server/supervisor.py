@@ -833,6 +833,17 @@ class GameServerSupervisor:
                 self.last_update_error = None
                 self._apply_failures = 0
             except (SteamCMDError, PackageInstallError) as exc:
+                if self._stop.is_set():
+                    LOG.info(
+                        "%s stopped during install (shutdown); not a failed install: %s",
+                        (
+                            "package install"
+                            if self.plugin.uses_package_install
+                            else "SteamCMD"
+                        ),
+                        exc,
+                    )
+                    return
                 self.last_update_error = str(exc)
                 self.last_update_check_at = time.time()
                 label = (
@@ -991,6 +1002,9 @@ class GameServerSupervisor:
                 self._apply_failures = 0
                 self._update_not_before = 0.0
             except (SteamCMDError, PackageInstallError) as exc:
+                if self._stop.is_set():
+                    LOG.info("Update interrupted by shutdown: %s", exc)
+                    return
                 try:
                     self.capture_logs("update_failed")
                 except OSError:
@@ -1256,15 +1270,18 @@ class GameServerSupervisor:
         self._status_thread.start()
 
         self.ensure_installed()
-        self.monitor.start()
-        self.backups.start()
-        self.process.start(reason="boot")
-        self._publish_status()
+        if self._stop.is_set():
+            LOG.info("Shutdown requested during install; exiting without starting the game")
+        else:
+            self.monitor.start()
+            self.backups.start()
+            self.process.start(reason="boot")
+            self._publish_status()
 
-        self._update_thread = threading.Thread(
-            target=self._update_checker_loop, name="update-checker", daemon=True
-        )
-        self._update_thread.start()
+            self._update_thread = threading.Thread(
+                target=self._update_checker_loop, name="update-checker", daemon=True
+            )
+            self._update_thread.start()
 
         while not self._stop.is_set():
             if self._restore_pending:
