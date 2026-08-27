@@ -19,7 +19,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import IO, Any, Mapping
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
 SERVER_NAME_PREFIX = "HAOS Hytale"
@@ -29,6 +29,18 @@ CREDENTIALS_NAME = ".hytale-downloader-credentials.json"
 AUTH_ENC_NAME = "auth.enc"
 GAME_ZIP_NAME = "game.zip"
 INSTALL_MARKER = "Assets.zip"
+SIGNIN_DETAIL = (
+    "Open the link in a new browser tab (not this panel) and sign in. "
+    "The code on this card is Hytale's device login — paste it only if that page asks. "
+    "If Hytale emails you a login code, type the email code there; do not paste this one. "
+    "The device code appears within a second, before any email arrives."
+)
+DOWNLOAD_SIGNIN_DETAIL = SIGNIN_DETAIL + " First download is several gigabytes."
+SERVER_SIGNIN_DETAIL = (
+    "This is a second, different Hytale login after download. "
+    + SIGNIN_DETAIL
+    + " Hosting does not lock your client."
+)
 
 _URL_RE = re.compile(r"https://[^\s\"'<>]+", re.IGNORECASE)
 _CODE_RE = re.compile(
@@ -200,6 +212,40 @@ def scrape_device_login(line: str) -> tuple[str, str]:
     return url, code
 
 
+def _url_has_user_code(url: str) -> bool:
+    if not url:
+        return False
+    qs = parse_qs(urlparse(url).query)
+    return bool(qs.get("user_code") or qs.get("userCode"))
+
+
+def _url_with_code(url: str, code: str) -> str:
+    """Keep a complete verification URL; attach user_code when the CLI omitted it."""
+
+    if not url or not code:
+        return url
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if qs.get("user_code") or qs.get("userCode"):
+        return url
+    extra = urlencode({"user_code": code})
+    new_query = f"{parsed.query}&{extra}" if parsed.query else extra
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def coalesce_device_login(
+    url: str, code: str, new_url: str, new_code: str
+) -> tuple[str, str]:
+    """Merge one scraped line into running (url, code). Prefer ?user_code= URLs."""
+
+    if new_code:
+        code = new_code
+    if new_url:
+        if _url_has_user_code(new_url) or not url or not _url_has_user_code(url):
+            url = new_url
+    return _url_with_code(url, code), code
+
+
 def merge_server_config(
     path: Path,
     *,
@@ -350,8 +396,10 @@ def _tee_process(
     seen_code = ""
     stop = threading.Event()
     stdin_lock = threading.Lock()
+    last_published = ""
 
     def publish() -> None:
+        nonlocal last_published
         if not seen_url and not seen_code:
             return
         write_operator_action(
@@ -361,6 +409,11 @@ def _tee_process(
             detail=detail,
             steps=steps,
         )
+        key = f"{seen_url}|{seen_code}"
+        if key != last_published:
+            print(f"Ingress sign-in URL: {seen_url}", flush=True)
+            print(f"Ingress sign-in code: {seen_code}", flush=True)
+            last_published = key
 
     def write_child_stdin(text: str) -> None:
         if not proc.stdin or proc.poll() is not None:
@@ -382,11 +435,10 @@ def _tee_process(
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 url, code = scrape_device_login(line)
-                if url:
-                    seen_url = url
-                if code:
-                    seen_code = code
                 if url or code:
+                    seen_url, seen_code = coalesce_device_login(
+                        seen_url, seen_code, url, code
+                    )
                     publish()
                 if _AUTH_OK_RE.search(line):
                     # Drop the sign-in card so Ingress can show "installing"
@@ -479,7 +531,7 @@ def cmd_install() -> int:
     ]
     write_operator_action(
         title="Sign in to download Hytale",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. First download is several gigabytes; progress is written to the app logs.",
+        detail=DOWNLOAD_SIGNIN_DETAIL,
         steps=steps,
     )
     argv = _downloader_cmd(
@@ -493,7 +545,7 @@ def cmd_install() -> int:
         env=env,
         steps=steps,
         title="Sign in to download Hytale",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. First download is several gigabytes.",
+        detail=DOWNLOAD_SIGNIN_DETAIL,
         success_clears=False,
     )
     if rc != 0:
@@ -546,7 +598,7 @@ def cmd_run_server(java_argv: list[str]) -> int:
     if not authed:
         write_operator_action(
             title="Sign in to run the Hytale server",
-            detail="After download, the server needs a second sign-in (a different Hytale login). Open the link in a new tab, enter the code, then return here.",
+            detail=SERVER_SIGNIN_DETAIL,
             steps=steps,
         )
     rc = _tee_process(
@@ -555,7 +607,7 @@ def cmd_run_server(java_argv: list[str]) -> int:
         env=env,
         steps=steps,
         title="Sign in to run the Hytale server",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. This does not lock your client license.",
+        detail=SERVER_SIGNIN_DETAIL,
         send_after_start=inject,
         success_clears=True,
     )

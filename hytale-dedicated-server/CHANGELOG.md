@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.2
+
+- Keep the downloader's complete `?user_code=` sign-in URL (the fallback URL without the code no longer overwrites it)
+- Sign-in card copy: the code on the card is the device login; an emailed Hytale login code is a different code
+
 ## 3.1.1
 
 - Store art: square tile is the official Hytale H; Info header wordmark is letterboxed so letters are not cropped

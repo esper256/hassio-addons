@@ -205,6 +205,69 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
         url, code = mod.scrape_device_login("javascript:alert(1)")
         self.assertEqual((url, code), ("", ""))
 
+    def test_coalesce_keeps_complete_url_from_official_downloader_block(self) -> None:
+        """Official CLI prints verification_uri_complete, then a bare fallback URL.
+
+        Last-URL-wins used to keep the bare page, so Ingress told people to paste
+        the device code even after the complete link already carried it. Mixing
+        that device code with Hytale's emailed login OTP then fails as invalid.
+        """
+
+        mod = _load_defaults()
+        lines = [
+            "Please visit the following URL to authenticate:",
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp",
+            "Or visit the following URL and enter the code:",
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "Authorization code: GLrYHNyp",
+        ]
+        url, code = "", ""
+        last_url = ""
+        for line in lines:
+            new_url, new_code = mod.scrape_device_login(line)
+            if new_url:
+                last_url = new_url
+            url, code = mod.coalesce_device_login(url, code, new_url, new_code)
+        complete = (
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        )
+        self.assertEqual(
+            last_url,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "naive last-URL-wins still sees the bare fallback last",
+        )
+        self.assertEqual(url, complete)
+        self.assertEqual(code, "GLrYHNyp")
+        self.assertTrue(mod._url_has_user_code(url))
+
+    def test_url_with_code_attaches_when_cli_omits_query(self) -> None:
+        mod = _load_defaults()
+        attached = mod._url_with_code(
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "GLrYHNyp",
+        )
+        self.assertEqual(
+            attached,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp",
+        )
+        already = (
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        )
+        self.assertEqual(mod._url_with_code(already, "GLrYHNyp"), already)
+
+    def test_signin_detail_separates_device_code_from_email_otp(self) -> None:
+        mod = _load_defaults()
+        for text in (
+            mod.SIGNIN_DETAIL,
+            mod.DOWNLOAD_SIGNIN_DETAIL,
+            mod.SERVER_SIGNIN_DETAIL,
+        ):
+            self.assertLessEqual(len(text), 400)
+            lowered = text.lower()
+            self.assertIn("device", lowered)
+            self.assertIn("email", lowered)
+            self.assertNotIn("enter the code", lowered)
+
     def test_merge_server_config_keeps_unknown_keys(self) -> None:
         mod = _load_defaults()
         with tempfile.TemporaryDirectory() as tmp:
