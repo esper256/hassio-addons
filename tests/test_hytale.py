@@ -280,6 +280,28 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             mod.token_wait_timed_out_line("authentication successful! Mode: OAUTH_DEVICE")
         )
 
+    def test_signin_finished_line_matches_downloader_and_java(self) -> None:
+        mod = _load_defaults()
+        self.assertTrue(
+            mod.signin_finished_line(
+                'downloading latest ("release" patchline) to "game.zip"'
+            )
+        )
+        self.assertTrue(
+            mod.signin_finished_line(
+                'successfully downloaded "release" patchline (version 2026.01.17-4b0f30090)'
+            )
+        )
+        self.assertTrue(
+            mod.signin_finished_line("Authentication successful! Mode: OAUTH_DEVICE")
+        )
+        self.assertFalse(mod.signin_finished_line("Authorization code: GLrYHNyp"))
+        self.assertFalse(
+            mod.signin_finished_line(
+                "2026/08/27 14:16:41 error obtaining token: context deadline exceeded"
+            )
+        )
+
     def test_merge_server_config_keeps_unknown_keys(self) -> None:
         mod = _load_defaults()
         with tempfile.TemporaryDirectory() as tmp:

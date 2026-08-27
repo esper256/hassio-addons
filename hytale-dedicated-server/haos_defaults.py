@@ -46,14 +46,20 @@ TIMEOUT_RETRY_DETAIL = (
     "A new device code is below. Sign in first, then open the link to Authorize a device. "
     "Paste this code only on that page. You have 10 minutes."
 )
-INSTALL_TOKEN_ATTEMPTS = 3
+# 0 = keep requesting a new device code until sign-in succeeds or the app is stopped.
+INSTALL_TOKEN_ATTEMPTS = 0
 
 _URL_RE = re.compile(r"https://[^\s\"'<>]+", re.IGNORECASE)
 _CODE_RE = re.compile(
     r"(?:user_code|enter code|code)\s*[=:]\s*([A-Za-z0-9][A-Za-z0-9._-]{2,31})",
     re.IGNORECASE,
 )
-_AUTH_OK_RE = re.compile(r"authentication successful", re.IGNORECASE)
+# Java /auth prints "authentication successful"; the official downloader does not —
+# it starts the zip fetch instead. Either means drop the Ingress sign-in card.
+_SIGNIN_DONE_RE = re.compile(
+    r"authentication successful|downloading latest|successfully downloaded",
+    re.IGNORECASE,
+)
 _TOKEN_TIMEOUT_RE = re.compile(
     r"error obtaining token:.*context deadline exceeded",
     re.IGNORECASE,
@@ -67,6 +73,10 @@ class TeeResult(NamedTuple):
 
 def token_wait_timed_out_line(line: str) -> bool:
     return bool(_TOKEN_TIMEOUT_RE.search(line))
+
+
+def signin_finished_line(line: str) -> bool:
+    return bool(_SIGNIN_DONE_RE.search(line))
 
 
 def ensure_instance_salt(path: Path) -> str:
@@ -414,6 +424,7 @@ def _tee_process(
     seen_url = ""
     seen_code = ""
     token_wait_timed_out = False
+    signin_done = False
     stop = threading.Event()
     stdin_lock = threading.Lock()
     last_published = ""
@@ -448,7 +459,7 @@ def _tee_process(
             pass
 
     def reader() -> None:
-        nonlocal seen_url, seen_code, token_wait_timed_out
+        nonlocal seen_url, seen_code, token_wait_timed_out, signin_done
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
@@ -462,10 +473,12 @@ def _tee_process(
                         seen_url, seen_code, url, code
                     )
                     publish()
-                if _AUTH_OK_RE.search(line):
+                if signin_finished_line(line) and not signin_done:
                     # Drop the sign-in card so Ingress can show "installing"
                     # during the rest of a large download.
+                    signin_done = True
                     clear_operator_action()
+                    print("Sign-in finished; dropping Ingress card", flush=True)
         finally:
             stop.set()
 
@@ -557,7 +570,9 @@ def cmd_install() -> int:
         str(archive),
     )
     rc = 1
-    for attempt in range(1, INSTALL_TOKEN_ATTEMPTS + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         timed_out = attempt > 1
         title = (
             "Sign in again — previous code expired"
@@ -566,9 +581,14 @@ def cmd_install() -> int:
         )
         detail = TIMEOUT_RETRY_DETAIL if timed_out else DOWNLOAD_SIGNIN_DETAIL
         if timed_out:
+            cap = (
+                f"{attempt}/{INSTALL_TOKEN_ATTEMPTS}"
+                if INSTALL_TOKEN_ATTEMPTS
+                else str(attempt)
+            )
             print(
                 "Downloader token wait timed out; requesting a new device code "
-                f"({attempt}/{INSTALL_TOKEN_ATTEMPTS})",
+                f"({cap})",
                 flush=True,
             )
         write_operator_action(title=title, detail=detail, steps=steps)
@@ -586,7 +606,7 @@ def cmd_install() -> int:
             break
         if not result.token_wait_timed_out:
             return rc
-        if attempt == INSTALL_TOKEN_ATTEMPTS:
+        if INSTALL_TOKEN_ATTEMPTS and attempt >= INSTALL_TOKEN_ATTEMPTS:
             print(
                 "Hytale downloader stopped waiting for the device token after 10 minutes. "
                 "Restart this app and finish Authorize a device within 10 minutes.",
