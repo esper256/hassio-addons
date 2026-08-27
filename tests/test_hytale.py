@@ -112,7 +112,7 @@ class HytalePluginTests(unittest.TestCase):
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
-        self.assertTrue(str(data["version"]).startswith("3.1."))
+        self.assertTrue(str(data["version"]).startswith("3.2."))
         self.assertEqual(data["schema"]["release_channel"], "list(release|pre-release)")
         self.assertEqual(data["schema"]["server_password"], "password")
 
@@ -204,6 +204,112 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
         self.assertEqual((url, code), ("", ""))
         url, code = mod.scrape_device_login("javascript:alert(1)")
         self.assertEqual((url, code), ("", ""))
+
+    def test_coalesce_keeps_complete_url_from_official_downloader_block(self) -> None:
+        """Official CLI prints verification_uri_complete, then a bare fallback URL.
+
+        Last-URL-wins used to keep the bare page, so Ingress told people to paste
+        the device code even after the complete link already carried it. Mixing
+        that device code with Hytale's emailed login OTP then fails as invalid.
+        """
+
+        mod = _load_defaults()
+        lines = [
+            "Please visit the following URL to authenticate:",
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp",
+            "Or visit the following URL and enter the code:",
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "Authorization code: GLrYHNyp",
+        ]
+        url, code = "", ""
+        last_url = ""
+        for line in lines:
+            new_url, new_code = mod.scrape_device_login(line)
+            if new_url:
+                last_url = new_url
+            url, code = mod.coalesce_device_login(url, code, new_url, new_code)
+        complete = (
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        )
+        self.assertEqual(
+            last_url,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "naive last-URL-wins still sees the bare fallback last",
+        )
+        self.assertEqual(url, complete)
+        self.assertEqual(code, "GLrYHNyp")
+        self.assertTrue(mod._url_has_user_code(url))
+
+    def test_url_with_code_attaches_when_cli_omits_query(self) -> None:
+        mod = _load_defaults()
+        attached = mod._url_with_code(
+            "https://oauth.accounts.hytale.com/oauth2/device/verify",
+            "GLrYHNyp",
+        )
+        self.assertEqual(
+            attached,
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp",
+        )
+        already = (
+            "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        )
+        self.assertEqual(mod._url_with_code(already, "GLrYHNyp"), already)
+
+    def test_signin_detail_separates_device_code_from_email_otp(self) -> None:
+        mod = _load_defaults()
+        for text in (
+            mod.SIGNIN_DETAIL,
+            mod.DOWNLOAD_SIGNIN_DETAIL,
+            mod.SERVER_SIGNIN_DETAIL,
+            mod.TIMEOUT_RETRY_DETAIL,
+        ):
+            self.assertLessEqual(len(text), 400)
+            lowered = text.lower()
+            self.assertIn("device", lowered)
+            self.assertIn("10 minutes", lowered)
+            self.assertNotIn("enter the code", lowered)
+        self.assertIn("email", mod.SIGNIN_DETAIL.lower())
+        self.assertIn("authorize a device", mod.SIGNIN_DETAIL.lower())
+
+    def test_token_wait_timeout_line_matches_official_downloader(self) -> None:
+        mod = _load_defaults()
+        line = "2026/08/27 14:16:41 error obtaining token: context deadline exceeded"
+        self.assertTrue(mod.token_wait_timed_out_line(line))
+        self.assertFalse(mod.token_wait_timed_out_line("Authorization code: GLrYHNyp"))
+        self.assertFalse(
+            mod.token_wait_timed_out_line("authentication successful! Mode: OAUTH_DEVICE")
+        )
+
+    def test_signin_finished_line_matches_downloader_and_java(self) -> None:
+        mod = _load_defaults()
+        self.assertTrue(
+            mod.signin_finished_line(
+                'downloading latest ("release" patchline) to "game.zip"'
+            )
+        )
+        self.assertTrue(
+            mod.signin_finished_line(
+                'successfully downloaded "release" patchline (version 2026.01.17-4b0f30090)'
+            )
+        )
+        self.assertTrue(
+            mod.signin_finished_line("Authentication successful! Mode: OAUTH_DEVICE")
+        )
+        self.assertFalse(mod.signin_finished_line("Authorization code: GLrYHNyp"))
+        self.assertFalse(
+            mod.signin_finished_line(
+                "2026/08/27 14:16:41 error obtaining token: context deadline exceeded"
+            )
+        )
+
+    def test_signin_log_lines_put_url_on_its_own_line(self) -> None:
+        mod = _load_defaults()
+        url = "https://oauth.accounts.hytale.com/oauth2/device/verify?user_code=GLrYHNyp"
+        lines = mod.signin_log_lines(url, "GLrYHNyp")
+        self.assertIn("Sign-in from HA Logs: open this URL in a browser", lines)
+        self.assertIn(url, lines)
+        self.assertTrue(any("GLrYHNyp" in line for line in lines))
+        self.assertTrue(any("email" in line.lower() for line in lines))
 
     def test_merge_server_config_keeps_unknown_keys(self) -> None:
         mod = _load_defaults()

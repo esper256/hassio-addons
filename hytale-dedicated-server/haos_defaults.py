@@ -18,8 +18,8 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from typing import IO, Any, Mapping
-from urllib.parse import parse_qs, urlparse
+from typing import IO, Any, Mapping, NamedTuple
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
 SERVER_NAME_PREFIX = "HAOS Hytale"
@@ -29,13 +29,67 @@ CREDENTIALS_NAME = ".hytale-downloader-credentials.json"
 AUTH_ENC_NAME = "auth.enc"
 GAME_ZIP_NAME = "game.zip"
 INSTALL_MARKER = "Assets.zip"
+SIGNIN_DETAIL = (
+    "Open the link in a new browser tab (not this panel). "
+    "Hytale emails a login code first; after you are signed in, click the link again "
+    "to reach Authorize a device. You have 10 minutes. "
+    "Paste this card's device code only on that page, never into an email box."
+)
+DOWNLOAD_SIGNIN_DETAIL = SIGNIN_DETAIL + " First download is several gigabytes."
+SERVER_SIGNIN_DETAIL = (
+    "This is a second, different Hytale login after download. "
+    + SIGNIN_DETAIL
+    + " Hosting does not lock your client."
+)
+TIMEOUT_RETRY_DETAIL = (
+    "The last sign-in timed out after 10 minutes (Hytale's downloader stopped waiting). "
+    "A new device code is below. Sign in first, then open the link to Authorize a device. "
+    "Paste this code only on that page. You have 10 minutes."
+)
+# 0 = keep requesting a new device code until sign-in succeeds or the app is stopped.
+INSTALL_TOKEN_ATTEMPTS = 0
 
 _URL_RE = re.compile(r"https://[^\s\"'<>]+", re.IGNORECASE)
 _CODE_RE = re.compile(
     r"(?:user_code|enter code|code)\s*[=:]\s*([A-Za-z0-9][A-Za-z0-9._-]{2,31})",
     re.IGNORECASE,
 )
-_AUTH_OK_RE = re.compile(r"authentication successful", re.IGNORECASE)
+# Java /auth prints "authentication successful"; the official downloader does not —
+# it starts the zip fetch instead. Either means drop the Ingress sign-in card.
+_SIGNIN_DONE_RE = re.compile(
+    r"authentication successful|downloading latest|successfully downloaded",
+    re.IGNORECASE,
+)
+_TOKEN_TIMEOUT_RE = re.compile(
+    r"error obtaining token:.*context deadline exceeded",
+    re.IGNORECASE,
+)
+
+
+class TeeResult(NamedTuple):
+    returncode: int
+    token_wait_timed_out: bool = False
+
+
+def token_wait_timed_out_line(line: str) -> bool:
+    return bool(_TOKEN_TIMEOUT_RE.search(line))
+
+
+def signin_finished_line(line: str) -> bool:
+    return bool(_SIGNIN_DONE_RE.search(line))
+
+
+def signin_log_lines(url: str, code: str) -> list[str]:
+    """HA Logs copy of the Ingress card — URL on its own line so it is easy to copy."""
+
+    lines = ["Sign-in from HA Logs: open this URL in a browser"]
+    if url:
+        lines.append(url)
+    if code:
+        lines.append(
+            f"Device code (Authorize a device page only, not an email OTP): {code}"
+        )
+    return lines
 
 
 def ensure_instance_salt(path: Path) -> str:
@@ -200,6 +254,40 @@ def scrape_device_login(line: str) -> tuple[str, str]:
     return url, code
 
 
+def _url_has_user_code(url: str) -> bool:
+    if not url:
+        return False
+    qs = parse_qs(urlparse(url).query)
+    return bool(qs.get("user_code") or qs.get("userCode"))
+
+
+def _url_with_code(url: str, code: str) -> str:
+    """Keep a complete verification URL; attach user_code when the CLI omitted it."""
+
+    if not url or not code:
+        return url
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if qs.get("user_code") or qs.get("userCode"):
+        return url
+    extra = urlencode({"user_code": code})
+    new_query = f"{parsed.query}&{extra}" if parsed.query else extra
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def coalesce_device_login(
+    url: str, code: str, new_url: str, new_code: str
+) -> tuple[str, str]:
+    """Merge one scraped line into running (url, code). Prefer ?user_code= URLs."""
+
+    if new_code:
+        code = new_code
+    if new_url:
+        if _url_has_user_code(new_url) or not url or not _url_has_user_code(url):
+            url = new_url
+    return _url_with_code(url, code), code
+
+
 def merge_server_config(
     path: Path,
     *,
@@ -331,7 +419,7 @@ def _tee_process(
     send_after_start: str | None = None,
     success_clears: bool = True,
     stdin: IO[str] | None = None,
-) -> int:
+) -> TeeResult:
     """Run argv, scrape device-code lines, optional stdin inject, forward stdin."""
 
     proc = subprocess.Popen(
@@ -348,10 +436,14 @@ def _tee_process(
     )
     seen_url = ""
     seen_code = ""
+    token_wait_timed_out = False
+    signin_done = False
     stop = threading.Event()
     stdin_lock = threading.Lock()
+    last_published = ""
 
     def publish() -> None:
+        nonlocal last_published
         if not seen_url and not seen_code:
             return
         write_operator_action(
@@ -361,6 +453,11 @@ def _tee_process(
             detail=detail,
             steps=steps,
         )
+        key = f"{seen_url}|{seen_code}"
+        if key != last_published:
+            for line in signin_log_lines(seen_url, seen_code):
+                print(line, flush=True)
+            last_published = key
 
     def write_child_stdin(text: str) -> None:
         if not proc.stdin or proc.poll() is not None:
@@ -375,23 +472,26 @@ def _tee_process(
             pass
 
     def reader() -> None:
-        nonlocal seen_url, seen_code
+        nonlocal seen_url, seen_code, token_wait_timed_out, signin_done
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
                 sys.stdout.write(line)
                 sys.stdout.flush()
+                if token_wait_timed_out_line(line):
+                    token_wait_timed_out = True
                 url, code = scrape_device_login(line)
-                if url:
-                    seen_url = url
-                if code:
-                    seen_code = code
                 if url or code:
+                    seen_url, seen_code = coalesce_device_login(
+                        seen_url, seen_code, url, code
+                    )
                     publish()
-                if _AUTH_OK_RE.search(line):
+                if signin_finished_line(line) and not signin_done:
                     # Drop the sign-in card so Ingress can show "installing"
                     # during the rest of a large download.
+                    signin_done = True
                     clear_operator_action()
+                    print("Sign-in finished; dropping Ingress card", flush=True)
         finally:
             stop.set()
 
@@ -432,7 +532,7 @@ def _tee_process(
     thread.join(timeout=5)
     if success_clears:
         clear_operator_action()
-    return int(rc or 0)
+    return TeeResult(int(rc or 0), token_wait_timed_out)
 
 
 def cmd_print_version() -> int:
@@ -477,27 +577,55 @@ def cmd_install() -> int:
         {"label": "Download files", "state": "active"},
         {"label": "Authenticate server", "state": "pending"},
     ]
-    write_operator_action(
-        title="Sign in to download Hytale",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. First download is several gigabytes; progress is written to the app logs.",
-        steps=steps,
-    )
     argv = _downloader_cmd(
         *_patchline_args(_channel()),
         "-download-path",
         str(archive),
     )
-    rc = _tee_process(
-        argv,
-        cwd=state,
-        env=env,
-        steps=steps,
-        title="Sign in to download Hytale",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. First download is several gigabytes.",
-        success_clears=False,
-    )
-    if rc != 0:
-        return rc
+    rc = 1
+    attempt = 0
+    while True:
+        attempt += 1
+        timed_out = attempt > 1
+        title = (
+            "Sign in again — previous code expired"
+            if timed_out
+            else "Sign in to download Hytale"
+        )
+        detail = TIMEOUT_RETRY_DETAIL if timed_out else DOWNLOAD_SIGNIN_DETAIL
+        if timed_out:
+            cap = (
+                f"{attempt}/{INSTALL_TOKEN_ATTEMPTS}"
+                if INSTALL_TOKEN_ATTEMPTS
+                else str(attempt)
+            )
+            print(
+                "Downloader token wait timed out; requesting a new device code "
+                f"({cap})",
+                flush=True,
+            )
+        write_operator_action(title=title, detail=detail, steps=steps)
+        result = _tee_process(
+            argv,
+            cwd=state,
+            env=env,
+            steps=steps,
+            title=title,
+            detail=detail,
+            success_clears=False,
+        )
+        rc = result.returncode
+        if rc == 0:
+            break
+        if not result.token_wait_timed_out:
+            return rc
+        if INSTALL_TOKEN_ATTEMPTS and attempt >= INSTALL_TOKEN_ATTEMPTS:
+            print(
+                "Hytale downloader stopped waiting for the device token after 10 minutes. "
+                "Restart this app and finish Authorize a device within 10 minutes.",
+                flush=True,
+            )
+            return rc
     if not archive.is_file():
         print(f"downloader finished but {archive} is missing", file=sys.stderr)
         return 1
@@ -546,20 +674,20 @@ def cmd_run_server(java_argv: list[str]) -> int:
     if not authed:
         write_operator_action(
             title="Sign in to run the Hytale server",
-            detail="After download, the server needs a second sign-in (a different Hytale login). Open the link in a new tab, enter the code, then return here.",
+            detail=SERVER_SIGNIN_DETAIL,
             steps=steps,
         )
-    rc = _tee_process(
+    result = _tee_process(
         java_argv,
         cwd=data_dir,
         env=env,
         steps=steps,
         title="Sign in to run the Hytale server",
-        detail="Open the link in a new browser tab (not this panel), enter the code, then return here. This does not lock your client license.",
+        detail=SERVER_SIGNIN_DETAIL,
         send_after_start=inject,
         success_clears=True,
     )
-    return rc
+    return result.returncode
 
 
 def build_java_command(extra: list[str]) -> list[str]:

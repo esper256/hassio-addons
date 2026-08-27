@@ -31,7 +31,7 @@ The app uses Hypixel’s **official Linux downloader** (OAuth device-code, not S
 2. Install **Hytale Dedicated Server**.
 3. Open the app → **Documentation** tab for configuration, ports, and Open Web UI notes.
 4. Set at least **World name** and a **Game password**, then **Start**.
-5. Open **Open Web UI**. Complete both sign-in cards (new browser tab, not the Ingress iframe).
+5. Open **Open Web UI**, or stay on the **Logs** tab. Complete both sign-ins (new browser tab). Logs print `Sign-in from HA Logs` plus the URL and device code. Hytale emails a login code first; after you are signed in, open the URL again to reach **Authorize a device**. Paste the device code only on that page. The downloader waits 10 minutes.
 6. Forward **UDP 5520** on your router to the Home Assistant host (QUIC; do not forward TCP only).
 7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port 5520).
 
@@ -44,7 +44,8 @@ With the app started, use **Open Web UI** on the Info tab (optional: **Show in s
 Ingress status page (no extra host port to publish):
 
 - Server / players / game version / update
-- Sign-in card while the downloader or `/auth login device` is waiting (open the URL in a **new tab**)
+- Sign-in card while the downloader or `/auth login device` is waiting (open the URL in a **new tab**; sign in first, then click again for Authorize a device; do not paste the card code into an email-login box)
+- Toast on the status page if live refresh fails (app stopped or unresponsive)
 - Universe download, backups, restore, and upload
 - Collapsed **Troubleshooting** (log captures and log pattern prompt)
 
