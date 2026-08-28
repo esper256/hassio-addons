@@ -1,6 +1,6 @@
 name: "Hytale Dedicated Server"
 description: "Hytale dedicated multiplayer server (official Linux downloader, Java 25) with auto-updates, world backups, and an Ingress status UI. First start needs two Hytale account sign-ins (download, then server)."
-version: "3.3.1"
+version: "3.4.0"
 slug: "hytale_dedicated_server"
 url: "https://github.com/esper256/hassio-addons/tree/main/hytale-dedicated-server"
 arch:
@@ -18,13 +18,13 @@ ingress_stream: true
 panel_icon: mdi:cube-outline
 panel_title: Hytale
 # HA format is "container-port/protocol: host-port". Container port is fixed
-# at 25565 (Hytale client Direct Connect default). The Network UI only changes
-# the host port. The dedicated-server --bind default is 5520 if omitted; we
-# pass --bind so IP-only joins match the client (placeholder :25565).
+# at 5520 (official dedicated-server --bind default). The Network UI only
+# changes the host port. Direct Connect must include :5520 (the in-game
+# omit-port hint is 25565 and will not match this bind).
 ports:
-  25565/udp: 25565
+  5520/udp: 5520
 ports_description:
-  25565/udp: Game port players use in Hytale Direct Connect (UDP/QUIC). Matches the client default when you omit the port. TCP is not used.
+  5520/udp: Official Hytale dedicated-server port (UDP/QUIC). Use host:5520 in Direct Connect. TCP is not used.
 options:
   world_name: "default"
   server_name: ""

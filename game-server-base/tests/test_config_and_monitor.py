@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -916,6 +917,46 @@ class MonitorTests(unittest.TestCase):
             report = mon.pattern_report()
             self.assertGreater(report["dry_run_pattern_count"], 0)
             self.assertTrue(any(item["hits"] > 0 for item in report["patterns"]))
+
+    def test_empty_pattern_notes_log_only_when_tailer_starts(self) -> None:
+        """Ingress /api/ui builds a throwaway LogMonitor every 5s — no spam."""
+
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            records: list[str] = []
+
+            class _Handler(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    records.append(record.getMessage())
+
+            handler = _Handler()
+            log = logging.getLogger("game_server.monitor")
+            old_level = log.level
+            log.addHandler(handler)
+            log.setLevel(logging.INFO)
+            try:
+                mon = LogMonitor(plugin, tmp)
+                self.assertFalse(
+                    any("No active player log patterns" in msg for msg in records)
+                )
+                self.assertFalse(
+                    any("No active version-mismatch patterns" in msg for msg in records)
+                )
+                mon.start()
+                mon.stop()
+            finally:
+                log.setLevel(old_level)
+                log.removeHandler(handler)
+            self.assertTrue(
+                any("No active player log patterns" in msg for msg in records)
+            )
+            self.assertTrue(
+                any("No active version-mismatch patterns" in msg for msg in records)
+            )
+            self.assertEqual(
+                sum(1 for msg in records if "No active player log patterns" in msg),
+                1,
+            )
 
     def test_dry_run_matches_generic_ready_join_and_count_lines(self) -> None:
         plugin = load_plugin(FIXTURE)

@@ -32,8 +32,8 @@ The app uses Hypixel’s **official Linux downloader** (OAuth device-code, not S
 3. Open the app → **Documentation** tab for configuration, ports, and Open Web UI notes.
 4. Set at least **World name** and a **Game password**, then **Start**.
 5. Open **Open Web UI**, or stay on the **Logs** tab. Complete both sign-ins (new browser tab). Logs print `Sign-in from HA Logs` plus the URL and device code. Hytale emails a login code first; after you are signed in, open the URL again to reach **Authorize a device**. Paste the device code only on that page. The downloader waits 10 minutes. If the app restarts during that wait, press **Start** again (new code; uninstall is not required).
-6. Forward **UDP 25565** on your router to the Home Assistant host (QUIC; do not forward TCP only). That matches the client default when Direct Connect omits the port.
-7. In Hytale → Multiplayer → Direct Connect → your HA host IP (port optional).
+6. Forward **UDP 5520** on your router to the Home Assistant host (QUIC; do not forward TCP only). That is the official dedicated-server port.
+7. In Hytale → Multiplayer → Direct Connect → your HA host IP **and `:5520`**. Omitting the port uses the client hint `:25565` and will not connect.
 
 With the app started, use **Open Web UI** on the Info tab (optional: **Show in sidebar**).
 
@@ -59,7 +59,7 @@ Restoring stops the server, makes a world backup, then restores onto the active 
 docker compose -f hytale-dedicated-server/docker-compose.yml up -d --build
 ```
 
-Set `SERVER_PASSWORD` / `WORLD_NAME` in the compose environment. UDP **25565** for players (client Direct Connect default); status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
+Set `SERVER_PASSWORD` / `WORLD_NAME` in the compose environment. UDP **5520** for players (official dedicated-server port; Direct Connect needs `:5520`); status UI on **localhost:8099** only (no Ingress auth outside HA — do not expose 8099 publicly). Data: `./data` → `/data`.
 
 ---
 
@@ -68,7 +68,7 @@ Set `SERVER_PASSWORD` / `WORLD_NAME` in the compose environment. UDP **25565** f
 ```text
 /data/game/          # Downloader payload (Assets.zip, Server/HytaleServer.jar)
 /data/world/         # cwd: config.json, universe/, auth.enc, mods/
-/data/supervisor/    # status.json, downloader credentials, operator_action.json
+/data/supervisor/    # status.json, downloader credentials, machine-id, operator_action.json
 /data/logs/          # reserved
 /data/backups/       # universe backups
 ```

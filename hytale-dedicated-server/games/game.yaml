@@ -30,9 +30,8 @@ executable:
   - /opt/launch_wrapper.sh
 bool_style: true_false
 ready_timeout_seconds: 180
-# server_port is forced to 25565 by run.sh (HA container-side Network mapping).
-# That matches the Hytale client's Direct Connect default when the port is
-# omitted. Official --bind without a port would be 5520. Bind all interfaces.
+# server_port is forced to 5520 by run.sh (HA container-side Network mapping).
+# That is the dedicated-server --bind default. Bind all interfaces.
 argv_prefix:
   - --bind
   - 0.0.0.0:{server_port}
@@ -53,22 +52,23 @@ ui_theme:
   wash: "#0a1218"
   depth: "#0c1410"
 player_tracking_mode: presence
-log_patterns: {}
+# Promoted from a live 0.6.1 dedicated-server boot. ready is the UDP bind
+# (ServerManager Listening), not the later "Universe ready!" line.
+# Join/leave share the in-world display name (quoted on join, then on the
+# Hytale leave line after the player UUID). No integer headcount and no
+# version-mismatch sample yet — omit those categories.
+log_patterns:
+  ready:
+    - '\[ServerManager\|P\] Listening on /'
+  game_version:
+    - '\[HytaleServer\] Booting up HytaleServer - Version: (?P<version>\d+(?:\.\d+)+)'
+  player_join:
+    - '\[World\|[^\]]+\] Player ''(?P<player>[^'']+)'' joined world'
+  player_leave:
+    - '\[Hytale\] [0-9a-fA-F-]{36} - (?P<player>.+?) at QuicConnectionAddress\{'
 log_pattern_candidates:
   ready:
-    - '(?i)\b(?:listening|bound|bind).*(?:port|25565|:25565)\b'
-    - '(?i)\baccepting (?:connections|players)\b'
-    - '(?i)\bserver started\b'
-    - '(?i)\bstarted.*dedicated server\b'
-  game_version:
-    - '(?i)\bversion[:\s]+(?P<version>\d+(?:\.\d+)+)\b'
-    - '(?i)\bhytale[^\n]{0,40}(?P<version>\d+\.\d+\.\d+)\b'
-  player_join:
-    - '(?i)\b(?P<player>\S+)\s+(?:joined|connected)\b'
-    - '(?i)\bplayer\s+(?P<player>\S+)\s+joined\b'
-  player_leave:
-    - '(?i)\b(?P<player>\S+)\s+(?:left|disconnected)\b'
-    - '(?i)\bplayer\s+(?P<player>\S+)\s+(?:left|disconnected)\b'
+    - '\[HytaleServer\] Universe ready!'
   version_mismatch:
     - '(?i)\b(?:protocol|version).*(?:mismatch|incompatible|outdated)\b'
     - '(?i)\bwrong version\b'
