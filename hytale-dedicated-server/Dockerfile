@@ -51,7 +51,8 @@ RUN curl -fsSL -o /tmp/hytale-downloader.zip \
 
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
  && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /opt/games \
- && chown -R gameserver:gameserver /data /home/gameserver
+ && chown -R gameserver:gameserver /data /home/gameserver \
+ && rm -f /etc/machine-id /var/lib/dbus/machine-id
 
 COPY game_server /opt/game_server
 COPY games/game.yaml /opt/games/game.yaml

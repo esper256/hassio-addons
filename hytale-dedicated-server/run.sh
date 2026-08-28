@@ -32,8 +32,8 @@ export PATH="/opt/java/bin:${PATH}"
 
 mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game
 export HOME="${STATE_DIR}"
-# Encrypted auth.enc is keyed from the Linux machine-id. Persist ours under
-# /data so container recreate does not force another /auth login device.
+# Encrypted auth.enc is keyed from the Linux machine-id. The supervisor also
+# persists one for every game; do it here too so it exists before Java starts.
 python3 /opt/haos_defaults.py ensure-machine-id >/dev/null
 
 if [ -f "${OPTIONS_FILE}" ]; then

@@ -2,8 +2,8 @@
 
 ## 3.4.0
 
-- Shared supervisor **3.4**: empty player / version-mismatch pattern notes log only when the live tailer starts, so the Ingress 5-second status poll no longer repeats them. Vendored `game_server/` sync.
-- Persist a Linux machine-id under `/data/supervisor` and copy it to `/etc/machine-id` so Encrypted `auth.enc` survives container recreate (the "Failed to get hardware UUID" warning).
+- Shared supervisor **3.4**: empty player / version-mismatch pattern notes log only when the live tailer starts, so the Ingress 5-second status poll no longer repeats them. Every add-on persists a Linux machine-id under `/data/supervisor` and copies it to `/etc/machine-id` when the overlay allows (no host bind, no `/sys` DMI, no extra privileges; images do not ship a baked id). Vendored `game_server/` sync.
+- Hytale Encrypted `auth.enc` uses that machine-id so server login survives container recreate (the "Failed to get hardware UUID" warning).
 - Do not show the activate-server card or inject `/auth login device` unless Java says tokens are missing. After a successful Java sign-in, send `/auth persistence Encrypted`.
 - Listen on official UDP **5520** again (revert 3.3.1's 25565 bind). Direct Connect must include `:5520`.
 - Active log patterns from a live 0.6.1 boot: ready (ServerManager Listening), game version, in-world join/leave.

@@ -113,6 +113,12 @@ from game_server.steamcmd import (  # noqa: E402
     wait_for_app_info,
 )
 from game_server.supervisor import GameServerSupervisor  # noqa: E402
+from game_server import machine_id as machine_id_mod  # noqa: E402
+from game_server.machine_id import (  # noqa: E402
+    MACHINE_ID_NAME,
+    ensure_machine_id,
+    valid_machine_id,
+)
 from game_server.version import SUPERVISOR_VERSION, app_version, supervisor_version  # noqa: E402
 from game_server.patterns import DEFAULT_CANDIDATE_PATTERNS  # noqa: E402
 
@@ -897,6 +903,143 @@ class WorldSaveLocatorTests(unittest.TestCase):
                         "allow_heuristic_fallback": True,
                     }
                 )
+
+
+_MACHINE_ID_SANDBOX = None
+_SAVED_DEFAULT_ETC = None
+_SAVED_DEFAULT_DBUS = None
+
+
+def setUpModule() -> None:
+    """Redirect default /etc and dbus paths so supervisor tests never touch the host."""
+
+    global _MACHINE_ID_SANDBOX, _SAVED_DEFAULT_ETC, _SAVED_DEFAULT_DBUS
+    _MACHINE_ID_SANDBOX = tempfile.TemporaryDirectory()
+    root = Path(_MACHINE_ID_SANDBOX.name)
+    _SAVED_DEFAULT_ETC = machine_id_mod._DEFAULT_ETC
+    _SAVED_DEFAULT_DBUS = machine_id_mod._DEFAULT_DBUS
+    machine_id_mod._DEFAULT_ETC = root / "etc-machine-id"
+    machine_id_mod._DEFAULT_DBUS = root / "dbus-machine-id"
+
+
+def tearDownModule() -> None:
+    machine_id_mod._DEFAULT_ETC = _SAVED_DEFAULT_ETC
+    machine_id_mod._DEFAULT_DBUS = _SAVED_DEFAULT_DBUS
+    if _MACHINE_ID_SANDBOX is not None:
+        _MACHINE_ID_SANDBOX.cleanup()
+
+
+def _mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+class MachineIdTests(unittest.TestCase):
+    def test_valid_machine_id_rejects_uninitialized_and_accepts_dashed(self) -> None:
+        self.assertEqual(valid_machine_id(""), "")
+        self.assertEqual(valid_machine_id("uninitialized\n"), "")
+        self.assertEqual(valid_machine_id("0" * 32), "")
+        self.assertEqual(valid_machine_id("not-a-machine-id"), "")
+        dashed = "01234567-89ab-cdef-0123-456789abcdef"
+        self.assertEqual(valid_machine_id(dashed), "0123456789abcdef0123456789abcdef")
+
+    def test_persists_and_copies_to_etc_and_dbus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            etc = root / "etc" / "machine-id"
+            dbus = root / "dbus" / "machine-id"
+            first = ensure_machine_id(
+                state_dir=state,
+                etc_path=etc,
+                dbus_path=dbus,
+            )
+            self.assertRegex(first, r"^[0-9a-f]{32}$")
+            persisted = state / MACHINE_ID_NAME
+            self.assertEqual(valid_machine_id(persisted.read_text()), first)
+            self.assertEqual(valid_machine_id(etc.read_text()), first)
+            self.assertEqual(valid_machine_id(dbus.read_text()), first)
+            self.assertEqual(_mode(etc), 0o444)
+            self.assertEqual(_mode(dbus), 0o444)
+            self.assertEqual(_mode(persisted), 0o644)
+            self.assertTrue(etc.read_text(encoding="utf-8").endswith("\n"))
+            etc.chmod(0o644)
+            etc.write_text("ffffffffffffffffffffffffffffffff\n", encoding="utf-8")
+            second = ensure_machine_id(
+                state_dir=state,
+                etc_path=etc,
+                dbus_path=dbus,
+            )
+            self.assertEqual(second, first)
+            self.assertEqual(valid_machine_id(etc.read_text()), first)
+
+    def test_overwrites_writable_image_machine_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            etc = root / "etc" / "machine-id"
+            etc.parent.mkdir()
+            baked = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            etc.write_text(baked + "\n", encoding="utf-8")
+            etc.chmod(0o444)
+            got = ensure_machine_id(
+                state_dir=root / "state",
+                etc_path=etc,
+                dbus_path=root / "dbus" / "machine-id",
+            )
+            self.assertNotEqual(got, baked)
+            self.assertEqual(valid_machine_id(etc.read_text()), got)
+            self.assertEqual(_mode(etc), 0o444)
+
+    def test_adopts_read_only_bind_on_first_boot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            etc = root / "etc" / "machine-id"
+            etc.parent.mkdir()
+            host_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            etc.write_text(host_id + "\n", encoding="utf-8")
+            etc.chmod(0o444)
+            etc.parent.chmod(0o555)
+            try:
+                got = ensure_machine_id(
+                    state_dir=root / "state",
+                    etc_path=etc,
+                    dbus_path=root / "dbus" / "machine-id",
+                )
+            finally:
+                etc.parent.chmod(0o755)
+            self.assertEqual(got, host_id)
+            self.assertEqual(
+                valid_machine_id((root / "state" / MACHINE_ID_NAME).read_text()),
+                host_id,
+            )
+            self.assertEqual(valid_machine_id(etc.read_text()), host_id)
+
+    def test_supervisor_writes_machine_id_into_state_dir(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            (root / "steamcmd").mkdir()
+            state = root / "state"
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(state),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            GameServerSupervisor(plugin, cfg)
+            persisted = state / MACHINE_ID_NAME
+            self.assertTrue(persisted.is_file())
+            self.assertTrue(valid_machine_id(persisted.read_text()))
+            self.assertFalse((root / "sys").exists())
 
 
 class MonitorTests(unittest.TestCase):
