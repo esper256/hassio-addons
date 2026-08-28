@@ -1101,6 +1101,50 @@ class MonitorTests(unittest.TestCase):
                 1,
             )
 
+    def test_throwaway_monitor_does_not_log_game_version(self) -> None:
+        """Ingress /api/ui rescans must not log 'Game version from logs'."""
+
+        plugin = load_plugin(FIXTURE)
+        plugin.log_patterns = LogPatterns(
+            game_version=[r"\bgame version\s+(?P<version>\d+(?:\.\d+)+)\b"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            records: list[str] = []
+
+            class _Handler(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    records.append(record.getMessage())
+
+            handler = _Handler()
+            log = logging.getLogger("game_server.monitor")
+            old_level = log.level
+            log.addHandler(handler)
+            log.setLevel(logging.INFO)
+            try:
+                mon = LogMonitor(plugin, tmp)
+                mon.ingest_stdout_line(
+                    '[2026-08-03 12:59:33] Started server using port 14159 '
+                    'with 10 slots on world "FamilyWorld.zip", game version 1.3.1.'
+                )
+                self.assertEqual(mon.state.game_version, "1.3.1")
+                self.assertFalse(
+                    any("Game version from logs" in msg for msg in records)
+                )
+                mon.start()
+                mon.ingest_stdout_line(
+                    '[2026-08-03 12:59:40] game version 1.3.2 released'
+                )
+                mon.stop()
+            finally:
+                log.setLevel(old_level)
+                log.removeHandler(handler)
+            self.assertTrue(
+                any("Game version from logs: 1.3.2" in msg for msg in records)
+            )
+            self.assertFalse(
+                any("Game version from logs: 1.3.1" in msg for msg in records)
+            )
+
     def test_dry_run_matches_generic_ready_join_and_count_lines(self) -> None:
         plugin = load_plugin(FIXTURE)
         with tempfile.TemporaryDirectory() as tmp:
@@ -3826,6 +3870,14 @@ class LogBridgeTests(unittest.TestCase):
         self.assertFalse(deduper.remember_if_new("  Player joined  "))
         self.assertTrue(deduper.remember_if_new("Player left"))
         self.assertFalse(deduper.remember_if_new(""))
+
+    def test_stdout_deduper_window_survives_boot_flood(self) -> None:
+        deduper = RecentLineDeduper(maxlen=4096, ttl_seconds=15.0)
+        first = "boot-line-000 unique"
+        self.assertTrue(deduper.remember_if_new(first))
+        for i in range(1, 200):
+            self.assertTrue(deduper.remember_if_new(f"boot-line-{i:03d} unique"))
+        self.assertFalse(deduper.remember_if_new(first))
 
     def test_recent_line_seen_and_remember(self) -> None:
         deduper = RecentLineDeduper(maxlen=8, ttl_seconds=30)

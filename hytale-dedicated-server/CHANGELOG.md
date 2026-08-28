@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.6.0
+
+- Shared supervisor **3.6**: Ingress 5-second status poll no longer logs `Game version from logs` on throwaway rescans; `[game-log]` no longer replays stdout already shown as `[game]` during large boot floods. Vendored `game_server/` sync.
+- Drive the Ingress sign-in card from live Java auth lines, not `auth.enc`. Boot's `No server tokens configured` is ignored (it always prints before Encrypted restore). Show the card only for a device-verify URL. Clear it on `Authentication successful` / `Session restored`. Do not treat `Loaded encrypted credentials` or `https://sessions.hytale.com` as sign-in state.
+
 ## 3.5.0
 
 - Shared supervisor **3.5**: persist a Linux machine-id under `/data/supervisor` and copy it to `/etc/machine-id` when the overlay allows (no host bind, no `/sys` DMI, no extra privileges; images do not ship a baked id). Vendored `game_server/` sync.

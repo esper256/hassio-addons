@@ -230,6 +230,11 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
         self.assertEqual((url, code), ("", ""))
         url, code = mod.scrape_device_login("javascript:alert(1)")
         self.assertEqual((url, code), ("", ""))
+        url, code = mod.scrape_device_login(
+            "[SessionServiceClient] Session Service client initialized for: "
+            "https://sessions.hytale.com"
+        )
+        self.assertEqual((url, code), ("", ""))
 
     def test_scrape_strips_java_ansi_reset_from_device_code(self) -> None:
         """Java /auth colors the code; ESC[m must not ride into user_code."""
@@ -347,7 +352,19 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             mod.signin_finished_line("Authentication successful! Mode: OAUTH_DEVICE")
         )
         self.assertTrue(
+            mod.signin_finished_line("Authentication successful! Mode: OAUTH_STORE")
+        )
+        self.assertTrue(
+            mod.signin_finished_line("Session restored from stored credentials")
+        )
+        self.assertFalse(
             mod.signin_finished_line("Loaded encrypted credentials from auth.enc")
+        )
+        self.assertFalse(
+            mod.signin_finished_line(
+                "[ServerAuthManager] No server tokens configured. "
+                "Use /auth login to authenticate, or provide tokens via CLI/environment."
+            )
         )
         self.assertFalse(mod.signin_finished_line("Authorization code: GLrYHNyp"))
         self.assertFalse(
@@ -472,7 +489,8 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
 
     def test_needs_auth_and_persisted_lines(self) -> None:
         mod = _load_defaults()
-        self.assertTrue(
+        # Boot always prints this before Encrypted restore — not a real need-auth.
+        self.assertFalse(
             mod.needs_server_auth_line(
                 "[ServerAuthManager] No server tokens configured. "
                 "Use /auth login to authenticate, or provide tokens via CLI/environment."
@@ -499,20 +517,79 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             )
         )
         self.assertFalse(mod.credentials_persisted_line("No server tokens configured"))
+        self.assertTrue(
+            mod.auth_store_ready_line(
+                "[ServerAuthManager] Auth credential store: Encrypted"
+            )
+        )
+        self.assertFalse(
+            mod.auth_store_ready_line(
+                "[EncryptedAuthCredentialStore] Loaded encrypted credentials from auth.enc"
+            )
+        )
+        self.assertTrue(
+            mod.session_ok_line(
+                "[ServerAuthManager] Found stored credentials, attempting to restore session..."
+            )
+        )
+        self.assertTrue(
+            mod.session_ok_line(
+                "[ServerAuthManager] Authentication successful! Mode: OAUTH_STORE"
+            )
+        )
+        self.assertTrue(
+            mod.session_ok_line(
+                "[ServerAuthManager] Session restored from stored credentials"
+            )
+        )
+        self.assertFalse(
+            mod.session_ok_line("Loaded encrypted credentials from auth.enc")
+        )
+        self.assertTrue(
+            mod.console_ready_line(
+                "[ServerAuthManager] No server tokens configured. "
+                "Use /auth login to authenticate, or provide tokens via CLI/environment."
+            )
+        )
+        self.assertTrue(
+            mod.console_ready_line(
+                "[ConsoleModule|P] Setup console with type: dumb-color"
+            )
+        )
 
-    def test_server_authed_finds_auth_enc(self) -> None:
+    def test_live_boot_lines_drive_card_not_auth_enc(self) -> None:
+        """Returning-server boot: no inject on missing-tokens; success clears."""
+
         mod = _load_defaults()
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp)
-            self.assertFalse(mod._server_authed(data))
-            (data / "auth.enc").write_bytes(b"enc")
-            self.assertTrue(mod._server_authed(data))
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp)
-            nested = data / "Server"
-            nested.mkdir()
-            (nested / "auth.enc").write_bytes(b"enc")
-            self.assertTrue(mod._server_authed(data))
+        boot = [
+            "[ServerAuthManager] No server tokens configured. "
+            "Use /auth login to authenticate, or provide tokens via CLI/environment.",
+            "[EncryptedAuthCredentialStore] Loaded encrypted credentials from auth.enc",
+            "[ServerAuthManager] Auth credential store: Encrypted",
+            "[ServerAuthManager] Found stored credentials, attempting to restore session...",
+            "[ServerAuthManager] Authentication successful! Mode: OAUTH_STORE",
+            "[ServerAuthManager] Session restored from stored credentials",
+        ]
+        self.assertTrue(mod.console_ready_line(boot[0]))
+        self.assertFalse(mod.needs_server_auth_line(boot[0]))
+        self.assertFalse(mod.signin_finished_line(boot[0]))
+        self.assertTrue(mod.credentials_persisted_line(boot[1]))
+        self.assertFalse(mod.signin_finished_line(boot[1]))
+        self.assertTrue(mod.auth_store_ready_line(boot[2]))
+        self.assertFalse(mod.signin_finished_line(boot[2]))
+        self.assertTrue(mod.session_ok_line(boot[3]))
+        self.assertTrue(mod.signin_finished_line(boot[4]))
+        self.assertTrue(mod.signin_finished_line(boot[5]))
+        url, code = mod.scrape_device_login(
+            "Session Service client initialized for: https://sessions.hytale.com"
+        )
+        self.assertEqual((url, code), ("", ""))
+        url, code = mod.scrape_device_login(
+            "Visit: https://oauth.accounts.hytale.com/oauth2/device/verify"
+        )
+        self.assertEqual(
+            url, "https://oauth.accounts.hytale.com/oauth2/device/verify"
+        )
 
     def test_ensure_machine_id_persists_and_copies(self) -> None:
         mod = _load_defaults()

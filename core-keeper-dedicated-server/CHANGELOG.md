@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.6.0
+
+- Shared supervisor **3.6**: Ingress 5-second status poll no longer logs `Game version from logs` on throwaway rescans; `[game-log]` no longer replays stdout already shown as `[game]` during large boot floods. Vendored `game_server/` sync.
+
 ## 3.5.0
 
 - Shared supervisor **3.5**: persist a Linux machine-id under `/data/supervisor` and copy it to `/etc/machine-id` when the overlay allows (no host bind, no `/sys`, no extra privileges; images do not ship a baked id). Vendored `game_server/` sync.

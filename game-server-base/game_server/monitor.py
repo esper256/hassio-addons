@@ -159,6 +159,9 @@ class LogMonitor:
         self._file_lines = RecentLineDeduper(
             maxlen=_CROSS_SOURCE_MAXLEN, ttl_seconds=_CROSS_SOURCE_TTL_SECONDS
         )
+        # Ingress /api/ui builds a throwaway monitor every few seconds. Only the
+        # live tailer should write HA Logs (game version, [game-log], mismatch).
+        self._emit_runtime_logs = False
         self._build_patterns()
 
     def _build_patterns(self) -> None:
@@ -268,6 +271,7 @@ class LogMonitor:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._emit_runtime_logs = True
         self._log_inactive_pattern_setup()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="log-monitor", daemon=True)
@@ -396,7 +400,11 @@ class LogMonitor:
 
         # HA Logs mirroring: file lines that already appeared as [game] from
         # process stdout are skipped; file-only lines become [game-log].
-        if source == "file" and STDOUT_DEDUPER.remember_if_new(line):
+        if (
+            self._emit_runtime_logs
+            and source == "file"
+            and STDOUT_DEDUPER.remember_if_new(line)
+        ):
             LOG.info("[game-log] %s", line)
 
         # Pattern/event path: suppress cross-source echoes only. Two identical
@@ -514,7 +522,7 @@ class LogMonitor:
             if raw is not None:
                 version = str(raw).strip().rstrip(".,;")
                 if version:
-                    if version != self.state.game_version:
+                    if version != self.state.game_version and self._emit_runtime_logs:
                         LOG.info("Game version from logs: %s", version)
                     self.state.game_version = version
                     self.state.game_version_seen_at = time.time()
@@ -524,7 +532,8 @@ class LogMonitor:
             self.state.version_mismatch_count += 1
             self.state.last_version_mismatch_at = time.time()
             self.state.last_version_mismatch_line = line
-            LOG.warning("Active version-mismatch pattern hit: %s", line)
+            if self._emit_runtime_logs:
+                LOG.warning("Active version-mismatch pattern hit: %s", line)
             if self.on_version_mismatch:
                 try:
                     self.on_version_mismatch(line)

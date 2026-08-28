@@ -26,11 +26,14 @@ SERVER_NAME_PREFIX = "HAOS Hytale"
 OPERATOR_ACTION_FILENAME = "operator_action.json"
 DOWNLOADER = Path("/opt/hytale-downloader")
 CREDENTIALS_NAME = ".hytale-downloader-credentials.json"
-AUTH_ENC_NAME = "auth.enc"
 GAME_ZIP_NAME = "game.zip"
 INSTALL_MARKER = "Assets.zip"
 AUTH_LOGIN_DEVICE = "/auth login device"
 AUTH_PERSIST_ENCRYPTED = "/auth persistence Encrypted"
+# After Encrypted store announces itself, wait for "Found stored credentials"
+# / "Authentication successful" before injecting /auth login device. The store
+# open line is several seconds earlier and is not a finished login.
+STORE_RESTORE_GRACE_SECONDS = 2.5
 SIGNIN_DETAIL = (
     "Open the link in a new browser tab (not this panel). "
     "Hytale emails a login code first; after you are signed in, click the link again "
@@ -59,26 +62,41 @@ _CODE_RE = re.compile(
 _CODE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,31}")
 # Java /auth colors the device code; CSI reset is ESC[m and must not enter user_code.
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\x1b\\|\x07))")
-# Java /auth prints "authentication successful"; the official downloader does not —
-# it starts the zip fetch instead. Encrypted load means the card is not needed.
+# Finished login: Java session restore / device success, or the downloader
+# starting its zip fetch. Opening auth.enc is not finished — Encrypted restore
+# logs that before the session comes back.
 _SIGNIN_DONE_RE = re.compile(
-    r"authentication successful|downloading latest|successfully downloaded"
-    r"|loaded encrypted credentials",
+    r"authentication successful|session restored from stored credentials"
+    r"|downloading latest|successfully downloaded",
     re.IGNORECASE,
 )
 _TOKEN_TIMEOUT_RE = re.compile(
     r"error obtaining token:.*context deadline exceeded",
     re.IGNORECASE,
 )
-# Only start /auth login device when Java says tokens are missing. Blind inject
-# opens a new device flow while the server is already playable (Memory tokens).
+# Boot always logs "No server tokens configured" before Encrypted restore.
+# That is not "needs auth". Show the card / inject login only on a real grant
+# failure, or Encrypted store ready without a restored session (injector grace).
 _NEED_AUTH_RE = re.compile(
-    r"no server tokens configured|use /auth login"
-    r"|server session token not available|cannot request auth grant",
+    r"server session token not available|cannot request auth grant",
     re.IGNORECASE,
 )
 _CREDS_PERSISTED_RE = re.compile(
-    r"loaded encrypted credentials|credential storage changed to:\s*encrypted",
+    r"loaded encrypted credentials|credential storage changed to:\s*encrypted"
+    r"|swapped credential store to:\s*encrypted",
+    re.IGNORECASE,
+)
+_STORE_READY_RE = re.compile(
+    r"auth credential store:\s*encrypted",
+    re.IGNORECASE,
+)
+_SESSION_OK_RE = re.compile(
+    r"found stored credentials|authentication successful"
+    r"|session restored from stored credentials",
+    re.IGNORECASE,
+)
+_CONSOLE_READY_RE = re.compile(
+    r"setup console|\[commandmanager\]|\[serverauthmanager\]",
     re.IGNORECASE,
 )
 
@@ -102,6 +120,24 @@ def needs_server_auth_line(line: str) -> bool:
 
 def credentials_persisted_line(line: str) -> bool:
     return bool(_CREDS_PERSISTED_RE.search(_strip_ansi(line)))
+
+
+def auth_store_ready_line(line: str) -> bool:
+    """True when Java has selected Encrypted and is about to restore or fail."""
+
+    return bool(_STORE_READY_RE.search(_strip_ansi(line)))
+
+
+def session_ok_line(line: str) -> bool:
+    """True when Java restored or completed a server session."""
+
+    return bool(_SESSION_OK_RE.search(_strip_ansi(line)))
+
+
+def console_ready_line(line: str) -> bool:
+    """True when the Java console can accept /auth commands."""
+
+    return bool(_CONSOLE_READY_RE.search(_strip_ansi(line)))
 
 
 def ensure_machine_id(
@@ -238,14 +274,6 @@ def _java_opts() -> str:
     return str(_load_options().get("java_opts") or "").strip()
 
 
-def _server_authed(data_dir: Path) -> bool:
-    """True when Encrypted persistence left auth.enc (cwd or Server/)."""
-
-    return (data_dir / AUTH_ENC_NAME).is_file() or (
-        data_dir / "Server" / AUTH_ENC_NAME
-    ).is_file()
-
-
 def operator_action_path(state_dir: str | Path | None = None) -> Path:
     return Path(state_dir or _state_dir()) / OPERATOR_ACTION_FILENAME
 
@@ -293,11 +321,9 @@ def scrape_device_login(line: str) -> tuple[str, str]:
         if parsed.scheme not in {"http", "https"}:
             continue
         lowered = candidate.lower()
-        if (
-            "device" not in lowered
-            and "user_code" not in lowered
-            and "hytale.com" not in lowered
-        ):
+        # Device-code pages only. sessions.hytale.com and other Hytale HTTPS
+        # lines must not republish the Ingress card after a finished login.
+        if "device" not in lowered and "user_code" not in lowered:
             continue
         url = candidate
         qs = parse_qs(parsed.query)
@@ -490,10 +516,12 @@ def _tee_process(
 ) -> TeeResult:
     """Run argv, scrape device-code lines, optional stdin inject, forward stdin.
 
-    ``send_after_start`` is only written after a need-auth log line (Java has
-    no tokens). Blind inject used to start a second device flow while players
-    could already join. ``persist_encrypted`` sends ``/auth persistence
-    Encrypted`` before that login and again after a successful Java sign-in.
+    ``send_after_start`` is written only after Java says auth actually failed
+    (grant / session-token errors) or Encrypted store is ready and a session
+    did not restore. Boot's "No server tokens configured" is not enough —
+    Encrypted restore logs that every start. ``persist_encrypted`` sends
+    ``/auth persistence Encrypted`` once the Java console is ready, and again
+    after a successful Java sign-in.
     """
 
     proc = subprocess.Popen(
@@ -514,12 +542,17 @@ def _tee_process(
     signin_done = False
     need_auth = False
     persist_sent = False
+    console_ready = False
+    store_ready_at: float | None = None
+    session_ok = False
     stop = threading.Event()
     stdin_lock = threading.Lock()
     last_published = ""
 
     def publish() -> None:
         nonlocal last_published
+        if signin_done or session_ok:
+            return
         if not seen_url and not seen_code:
             return
         write_operator_action(
@@ -549,7 +582,7 @@ def _tee_process(
 
     def reader() -> None:
         nonlocal seen_url, seen_code, token_wait_timed_out, signin_done
-        nonlocal need_auth, persist_sent
+        nonlocal need_auth, persist_sent, console_ready, store_ready_at, session_ok
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
@@ -557,22 +590,31 @@ def _tee_process(
                 sys.stdout.flush()
                 if token_wait_timed_out_line(line):
                     token_wait_timed_out = True
+                if console_ready_line(line):
+                    console_ready = True
                 if needs_server_auth_line(line):
                     need_auth = True
                 if credentials_persisted_line(line):
                     persist_sent = True
+                if auth_store_ready_line(line) and store_ready_at is None:
+                    store_ready_at = time.time()
+                if session_ok_line(line):
+                    session_ok = True
                 url, code = scrape_device_login(line)
                 if url or code:
                     seen_url, seen_code = coalesce_device_login(
                         seen_url, seen_code, url, code
                     )
                     publish()
-                if signin_finished_line(line) and not signin_done:
+                if (signin_finished_line(line) or session_ok) and not signin_done:
                     # Drop the sign-in card so Ingress can show "installing"
-                    # during the rest of a large download.
+                    # during the rest of a large download, or so a leftover
+                    # card from a previous device flow does not stick.
                     signin_done = True
+                    had_card = bool(last_published) or operator_action_path().is_file()
                     clear_operator_action()
-                    print("Sign-in finished; dropping Ingress card", flush=True)
+                    if had_card:
+                        print("Sign-in finished; dropping Ingress card", flush=True)
                     if persist_encrypted:
                         write_child_stdin(AUTH_PERSIST_ENCRYPTED + "\n")
         finally:
@@ -587,14 +629,19 @@ def _tee_process(
             return
         login_sent = False
         while proc.poll() is None and not stop.is_set():
-            if signin_done:
+            if signin_done or session_ok:
                 return
-            if persist_encrypted and need_auth and not persist_sent:
+            if persist_encrypted and console_ready and not persist_sent:
                 write_child_stdin(AUTH_PERSIST_ENCRYPTED + "\n")
                 persist_sent = True
+            store_gave_up = (
+                store_ready_at is not None
+                and (time.time() - store_ready_at) >= STORE_RESTORE_GRACE_SECONDS
+                and not session_ok
+            )
             if (
                 send_after_start
-                and need_auth
+                and (need_auth or store_gave_up)
                 and not login_sent
                 and not seen_url
                 and not seen_code
@@ -753,20 +800,19 @@ def cmd_run_server(java_argv: list[str]) -> int:
     prepare_world_config()
     data_dir = _data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
-    authed = _server_authed(data_dir)
+    # Previous run's card is stale; Java lines decide whether a new one appears.
+    clear_operator_action()
     steps = [
         {"label": "Download files", "state": "done"},
-        {
-            "label": "Authenticate server",
-            "state": "pending" if not authed else "done",
-        },
+        {"label": "Authenticate server", "state": "pending"},
     ]
     env = os.environ.copy()
     env.setdefault("HYTALE_DISABLE_UPDATES", "1")
     env["HOME"] = str(data_dir)
     # Do not pre-write the Ingress card. publish() writes it when a device
     # URL/code appears. Do not inject /auth login device unless Java says
-    # tokens are missing — otherwise a new flow starts while players can join.
+    # a session is missing after Encrypted store is ready — otherwise a new
+    # flow starts while Encrypted restore is about to succeed.
     result = _tee_process(
         java_argv,
         cwd=data_dir,
