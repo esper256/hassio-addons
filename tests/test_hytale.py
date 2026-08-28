@@ -534,6 +534,20 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             self.assertEqual(second, first)
             self.assertEqual(etc.read_text(encoding="utf-8").strip(), first)
 
+    def test_ensure_machine_id_overwrites_writable_image_id(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            etc = root / "etc" / "machine-id"
+            etc.parent.mkdir()
+            baked = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            etc.write_text(baked + "\n", encoding="utf-8")
+            got = mod.ensure_machine_id(
+                state_dir=root / "state", etc_path=etc, dbus_path=root / "dbus" / "machine-id"
+            )
+            self.assertNotEqual(got, baked)
+            self.assertEqual(etc.read_text(encoding="utf-8").strip(), got)
+
 
 # Live boot + join/leave from HA Logs (2026-08-27). ready is ServerManager
 # Listening (port bind), not "Universe ready!". Join/leave share TheFrizz.

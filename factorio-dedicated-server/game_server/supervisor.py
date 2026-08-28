@@ -110,8 +110,9 @@ class GameServerSupervisor:
         Path(logs_dir).mkdir(parents=True, exist_ok=True)
         Path(config.install_dir).mkdir(parents=True, exist_ok=True)
         Path(config.backup_dir).mkdir(parents=True, exist_ok=True)
-        # Before drop_privileges: Java/native servers often refuse to start or
-        # re-auth every boot when /etc/machine-id is missing (common in HAOS).
+        # Before drop_privileges: persist a Linux machine-id under /data and
+        # project it onto /etc/machine-id when the overlay is writable. Do not
+        # write /sys or request extra HA privileges for this.
         ensure_machine_id(state_dir=config.state_dir)
 
         self.run_ids = None
