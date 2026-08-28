@@ -42,7 +42,8 @@ RUN mkdir -p /opt/steamcmd \
 
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
  && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /opt/games \
- && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver
+ && chown -R gameserver:gameserver /opt/steamcmd /data /home/gameserver \
+ && rm -f /etc/machine-id /var/lib/dbus/machine-id
 
 COPY game-server-base/game_server /opt/game_server
 

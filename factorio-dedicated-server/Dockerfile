@@ -34,7 +34,8 @@ RUN apt-get update \
 
 RUN useradd -m -u 1000 -s /bin/bash gameserver \
  && mkdir -p /data/game /data/world /data/logs /data/backups /data/supervisor /data/steam-home /opt/games \
- && chown -R gameserver:gameserver /data /home/gameserver
+ && chown -R gameserver:gameserver /data /home/gameserver \
+ && rm -f /etc/machine-id /var/lib/dbus/machine-id
 
 # Shared supervisor already vendored into this add-on (run
 # ../game-server-base/sync-into-addons.sh on the host after base edits; not a
