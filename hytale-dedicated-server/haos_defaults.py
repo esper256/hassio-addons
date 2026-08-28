@@ -22,7 +22,6 @@ from typing import IO, Any, Mapping, NamedTuple
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
-MACHINE_ID_NAME = "machine-id"
 SERVER_NAME_PREFIX = "HAOS Hytale"
 OPERATOR_ACTION_FILENAME = "operator_action.json"
 DOWNLOADER = Path("/opt/hytale-downloader")
@@ -82,7 +81,6 @@ _CREDS_PERSISTED_RE = re.compile(
     r"loaded encrypted credentials|credential storage changed to:\s*encrypted",
     re.IGNORECASE,
 )
-_MACHINE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class TeeResult(NamedTuple):
@@ -106,78 +104,21 @@ def credentials_persisted_line(line: str) -> bool:
     return bool(_CREDS_PERSISTED_RE.search(_strip_ansi(line)))
 
 
-def _valid_machine_id(text: str) -> str:
-    cleaned = (text or "").strip().lower().replace("-", "")
-    return cleaned if _MACHINE_ID_RE.fullmatch(cleaned) else ""
-
-
-def _write_machine_id_file(path: Path, machine_id: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(machine_id + "\n", encoding="utf-8")
-    tmp.replace(path)
-
-
 def ensure_machine_id(
     *,
     state_dir: str | Path | None = None,
     etc_path: str | Path | None = None,
     dbus_path: str | Path | None = None,
 ) -> str:
-    """Persist a 32-hex machine-id so Encrypted auth.enc survives container recreate.
+    """Delegate to the shared supervisor helper (Encrypted auth.enc needs it)."""
 
-    Hytale encrypts auth.enc with the Linux hardware UUID. Docker/HAOS images
-    often have no /etc/machine-id (or a new one each recreate). Keep ours under
-    STATE_DIR and copy it to the paths Java reads.
-    """
+    from game_server.machine_id import ensure_machine_id as _ensure
 
-    state = Path(state_dir or _state_dir())
-    persisted = state / MACHINE_ID_NAME
-    etc = Path(etc_path or "/etc/machine-id")
-    dbus = Path(dbus_path or "/var/lib/dbus/machine-id")
-
-    machine_id = ""
-    if persisted.is_file():
-        try:
-            machine_id = _valid_machine_id(persisted.read_text(encoding="utf-8"))
-        except OSError:
-            machine_id = ""
-    if not machine_id and etc.is_file():
-        try:
-            machine_id = _valid_machine_id(etc.read_text(encoding="utf-8"))
-        except OSError:
-            machine_id = ""
-    if not machine_id and dbus.is_file():
-        try:
-            machine_id = _valid_machine_id(dbus.read_text(encoding="utf-8"))
-        except OSError:
-            machine_id = ""
-    if not machine_id:
-        machine_id = secrets.token_hex(16)
-
-    try:
-        existing = (
-            _valid_machine_id(persisted.read_text(encoding="utf-8"))
-            if persisted.is_file()
-            else ""
-        )
-    except OSError:
-        existing = ""
-    if existing != machine_id:
-        _write_machine_id_file(persisted, machine_id)
-
-    for dest in (etc, dbus):
-        try:
-            current = (
-                _valid_machine_id(dest.read_text(encoding="utf-8"))
-                if dest.is_file()
-                else ""
-            )
-            if current != machine_id:
-                _write_machine_id_file(dest, machine_id)
-        except OSError:
-            pass
-    return machine_id
+    return _ensure(
+        state_dir=state_dir or _state_dir(),
+        etc_path=etc_path,
+        dbus_path=dbus_path,
+    )
 
 
 def _strip_ansi(text: str) -> str:

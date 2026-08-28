@@ -113,6 +113,12 @@ from game_server.steamcmd import (  # noqa: E402
     wait_for_app_info,
 )
 from game_server.supervisor import GameServerSupervisor  # noqa: E402
+from game_server.machine_id import (  # noqa: E402
+    MACHINE_ID_NAME,
+    dashed_uuid,
+    ensure_machine_id,
+    valid_machine_id,
+)
 from game_server.version import SUPERVISOR_VERSION, app_version, supervisor_version  # noqa: E402
 from game_server.patterns import DEFAULT_CANDIDATE_PATTERNS  # noqa: E402
 
@@ -897,6 +903,79 @@ class WorldSaveLocatorTests(unittest.TestCase):
                         "allow_heuristic_fallback": True,
                     }
                 )
+
+
+class MachineIdTests(unittest.TestCase):
+    def test_persists_and_copies_to_etc_dbus_and_dmi(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            etc = root / "etc" / "machine-id"
+            dbus = root / "dbus" / "machine-id"
+            dmi_parent = root / "dmi"
+            dmi_parent.mkdir()
+            dmi = dmi_parent / "product_uuid"
+            first = ensure_machine_id(
+                state_dir=state,
+                etc_path=etc,
+                dbus_path=dbus,
+                dmi_paths=[dmi],
+            )
+            self.assertRegex(first, r"^[0-9a-f]{32}$")
+            self.assertEqual(valid_machine_id((state / MACHINE_ID_NAME).read_text()), first)
+            self.assertEqual(valid_machine_id(etc.read_text()), first)
+            self.assertEqual(valid_machine_id(dbus.read_text()), first)
+            self.assertEqual(dmi.read_text(encoding="utf-8").strip(), dashed_uuid(first))
+            etc.write_text("ffffffffffffffffffffffffffffffff\n", encoding="utf-8")
+            second = ensure_machine_id(
+                state_dir=state,
+                etc_path=etc,
+                dbus_path=dbus,
+                dmi_paths=[dmi],
+            )
+            self.assertEqual(second, first)
+            self.assertEqual(valid_machine_id(etc.read_text()), first)
+
+    def test_skips_dmi_when_sysfs_parent_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dmi = root / "missing" / "product_uuid"
+            ensure_machine_id(
+                state_dir=root / "state",
+                etc_path=root / "etc" / "machine-id",
+                dbus_path=root / "dbus" / "machine-id",
+                dmi_paths=[dmi],
+            )
+            self.assertFalse(dmi.exists())
+            self.assertFalse(dmi.parent.exists())
+
+    def test_supervisor_writes_machine_id_into_state_dir(self) -> None:
+        plugin = load_plugin(FIXTURE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "world").mkdir()
+            (root / "logs").mkdir()
+            (root / "steamcmd").mkdir()
+            state = root / "state"
+            cfg = SupervisorConfig(
+                drop_privileges=False,
+                status_http_enabled=False,
+                backup_enabled=False,
+                ha_notifications=False,
+                state_dir=str(state),
+                install_dir=str(root / "game"),
+                backup_dir=str(root / "backups"),
+                steamcmd_dir=str(root / "steamcmd"),
+                game_options={
+                    "data_dir": str(root / "world"),
+                    "logs_dir": str(root / "logs"),
+                },
+            )
+            # Supervisor uses real /etc; still must persist under state_dir.
+            GameServerSupervisor(plugin, cfg)
+            persisted = state / MACHINE_ID_NAME
+            self.assertTrue(persisted.is_file())
+            self.assertTrue(valid_machine_id(persisted.read_text()))
 
 
 class MonitorTests(unittest.TestCase):

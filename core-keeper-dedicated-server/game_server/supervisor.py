@@ -18,6 +18,7 @@ from .disk import ensure_free_mb
 from .lifecycle import LIFECYCLE_HEALTHY
 from .log_bridge import configure_logging
 from .log_tools import LogToolbox
+from .machine_id import ensure_machine_id
 from .monitor import LogMonitor
 from .notify import Notifier
 from .operator_action import read_operator_action
@@ -109,6 +110,9 @@ class GameServerSupervisor:
         Path(logs_dir).mkdir(parents=True, exist_ok=True)
         Path(config.install_dir).mkdir(parents=True, exist_ok=True)
         Path(config.backup_dir).mkdir(parents=True, exist_ok=True)
+        # Before drop_privileges: Java/native servers often refuse to start or
+        # re-auth every boot when /etc/machine-id is missing (common in HAOS).
+        ensure_machine_id(state_dir=config.state_dir)
 
         self.run_ids = None
         if config.drop_privileges:

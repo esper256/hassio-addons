@@ -80,6 +80,8 @@ Copy the closest sibling (`necesse-dedicated-server/` for SteamCMD + simple flag
 
 **Copy `run.sh`’s `export SERVER_PORT=…` when HA publishes a container port the game must bind** (Necesse, Factorio, Stationeers, Core Keeper Direct Connect). The Network UI remaps the *host* port; the process still has to listen on the container port in `config.yaml`. Do **not** set `host_network: true`. Titles that join only through a relay with no listen port can omit it — Core Keeper is not that case: Direct Connect (`-port`) is the default, and Steam Game ID join still works alongside it.
 
+The supervisor writes a stable Linux machine-id to `/data/supervisor/machine-id` and copies it to `/etc/machine-id` (and dbus / DMI product_uuid when those paths are writable). HAOS/Docker images often have none; Java and other binaries use it as the hardware UUID.
+
 If the title needs something the supervisor does not have (virtual display, extra Steamworks redistributable, join codes, a second Steam app id), solve it in the **game layer** first (`Dockerfile`, `launch_wrapper.sh`, `haos_defaults.py`, docs). If you believe `game-server-base` itself must change, stop and confirm — this repo is deliberately small.
 
 ---
