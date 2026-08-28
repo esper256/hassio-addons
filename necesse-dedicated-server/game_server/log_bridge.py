@@ -98,4 +98,6 @@ class RecentLineDeduper:
 
 
 # Shared across process stdout and file-log mirroring so HA Logs stay de-duplicated.
-STDOUT_DEDUPER = RecentLineDeduper()
+# Boot floods can be hundreds of unique lines in a couple of seconds; a 64-line
+# window lets the file tailer replay the same lines as [game-log].
+STDOUT_DEDUPER = RecentLineDeduper(maxlen=4096, ttl_seconds=15.0)
