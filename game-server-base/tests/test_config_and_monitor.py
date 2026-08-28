@@ -962,6 +962,7 @@ class MachineIdTests(unittest.TestCase):
             self.assertEqual(_mode(dbus), 0o444)
             self.assertEqual(_mode(persisted), 0o644)
             self.assertTrue(etc.read_text(encoding="utf-8").endswith("\n"))
+            etc.chmod(0o644)
             etc.write_text("ffffffffffffffffffffffffffffffff\n", encoding="utf-8")
             second = ensure_machine_id(
                 state_dir=state,

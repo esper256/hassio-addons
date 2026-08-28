@@ -527,6 +527,7 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             self.assertEqual((state / "machine-id").read_text(encoding="utf-8").strip(), first)
             self.assertEqual(etc.read_text(encoding="utf-8").strip(), first)
             self.assertEqual(dbus.read_text(encoding="utf-8").strip(), first)
+            etc.chmod(0o644)
             etc.write_text("ffffffffffffffffffffffffffffffff\n", encoding="utf-8")
             second = mod.ensure_machine_id(
                 state_dir=state, etc_path=etc, dbus_path=dbus
