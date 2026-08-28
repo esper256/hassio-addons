@@ -27,6 +27,7 @@ from game_server.config import SupervisorConfig  # noqa: E402
 from game_server.log_tools import LogToolbox  # noqa: E402
 from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.world_save import locate_active_world  # noqa: E402
+from game_server.version import SUPERVISOR_VERSION  # noqa: E402
 
 
 def _load_defaults():
@@ -136,7 +137,7 @@ class HytalePluginTests(unittest.TestCase):
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
-        self.assertTrue(str(data["version"]).startswith("3.4."))
+        self.assertTrue(str(data["version"]).startswith(SUPERVISOR_VERSION + "."))
         self.assertEqual(data["schema"]["release_channel"], "list(release|pre-release)")
         self.assertEqual(data["schema"]["server_password"], "password")
 
