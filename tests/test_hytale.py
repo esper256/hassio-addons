@@ -24,6 +24,8 @@ sys.path.insert(0, str(BASE))
 from game_server.plugin import load_plugin  # noqa: E402
 from game_server.process_manager import ProcessManager  # noqa: E402
 from game_server.config import SupervisorConfig  # noqa: E402
+from game_server.log_tools import LogToolbox  # noqa: E402
+from game_server.monitor import LogMonitor  # noqa: E402
 from game_server.world_save import locate_active_world  # noqa: E402
 
 
@@ -53,9 +55,31 @@ class HytalePluginTests(unittest.TestCase):
         )
         self.assertEqual(plugin.install_marker, "Assets.zip")
         self.assertEqual(plugin.executable, ["/opt/launch_wrapper.sh"])
-        self.assertEqual(plugin.log_patterns.ready, [])
-        self.assertEqual(plugin.log_patterns.player_join, [])
-        self.assertEqual(plugin.log_patterns.player_leave, [])
+        self.assertEqual(
+            plugin.log_patterns.ready,
+            [r"\[ServerManager\|P\] Listening on /"],
+        )
+        self.assertEqual(
+            plugin.log_patterns.game_version,
+            [
+                r"\[HytaleServer\] Booting up HytaleServer - Version: "
+                r"(?P<version>\d+(?:\.\d+)+)"
+            ],
+        )
+        self.assertEqual(
+            plugin.log_patterns.player_join,
+            [r"\[World\|[^\]]+\] Player '(?P<player>[^']+)' joined world"],
+        )
+        self.assertEqual(
+            plugin.log_patterns.player_leave,
+            [
+                r"\[Hytale\] [0-9a-fA-F-]{36} - (?P<player>.+?) "
+                r"at QuicConnectionAddress\{"
+            ],
+        )
+        self.assertEqual(plugin.log_patterns.player_count, [])
+        self.assertEqual(plugin.log_patterns.players_empty, [])
+        self.assertEqual(plugin.log_patterns.version_mismatch, [])
         self.assertIn("ready", plugin.log_pattern_candidates)
         self.assertEqual(plugin.player_tracking_mode, "presence")
         self.assertEqual(plugin.ui_theme.get("accent"), "#8ee04a")
@@ -74,7 +98,7 @@ class HytalePluginTests(unittest.TestCase):
             backup_enabled=False,
             ha_notifications=False,
             game_options={
-                "server_port": "25565",
+                "server_port": "5520",
                 "data_dir": "/data/world",
                 "logs_dir": "/data/logs",
                 "java_opts": "-Xms2G -Xmx4G",
@@ -83,7 +107,7 @@ class HytalePluginTests(unittest.TestCase):
         cmd = ProcessManager(plugin, cfg).build_command()
         self.assertEqual(cmd[0], "/opt/launch_wrapper.sh")
         self.assertIn("--bind", cmd)
-        self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:25565")
+        self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:5520")
         self.assertNotIn("-Xmx4G", cmd)
 
     def test_world_save_is_universe_folder(self) -> None:
@@ -107,12 +131,12 @@ class HytalePluginTests(unittest.TestCase):
         import yaml
 
         data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-        self.assertEqual(data["ports"], {"25565/udp": 25565})
+        self.assertEqual(data["ports"], {"5520/udp": 5520})
         self.assertFalse(data.get("host_network"))
         self.assertEqual(data["timeout"], 300)
         self.assertEqual(data["slug"], "hytale_dedicated_server")
         self.assertEqual(data["arch"], ["amd64"])
-        self.assertTrue(str(data["version"]).startswith("3.3."))
+        self.assertTrue(str(data["version"]).startswith("3.4."))
         self.assertEqual(data["schema"]["release_channel"], "list(release|pre-release)")
         self.assertEqual(data["schema"]["server_password"], "password")
 
@@ -123,7 +147,8 @@ class HytalePluginTests(unittest.TestCase):
         wrapper = WRAPPER.read_text(encoding="utf-8")
         self.assertIn("haos_defaults.py run", wrapper)
         runsh = RUNSH.read_text(encoding="utf-8")
-        self.assertIn("export SERVER_PORT=25565", runsh)
+        self.assertIn("export SERVER_PORT=5520", runsh)
+        self.assertIn("ensure-machine-id", runsh)
         self.assertIn("print-name", runsh)
         self.assertIn("do not use host_network", runsh.lower())
 
@@ -320,6 +345,9 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
         self.assertTrue(
             mod.signin_finished_line("Authentication successful! Mode: OAUTH_DEVICE")
         )
+        self.assertTrue(
+            mod.signin_finished_line("Loaded encrypted credentials from auth.enc")
+        )
         self.assertFalse(mod.signin_finished_line("Authorization code: GLrYHNyp"))
         self.assertFalse(
             mod.signin_finished_line(
@@ -423,7 +451,7 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             try:
                 os.environ["INSTALL_DIR"] = str(install)
                 os.environ["JAVA_OPTS"] = "-Xms2G -Xmx4G"
-                cmd = mod.build_java_command(["--bind", "0.0.0.0:25565"])
+                cmd = mod.build_java_command(["--bind", "0.0.0.0:5520"])
             finally:
                 if env_old is None:
                     os.environ.pop("INSTALL_DIR", None)
@@ -439,7 +467,192 @@ class HytaleHaosDefaultsTests(unittest.TestCase):
             self.assertTrue(any(part.startswith("-XX:AOTCache=") for part in cmd))
             self.assertIn("-jar", cmd)
             self.assertIn("--assets", cmd)
-            self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:25565")
+            self.assertEqual(cmd[cmd.index("--bind") + 1], "0.0.0.0:5520")
+
+    def test_needs_auth_and_persisted_lines(self) -> None:
+        mod = _load_defaults()
+        self.assertTrue(
+            mod.needs_server_auth_line(
+                "[ServerAuthManager] No server tokens configured. "
+                "Use /auth login to authenticate, or provide tokens via CLI/environment."
+            )
+        )
+        self.assertTrue(
+            mod.needs_server_auth_line(
+                "Server session token not available, cannot request auth grant"
+            )
+        )
+        self.assertFalse(
+            mod.needs_server_auth_line(
+                "Authentication successful! Mode: OAUTH_DEVICE"
+            )
+        )
+        self.assertTrue(
+            mod.credentials_persisted_line(
+                "Loaded encrypted credentials from auth.enc"
+            )
+        )
+        self.assertTrue(
+            mod.credentials_persisted_line(
+                "Credential storage changed to: Encrypted"
+            )
+        )
+        self.assertFalse(mod.credentials_persisted_line("No server tokens configured"))
+
+    def test_server_authed_finds_auth_enc(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            self.assertFalse(mod._server_authed(data))
+            (data / "auth.enc").write_bytes(b"enc")
+            self.assertTrue(mod._server_authed(data))
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            nested = data / "Server"
+            nested.mkdir()
+            (nested / "auth.enc").write_bytes(b"enc")
+            self.assertTrue(mod._server_authed(data))
+
+    def test_ensure_machine_id_persists_and_copies(self) -> None:
+        mod = _load_defaults()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            etc = root / "etc" / "machine-id"
+            dbus = root / "dbus" / "machine-id"
+            first = mod.ensure_machine_id(
+                state_dir=state, etc_path=etc, dbus_path=dbus
+            )
+            self.assertRegex(first, r"^[0-9a-f]{32}$")
+            self.assertEqual((state / "machine-id").read_text(encoding="utf-8").strip(), first)
+            self.assertEqual(etc.read_text(encoding="utf-8").strip(), first)
+            self.assertEqual(dbus.read_text(encoding="utf-8").strip(), first)
+            etc.write_text("ffffffffffffffffffffffffffffffff\n", encoding="utf-8")
+            second = mod.ensure_machine_id(
+                state_dir=state, etc_path=etc, dbus_path=dbus
+            )
+            self.assertEqual(second, first)
+            self.assertEqual(etc.read_text(encoding="utf-8").strip(), first)
+
+
+# Live boot + join/leave from HA Logs (2026-08-27). ready is ServerManager
+# Listening (port bind), not "Universe ready!". Join/leave share TheFrizz.
+# WorldGenerator 0.0.0 is not the game version.
+_HYTALE_BOOT_JOIN_LOG = """\
+[2026/08/27 23:30:28   INFO]      [ServerAuthManager] No server tokens configured. Use /auth login to authenticate, or provide tokens via CLI/environment.
+[2026/08/27 23:30:30   INFO]           [HytaleServer] Booting up HytaleServer - Version: 0.6.1, Revision: 5097cd9e1099a0af639b359b453e4b117fe9f2a0
+[2026/08/27 23:30:42   INFO]               [ServerManager|P] Listening on /[0:0:0:0:0:0:0:0]:5520 and took 6ms 396us 931ns
+[2026/08/27 23:30:42   INFO]               [ServerManager|P] Listening on /0.0.0.0:5520 and took 1ms 465us 433ns
+[2026/08/27 23:30:42   INFO]               [ServerManager|P] Listening on /[0:0:0:0:0:0:0:1]:5520 and took 3ms 67us 228ns
+[2026/08/27 23:30:42   INFO]                [WorldGenerator] - [  0] Hytale:Hytale:0.0.0 - [/data/game/Assets.zip]
+[2026/08/27 23:30:42   INFO]                  [HytaleServer] Universe ready!
+[2026/08/27 23:31:07   INFO]                        [Hytale] Starting authenticated flow from QuicConnectionAddress{connId=2e049ca4ab53ae7349ae988b25beb4c2eaeb2bc8} (/192.168.11.106:44804, streamId=0)
+[2026/08/27 23:31:08   INFO]              [HandshakeHandler] Mutual authentication complete for TheFrizz (14a2663f-4c89-4da6-9440-2d9d66b92c30) from QuicConnectionAddress{connId=2e049ca4ab53ae7349ae988b25beb4c2eaeb2bc8} (/192.168.11.106:44804, streamId=0)
+[2026/08/27 23:31:13   INFO] [World|default] Player 'TheFrizz' joined world 'default' at location ( 2.795E+2  1.260E+2 -5.350E+1) (14a2663f-4c89-4da6-9440-2d9d66b92c30)
+[2026/08/27 23:32:08   INFO]          [Hytale] 14a2663f-4c89-4da6-9440-2d9d66b92c30 - TheFrizz at QuicConnectionAddress{connId=2e049ca4ab53ae7349ae988b25beb4c2eaeb2bc8} (/192.168.11.106:44804, streamId=0) left with reason: Disconnect - PlayerLeave
+[2026/08/27 23:32:08   INFO]    [Objectives|P] Checking objectives for disconnecting player 'TheFrizz' (14a2663f-4c89-4da6-9440-2d9d66b92c30)
+"""
+
+
+class HytaleLogPatternTests(unittest.TestCase):
+    def test_ready_is_listening_not_universe_ready(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "[HytaleServer] Booting up HytaleServer - Version: 0.6.1, Revision: abc"
+            )
+            self.assertFalse(mon.state.ready)
+            mon.ingest_stdout_line("[HytaleServer] Universe ready!")
+            self.assertFalse(mon.state.ready)
+            mon.ingest_stdout_line(
+                "[ServerManager|P] Listening on /0.0.0.0:5520 and took 1ms"
+            )
+            self.assertTrue(mon.state.ready)
+
+    def test_game_version_ignores_worldgen_zero(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "[WorldGenerator] - [  0] Hytale:Hytale:0.0.0 - [/data/game/Assets.zip]"
+            )
+            self.assertIsNone(mon.state.game_version)
+            mon.ingest_stdout_line(
+                "[HytaleServer] Booting up HytaleServer - Version: 0.6.1, "
+                "Revision: 5097cd9e1099a0af639b359b453e4b117fe9f2a0"
+            )
+            self.assertEqual(mon.state.game_version, "0.6.1")
+
+    def test_in_world_join_and_leave_share_display_name(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            mon.ingest_stdout_line(
+                "[Hytale] Starting authenticated flow from QuicConnectionAddress"
+                "{connId=abc} (/192.168.11.106:44804, streamId=0)"
+            )
+            mon.ingest_stdout_line(
+                "[HandshakeHandler] Mutual authentication complete for TheFrizz "
+                "(14a2663f-4c89-4da6-9440-2d9d66b92c30)"
+            )
+            self.assertEqual(mon.state.players, set())
+            mon.ingest_stdout_line(
+                "[World|default] Player 'TheFrizz' joined world 'default' at "
+                "location ( 2.795E+2  1.260E+2 -5.350E+1) "
+                "(14a2663f-4c89-4da6-9440-2d9d66b92c30)"
+            )
+            self.assertEqual(mon.state.players, {"TheFrizz"})
+            mon.ingest_stdout_line(
+                "[Hytale] 14a2663f-4c89-4da6-9440-2d9d66b92c30 - TheFrizz at "
+                "QuicConnectionAddress{connId=abc} (/192.168.11.106:44804, "
+                "streamId=0) left with reason: Disconnect - PlayerLeave"
+            )
+            self.assertEqual(mon.state.players, set())
+            self.assertEqual(mon.state.player_count, 0)
+
+    def test_live_boot_log_does_not_treat_handshake_as_join(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = LogMonitor(plugin, tmp)
+            for line in _HYTALE_BOOT_JOIN_LOG.splitlines():
+                mon.ingest_stdout_line(line)
+            self.assertTrue(mon.state.ready)
+            self.assertEqual(mon.state.game_version, "0.6.1")
+            self.assertEqual(mon.state.players, set())
+            self.assertTrue(mon.state.players_known)
+            self.assertEqual(mon.state.version_mismatch_count, 0)
+
+    def test_suggest_boot_join_examples_are_configured(self) -> None:
+        plugin = load_plugin(PLUGIN)
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            state = Path(tmp) / "state"
+            logs.mkdir()
+            state.mkdir()
+            (logs / "server.log").write_text(_HYTALE_BOOT_JOIN_LOG, encoding="utf-8")
+            box = LogToolbox(plugin, logs, state, recent_lines_provider=lambda: [])
+            report = box.suggest(lines=200)
+            ready = (report.get("configured") or {}).get("ready")
+            self.assertTrue(ready)
+            self.assertTrue(
+                any("Listening on /" in line for line in ready.get("examples") or [])
+            )
+            join = (report.get("configured") or {}).get("player_join")
+            self.assertTrue(join)
+            join_text = "\n".join(join.get("examples") or [])
+            self.assertIn("Player 'TheFrizz' joined world", join_text)
+            self.assertNotIn("Starting authenticated flow", join_text)
+            leave = (report.get("configured") or {}).get("player_leave")
+            self.assertTrue(leave)
+            leave_text = "\n".join(leave.get("examples") or [])
+            self.assertIn("left with reason", leave_text)
+            self.assertNotIn("Checking objectives", leave_text)
+            version = (report.get("configured") or {}).get("game_version")
+            self.assertTrue(version)
+            version_text = "\n".join(version.get("examples") or [])
+            self.assertIn("Version: 0.6.1", version_text)
+            self.assertNotIn("0.0.0", version_text)
 
 
 class HytaleIdentityIsolationTests(unittest.TestCase):

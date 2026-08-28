@@ -24,15 +24,17 @@ export DATA_DIR="${DATA_DIR:-/data/world}"
 export STATE_DIR="${STATE_DIR:-/data/supervisor}"
 export STATUS_HTTP_PORT="${STATUS_HTTP_PORT:-8099}"
 # HA Network can remap the *host* port, but the container side of that mapping
-# is fixed at 25565 in config.yaml. Hytale must listen on that same container
-# port or joins fail. 25565 is the client Direct Connect default (omit-port);
-# the dedicated-server binary defaults to 5520 only when --bind is omitted.
+# is fixed at 5520 in config.yaml. Hytale must listen on that same container
+# port or joins fail. 5520 is the official dedicated-server --bind default.
 # (We do not use host_network.)
-export SERVER_PORT=25565
+export SERVER_PORT=5520
 export PATH="/opt/java/bin:${PATH}"
 
 mkdir -p /data/world /data/logs /data/backups /data/supervisor /data/game
 export HOME="${STATE_DIR}"
+# Encrypted auth.enc is keyed from the Linux machine-id. Persist ours under
+# /data so container recreate does not force another /auth login device.
+python3 /opt/haos_defaults.py ensure-machine-id >/dev/null
 
 if [ -f "${OPTIONS_FILE}" ]; then
   echo "Using Home Assistant options from ${OPTIONS_FILE}"

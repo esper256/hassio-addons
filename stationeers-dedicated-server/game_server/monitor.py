@@ -179,6 +179,9 @@ class LogMonitor:
                     continue
                 self._add_compiled(category, pattern, "dry_run")
 
+    def _log_inactive_pattern_setup(self) -> None:
+        """Once per live tailer — not on throwaway Ingress rescans."""
+
         if not self.player_tracking_enabled:
             LOG.warning(
                 "No active player log patterns configured; updates will not wait "
@@ -265,6 +268,7 @@ class LogMonitor:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._log_inactive_pattern_setup()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="log-monitor", daemon=True)
         self._thread.start()

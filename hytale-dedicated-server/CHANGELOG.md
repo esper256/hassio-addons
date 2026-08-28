@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.4.0
+
+- Shared supervisor **3.4**: empty player / version-mismatch pattern notes log only when the live tailer starts, so the Ingress 5-second status poll no longer repeats them. Vendored `game_server/` sync.
+- Persist a Linux machine-id under `/data/supervisor` and copy it to `/etc/machine-id` so Encrypted `auth.enc` survives container recreate (the "Failed to get hardware UUID" warning).
+- Do not show the activate-server card or inject `/auth login device` unless Java says tokens are missing. After a successful Java sign-in, send `/auth persistence Encrypted`.
+- Listen on official UDP **5520** again (revert 3.3.1's 25565 bind). Direct Connect must include `:5520`.
+- Active log patterns from a live 0.6.1 boot: ready (ServerManager Listening), game version, in-world join/leave.
+
 ## 3.3.1
 
 - Listen on UDP **25565**, the Hytale client Direct Connect default when you omit the port (the join box hint is `:25565`). The dedicated-server binary still defaults to 5520 if you omit `--bind`; we pass `--bind 0.0.0.0:25565`. After updating, forward **UDP 25565** and join with the host IP alone (or `:25565`). A previous 5520 forward will not match.

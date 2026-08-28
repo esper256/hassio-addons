@@ -72,5 +72,5 @@ LABEL \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.source="https://github.com/esper256/hassio-addons"
 
-EXPOSE 25565/udp 8099
+EXPOSE 5520/udp 8099
 ENTRYPOINT ["/run.sh"]

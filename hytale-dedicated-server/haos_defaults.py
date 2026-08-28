@@ -22,6 +22,7 @@ from typing import IO, Any, Mapping, NamedTuple
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 INSTANCE_SALT_NAME = "instance_salt"
+MACHINE_ID_NAME = "machine-id"
 SERVER_NAME_PREFIX = "HAOS Hytale"
 OPERATOR_ACTION_FILENAME = "operator_action.json"
 DOWNLOADER = Path("/opt/hytale-downloader")
@@ -29,6 +30,8 @@ CREDENTIALS_NAME = ".hytale-downloader-credentials.json"
 AUTH_ENC_NAME = "auth.enc"
 GAME_ZIP_NAME = "game.zip"
 INSTALL_MARKER = "Assets.zip"
+AUTH_LOGIN_DEVICE = "/auth login device"
+AUTH_PERSIST_ENCRYPTED = "/auth persistence Encrypted"
 SIGNIN_DETAIL = (
     "Open the link in a new browser tab (not this panel). "
     "Hytale emails a login code first; after you are signed in, click the link again "
@@ -58,15 +61,28 @@ _CODE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,31}")
 # Java /auth colors the device code; CSI reset is ESC[m and must not enter user_code.
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|].*?(?:\x1b\\|\x07))")
 # Java /auth prints "authentication successful"; the official downloader does not —
-# it starts the zip fetch instead. Either means drop the Ingress sign-in card.
+# it starts the zip fetch instead. Encrypted load means the card is not needed.
 _SIGNIN_DONE_RE = re.compile(
-    r"authentication successful|downloading latest|successfully downloaded",
+    r"authentication successful|downloading latest|successfully downloaded"
+    r"|loaded encrypted credentials",
     re.IGNORECASE,
 )
 _TOKEN_TIMEOUT_RE = re.compile(
     r"error obtaining token:.*context deadline exceeded",
     re.IGNORECASE,
 )
+# Only start /auth login device when Java says tokens are missing. Blind inject
+# opens a new device flow while the server is already playable (Memory tokens).
+_NEED_AUTH_RE = re.compile(
+    r"no server tokens configured|use /auth login"
+    r"|server session token not available|cannot request auth grant",
+    re.IGNORECASE,
+)
+_CREDS_PERSISTED_RE = re.compile(
+    r"loaded encrypted credentials|credential storage changed to:\s*encrypted",
+    re.IGNORECASE,
+)
+_MACHINE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class TeeResult(NamedTuple):
@@ -79,7 +95,89 @@ def token_wait_timed_out_line(line: str) -> bool:
 
 
 def signin_finished_line(line: str) -> bool:
-    return bool(_SIGNIN_DONE_RE.search(line))
+    return bool(_SIGNIN_DONE_RE.search(_strip_ansi(line)))
+
+
+def needs_server_auth_line(line: str) -> bool:
+    return bool(_NEED_AUTH_RE.search(_strip_ansi(line)))
+
+
+def credentials_persisted_line(line: str) -> bool:
+    return bool(_CREDS_PERSISTED_RE.search(_strip_ansi(line)))
+
+
+def _valid_machine_id(text: str) -> str:
+    cleaned = (text or "").strip().lower().replace("-", "")
+    return cleaned if _MACHINE_ID_RE.fullmatch(cleaned) else ""
+
+
+def _write_machine_id_file(path: Path, machine_id: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(machine_id + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def ensure_machine_id(
+    *,
+    state_dir: str | Path | None = None,
+    etc_path: str | Path | None = None,
+    dbus_path: str | Path | None = None,
+) -> str:
+    """Persist a 32-hex machine-id so Encrypted auth.enc survives container recreate.
+
+    Hytale encrypts auth.enc with the Linux hardware UUID. Docker/HAOS images
+    often have no /etc/machine-id (or a new one each recreate). Keep ours under
+    STATE_DIR and copy it to the paths Java reads.
+    """
+
+    state = Path(state_dir or _state_dir())
+    persisted = state / MACHINE_ID_NAME
+    etc = Path(etc_path or "/etc/machine-id")
+    dbus = Path(dbus_path or "/var/lib/dbus/machine-id")
+
+    machine_id = ""
+    if persisted.is_file():
+        try:
+            machine_id = _valid_machine_id(persisted.read_text(encoding="utf-8"))
+        except OSError:
+            machine_id = ""
+    if not machine_id and etc.is_file():
+        try:
+            machine_id = _valid_machine_id(etc.read_text(encoding="utf-8"))
+        except OSError:
+            machine_id = ""
+    if not machine_id and dbus.is_file():
+        try:
+            machine_id = _valid_machine_id(dbus.read_text(encoding="utf-8"))
+        except OSError:
+            machine_id = ""
+    if not machine_id:
+        machine_id = secrets.token_hex(16)
+
+    try:
+        existing = (
+            _valid_machine_id(persisted.read_text(encoding="utf-8"))
+            if persisted.is_file()
+            else ""
+        )
+    except OSError:
+        existing = ""
+    if existing != machine_id:
+        _write_machine_id_file(persisted, machine_id)
+
+    for dest in (etc, dbus):
+        try:
+            current = (
+                _valid_machine_id(dest.read_text(encoding="utf-8"))
+                if dest.is_file()
+                else ""
+            )
+            if current != machine_id:
+                _write_machine_id_file(dest, machine_id)
+        except OSError:
+            pass
+    return machine_id
 
 
 def _strip_ansi(text: str) -> str:
@@ -200,6 +298,8 @@ def _java_opts() -> str:
 
 
 def _server_authed(data_dir: Path) -> bool:
+    """True when Encrypted persistence left auth.enc (cwd or Server/)."""
+
     return (data_dir / AUTH_ENC_NAME).is_file() or (
         data_dir / "Server" / AUTH_ENC_NAME
     ).is_file()
@@ -444,9 +544,16 @@ def _tee_process(
     detail: str,
     send_after_start: str | None = None,
     success_clears: bool = True,
+    persist_encrypted: bool = False,
     stdin: IO[str] | None = None,
 ) -> TeeResult:
-    """Run argv, scrape device-code lines, optional stdin inject, forward stdin."""
+    """Run argv, scrape device-code lines, optional stdin inject, forward stdin.
+
+    ``send_after_start`` is only written after a need-auth log line (Java has
+    no tokens). Blind inject used to start a second device flow while players
+    could already join. ``persist_encrypted`` sends ``/auth persistence
+    Encrypted`` before that login and again after a successful Java sign-in.
+    """
 
     proc = subprocess.Popen(
         argv,
@@ -464,6 +571,8 @@ def _tee_process(
     seen_code = ""
     token_wait_timed_out = False
     signin_done = False
+    need_auth = False
+    persist_sent = False
     stop = threading.Event()
     stdin_lock = threading.Lock()
     last_published = ""
@@ -499,6 +608,7 @@ def _tee_process(
 
     def reader() -> None:
         nonlocal seen_url, seen_code, token_wait_timed_out, signin_done
+        nonlocal need_auth, persist_sent
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
@@ -506,6 +616,10 @@ def _tee_process(
                 sys.stdout.flush()
                 if token_wait_timed_out_line(line):
                     token_wait_timed_out = True
+                if needs_server_auth_line(line):
+                    need_auth = True
+                if credentials_persisted_line(line):
+                    persist_sent = True
                 url, code = scrape_device_login(line)
                 if url or code:
                     seen_url, seen_code = coalesce_device_login(
@@ -518,6 +632,8 @@ def _tee_process(
                     signin_done = True
                     clear_operator_action()
                     print("Sign-in finished; dropping Ingress card", flush=True)
+                    if persist_encrypted:
+                        write_child_stdin(AUTH_PERSIST_ENCRYPTED + "\n")
         finally:
             stop.set()
 
@@ -525,17 +641,27 @@ def _tee_process(
     thread.start()
 
     def injector() -> None:
-        if not send_after_start:
+        nonlocal persist_sent
+        if not send_after_start and not persist_encrypted:
             return
-        delay = 5.0
-        attempts = 0
-        while proc.poll() is None and attempts < 8 and not stop.is_set():
-            time.sleep(delay)
-            if stop.is_set() or seen_url or seen_code:
+        login_sent = False
+        while proc.poll() is None and not stop.is_set():
+            if signin_done:
                 return
-            write_child_stdin(send_after_start)
-            attempts += 1
-            delay = 10.0
+            if persist_encrypted and need_auth and not persist_sent:
+                write_child_stdin(AUTH_PERSIST_ENCRYPTED + "\n")
+                persist_sent = True
+            if (
+                send_after_start
+                and need_auth
+                and not login_sent
+                and not seen_url
+                and not seen_code
+            ):
+                write_child_stdin(send_after_start)
+                login_sent = True
+                return
+            time.sleep(0.5)
 
     inj = threading.Thread(target=injector, daemon=True)
     inj.start()
@@ -682,6 +808,7 @@ def cmd_install() -> int:
 
 
 def cmd_run_server(java_argv: list[str]) -> int:
+    ensure_machine_id()
     prepare_world_config()
     data_dir = _data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -696,13 +823,9 @@ def cmd_run_server(java_argv: list[str]) -> int:
     env = os.environ.copy()
     env.setdefault("HYTALE_DISABLE_UPDATES", "1")
     env["HOME"] = str(data_dir)
-    inject = None if authed else "/auth login device\n"
-    if not authed:
-        write_operator_action(
-            title="Sign in to run the Hytale server",
-            detail=SERVER_SIGNIN_DETAIL,
-            steps=steps,
-        )
+    # Do not pre-write the Ingress card. publish() writes it when a device
+    # URL/code appears. Do not inject /auth login device unless Java says
+    # tokens are missing — otherwise a new flow starts while players can join.
     result = _tee_process(
         java_argv,
         cwd=data_dir,
@@ -710,8 +833,9 @@ def cmd_run_server(java_argv: list[str]) -> int:
         steps=steps,
         title="Sign in to run the Hytale server",
         detail=SERVER_SIGNIN_DETAIL,
-        send_after_start=inject,
+        send_after_start=AUTH_LOGIN_DEVICE + "\n",
         success_clears=True,
+        persist_encrypted=True,
     )
     return result.returncode
 
@@ -738,7 +862,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
         print(
-            "usage: haos_defaults.py [print-name|print-version|install|prepare-config|run] [java args]",
+            "usage: haos_defaults.py [print-name|print-version|install|prepare-config|ensure-machine-id|run] [java args]",
             file=sys.stderr,
         )
         return 2
@@ -752,6 +876,9 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install()
     if cmd == "prepare-config":
         prepare_world_config()
+        return 0
+    if cmd == "ensure-machine-id":
+        print(ensure_machine_id())
         return 0
     if cmd == "run":
         return cmd_run_server(build_java_command(args[1:]))
